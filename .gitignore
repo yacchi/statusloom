@@ -1,0 +1,7 @@
+/statusloom
+/statusloom.exe
+apps/*/dist/
+node_modules/
+*.tsbuildinfo
+coverage.out
+.DS_Store

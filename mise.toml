@@ -1,0 +1,59 @@
+[tools]
+go = "1.25.8"
+node = "22"
+pnpm = "10"
+
+[tasks.build-web]
+description = "Build the configurator frontend and embed it into internal/webconfig/dist, skipping when inputs are unchanged (build output must NOT be committed; run clean-web before committing)"
+run = "scripts/build-web.sh"
+sources = [
+    "apps/configurator/src/**/*",
+    "apps/configurator/index.html",
+    "apps/configurator/package.json",
+    "apps/configurator/vite.config.ts",
+    "apps/configurator/tsconfig.json",
+    "apps/configurator/tsconfig.app.json",
+    "apps/configurator/tsconfig.node.json",
+    "pnpm-lock.yaml",
+]
+outputs = ["internal/webconfig/dist/**/*"]
+
+[tasks.clean-web]
+description = "Restore internal/webconfig/dist to the placeholder index.html (run before committing)"
+run = "scripts/clean-web.sh"
+
+[tasks.build]
+description = "Build the statusloom binary, auto-building the embedded web UI first and skipping when inputs are unchanged"
+depends = ["build-web"]
+run = "go build -o statusloom ./cmd/statusloom"
+sources = ["**/*.go", "go.mod", "go.sum", "internal/webconfig/dist/**/*"]
+outputs = ["statusloom"]
+
+[tasks.config]
+description = "Launch the configurator UI (go run ./cmd/statusloom config), auto-building the embedded web UI first"
+depends = ["build-web"]
+run = "go run ./cmd/statusloom config"
+
+[tasks.render]
+description = "Render a sample statusline from fixtures/claude/full.json for a quick visual check"
+run = "go run ./cmd/statusloom claude < fixtures/claude/full.json"
+
+[tasks.fmt]
+description = "Format all Go source with gofmt"
+run = "gofmt -w ."
+
+[tasks.lint]
+description = "Check gofmt formatting (fails on diff) and run go vet"
+run = ['test -z "$(gofmt -l .)"', "go vet ./..."]
+
+[tasks.test]
+description = "Run the Go test suite and the configurator frontend test suite"
+run = ["go test ./...", "pnpm --filter @statusloom/configurator test"]
+
+[tasks.web-build]
+description = "Build the configurator frontend (apps/configurator/dist) without touching internal/webconfig/dist"
+run = "pnpm --filter @statusloom/configurator build"
+
+[tasks.check]
+description = "Pre-commit gate: gofmt/vet + frontend build + Go and frontend test suites (does not run build-web, which would leave uncommittable embedded assets)"
+depends = ["lint", "web-build", "test"]

@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "shared": {
+    "git": {
+      "cacheTtlMs": 3000,
+      "timeoutMs": 200,
+      "includeUntracked": true,
+      "collectNumstat": true
+    }
+  },
+  "tools": {
+    "claude-code": {
+      "compactThreshold": 60,
+      "colorLevel": "ansi16",
+      "context": {
+        "percentageMode": "usable"
+      },
+      "activeLayout": 0,
+      "layouts": [
+        {
+          "name": "Default",
+          "lines": [
+            [
+              {
+                "type": "model",
+                "color": "cyan"
+              },
+              {
+                "type": "separator",
+                "text": " | "
+              },
+              {
+                "type": "thinking-effort"
+              },
+              {
+                "type": "separator",
+                "text": " | "
+              },
+              {
+                "type": "context-length"
+              },
+              {
+                "type": "separator",
+                "text": " | "
+              },
+              {
+                "type": "context-percentage-usable"
+              },
+              {
+                "type": "separator",
+                "text": " | "
+              },
+              {
+                "type": "session-cost"
+              },
+              {
+                "type": "separator",
+                "text": " | "
+              },
+              {
+                "type": "git-branch",
+                "color": "magenta"
+              },
+              {
+                "type": "separator",
+                "text": " | "
+              },
+              {
+                "type": "git-changes",
+                "color": "yellow"
+              }
+            ],
+            [
+              {
+                "type": "five-hour-usage",
+                "template": "5h: {value}"
+              },
+              {
+                "type": "separator",
+                "text": " | "
+              },
+              {
+                "type": "five-hour-reset"
+              },
+              {
+                "type": "separator",
+                "text": " | "
+              },
+              {
+                "type": "weekly-usage",
+                "template": "7d: {value}"
+              },
+              {
+                "type": "separator",
+                "text": " | "
+              },
+              {
+                "type": "weekly-reset"
+              },
+              {
+                "type": "separator",
+                "text": " | "
+              },
+              {
+                "type": "tool-version"
+              }
+            ]
+          ]
+        }
+      ]
+    }
+  }
+}

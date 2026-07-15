@@ -2,6 +2,7 @@
 go = "1.25.8"
 node = "22"
 pnpm = "10"
+goreleaser = "latest"
 
 [tasks.build-web]
 description = "Build the configurator frontend and embed it into internal/webconfig/dist, skipping when inputs are unchanged (build output must NOT be committed; run clean-web before committing)"
@@ -57,3 +58,15 @@ run = "pnpm --filter @statusloom/configurator build"
 [tasks.check]
 description = "Pre-commit gate: gofmt/vet + frontend build + Go and frontend test suites (does not run build-web, which would leave uncommittable embedded assets)"
 depends = ["lint", "web-build", "test"]
+
+[tasks.release-check]
+description = "Validate .goreleaser.yaml without building or publishing anything"
+# `brews` is deprecated but the formula path is intentionally kept, so
+# `goreleaser check` exits non-zero on the deprecation alone. Treat
+# "configuration is valid" in the output as success; real config errors
+# (which omit that string) still fail.
+run = 'out=$(goreleaser check 2>&1) || true; echo "$out"; echo "$out" | grep -q "configuration is valid" || exit 1'
+
+[tasks.release-snapshot]
+description = "Build a local snapshot release (all platforms, no publish) to sanity-check the GoReleaser pipeline; runs build-web via the before-hook, which leaves internal/webconfig/dist dirty (run clean-web before committing)"
+run = "goreleaser release --snapshot --clean --skip=validate"

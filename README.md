@@ -15,7 +15,44 @@ space and compact mode never triggers.
 
 ## Installation
 
-Coming soon.
+### Homebrew (macOS / Linux, recommended)
+
+```sh
+brew install yacchi/tap/statusloom
+```
+
+Windows users should use the GitHub Releases archives or `go install`
+below.
+
+### GitHub Releases (manual)
+
+Prebuilt archives are published for macOS, Linux, and Windows (amd64 and
+arm64). Download the archive for your platform from the
+[Releases page](https://github.com/yacchi/statusloom/releases), extract
+it, and place the `statusloom` binary somewhere on your `PATH`.
+
+### go install
+
+```sh
+go install github.com/yacchi/statusloom/cmd/statusloom@latest
+```
+
+> **Note:** binaries built with `go install` do not embed the web
+> configurator UI, so `statusloom config` will only serve a placeholder
+> page. Status line rendering (`statusloom claude`) works fine. If you
+> want to use the visual configurator, install via Homebrew or a
+> GitHub Releases binary instead.
+
+### After installing
+
+Register statusloom as Claude Code's status line command:
+
+```sh
+statusloom setup claude-code
+```
+
+This writes `statusLine.command` into `~/.claude/settings.json` for
+you (see [Usage](#usage) below for the equivalent manual JSON).
 
 ## Usage
 

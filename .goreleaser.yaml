@@ -1,0 +1,83 @@
+# GoReleaser v2 configuration for statusloom.
+#
+# NOTE on `--skip=validate`: the release workflow runs this with
+# `--skip=validate` because the `before.hooks` step below (build-web.sh)
+# builds apps/configurator and copies its output into
+# internal/webconfig/dist, which intentionally leaves the git tree dirty
+# (that directory only carries a placeholder index.html in version
+# control; see CLAUDE.md / scripts/clean-web.sh). GoReleaser's validate
+# step rejects a dirty tree, so we skip it deliberately rather than
+# reordering the embed step after the build.
+version: 2
+project_name: statusloom
+
+before:
+  hooks:
+    - bash scripts/build-web.sh
+
+builds:
+  - main: ./cmd/statusloom
+    binary: statusloom
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+      - -buildvcs=true
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: statusloom
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+# Homebrew distribution via a formula (not a cask). `brews` is marked
+# deprecated in GoReleaser v2.10+ but remains fully functional; we use it
+# to stay consistent with the sibling yacchi/backlog-cli tap setup.
+# A formula works on both macOS and Linuxbrew (casks are macOS-only) and
+# needs no Gatekeeper/quarantine workaround for unsigned binaries.
+#
+# No `token` field: GoReleaser uses the default GITHUB_TOKEN, which the
+# release workflow sets to a GitHub App installation token scoped to both
+# statusloom and homebrew-tap, so the cross-repo formula push is
+# authorized by that token's scope.
+brews:
+  - name: statusloom
+    repository:
+      owner: yacchi
+      name: homebrew-tap
+    homepage: "https://github.com/yacchi/statusloom"
+    description: "Statusline tool for Claude Code and other coding agents"
+    install: |
+      bin.install "statusloom"
+    test: |
+      system "#{bin}/statusloom", "version"
+
+release:
+  github:
+    owner: yacchi
+    name: statusloom

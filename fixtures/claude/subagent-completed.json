@@ -1,0 +1,35 @@
+{
+  "session_id": "3f9a2b1c-4d5e-6f70-8a9b-0c1d2e3f4a5b",
+  "transcript_path": "/Users/dev/.claude/projects/-Users-dev-myapp/3f9a2b1c.jsonl",
+  "cwd": "/Users/dev/myapp",
+  "prompt_id": "a1b2c3d4-5e6f-7081-9203-a4b5c6d7e8f9",
+  "columns": 257,
+  "tasks": [
+    {
+      "id": "b1a2c3d4e5f60718",
+      "type": "local_agent",
+      "status": "completed",
+      "description": "Review render pipeline changes",
+      "label": "Review render pipeline changes",
+      "startTime": 1784104398889,
+      "model": "claude-opus-4-8",
+      "contextWindowSize": 200000,
+      "tokenCount": 28663,
+      "tokenSamples": [0, 27157, 28454, 28663, 28663],
+      "cwd": "/Users/dev/myapp"
+    },
+    {
+      "id": "0f1e2d3c4b5a6978",
+      "type": "local_agent",
+      "status": "completed",
+      "description": "Audit DSL validation paths",
+      "label": "Audit DSL validation paths",
+      "startTime": 1784104399052,
+      "model": "claude-sonnet-5",
+      "contextWindowSize": 200000,
+      "tokenCount": 27694,
+      "tokenSamples": [0, 24685, 27543, 27694, 27694],
+      "cwd": "/Users/dev/myapp"
+    }
+  ]
+}

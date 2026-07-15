@@ -30,7 +30,7 @@ export const STRUCTURAL_PRESETS: StructuralPreset[] = [
         sample: "|",
         // <text role="separator" padding="1">|</text> — the collapsing
         // separator per markup.md "separator".
-        make: () => ({ id: "", kind: "text", role: "separator", value: "" }),
+        make: () => ({ id: "", kind: "text", role: "separator", value: "|", padding: 1 }),
     },
     {
         id: "flex",

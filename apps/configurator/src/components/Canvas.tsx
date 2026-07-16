@@ -837,7 +837,13 @@ function SubagentBand({
                 rowLabel={null}
                 topIndex={topIndex}
                 line={line}
-                previewLine={null}
+                // Render the editing chips against the first sample task's
+                // output (all tasks share the same line, so their segments key
+                // off the same child ids) so the strip matches the main line's
+                // rendered chips instead of falling back to structural labels
+                // (a separator would otherwise show as the JSON.stringify'd
+                // "|" label rather than its actual glyph).
+                previewLine={previewLines?.[0] ?? null}
                 theme={theme}
                 selection={selection}
                 active={false}

@@ -498,19 +498,24 @@ describe("canvas subagent band", () => {
         await waitFor(() => expect(screen.getByTestId("subagent-band-L0")).toBeTruthy(), {
             timeout: 3000,
         });
-        // The editable line shows the task field chips (plain labels).
-        expect(screen.getByTestId("subagent-band-L0").textContent).toContain("Task Description");
         // While a region exists, a "Reset to default" affordance is always shown
         // (even for a populated row — resetting is undoable via history).
         expect(screen.getByTestId("subagent-fill-default-L0").textContent).toContain(
             "Reset to default",
         );
-        // Three running tasks -> three preview rows carrying task values.
+        // Once the subagent preview resolves: three running tasks -> three
+        // preview rows carrying task values, and the editable line renders its
+        // chips against the first sample task's output (like the main line), so
+        // the task-description chip shows that task's value rather than a
+        // structural "Task Description" label.
         await waitFor(
             () => {
                 const preview = screen.getByTestId("subagent-preview-L0");
                 expect(preview.querySelectorAll(".subagent-preview-line").length).toBe(3);
                 expect(preview.textContent).toContain("Review render pipeline");
+                expect(screen.getByTestId("seg-L0.s-0").textContent).toContain(
+                    "Review render pipeline",
+                );
             },
             { timeout: 3000 },
         );

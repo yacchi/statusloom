@@ -116,6 +116,16 @@ func TestProvision_WritesWorkspaceDocs(t *testing.T) {
 		}
 	}
 
+	// markup.md is shipped locally so the CLAUDE.md reference to it resolves
+	// inside the isolated workspace. It must be the real (non-empty) spec.
+	markupMD, err := os.ReadFile(filepath.Join(tmp, "markup.md"))
+	if err != nil {
+		t.Fatalf("read markup.md: %v", err)
+	}
+	if len(markupMD) < 1000 {
+		t.Errorf("markup.md looks truncated: %d bytes", len(markupMD))
+	}
+
 	// sample.json is a valid, decodable Claude payload.
 	sample, err := os.ReadFile(filepath.Join(tmp, "sample.json"))
 	if err != nil {
@@ -147,7 +157,7 @@ func TestProvision_StableReusedDir(t *testing.T) {
 	if first != want {
 		t.Fatalf("provisionMonitorDir = %q, want %q", first, want)
 	}
-	for _, name := range []string{"CLAUDE.md", "sample.json", filepath.Join(".claude", "settings.local.json")} {
+	for _, name := range []string{"CLAUDE.md", "sample.json", "markup.md", filepath.Join(".claude", "settings.local.json")} {
 		if _, err := os.Stat(filepath.Join(first, name)); err != nil {
 			t.Errorf("expected %s in workspace: %v", name, err)
 		}

@@ -298,6 +298,10 @@ func metricValue(name string, snap schema.StatusSnapshot, cfg config.ToolConfig,
 			return 0, false
 		}
 		return snap.Account.SevenDay.UsedPercentage, true
+	case "five-hour-projected-percent":
+		return projectedPercent(snap.Account.FiveHour, fiveHourWindow, opts.Now)
+	case "seven-day-projected-percent":
+		return projectedPercent(snap.Account.SevenDay, sevenDayWindow, opts.Now)
 	case "five-hour-reset-minutes":
 		return resetMinutes(snap.Account.FiveHour, opts.Now)
 	case "seven-day-reset-minutes":
@@ -364,6 +368,10 @@ func metricValue(name string, snap schema.StatusSnapshot, cfg config.ToolConfig,
 			return 0, false
 		}
 		return snap.Account.SevenDaySonnet.UsedPercentage, true
+	case "seven-day-opus-projected-percent":
+		return projectedPercent(snap.Account.SevenDayOpus, sevenDayWindow, opts.Now)
+	case "seven-day-sonnet-projected-percent":
+		return projectedPercent(snap.Account.SevenDaySonnet, sevenDayWindow, opts.Now)
 	case "seven-day-opus-reset-minutes":
 		return resetMinutes(snap.Account.SevenDayOpus, opts.Now)
 	case "seven-day-sonnet-reset-minutes":
@@ -405,6 +413,39 @@ func resetMinutes(w *schema.RateWindow, now time.Time) (float64, bool) {
 		d = 0
 	}
 	return d.Minutes(), true
+}
+
+// Window lengths used by the *-projected-percent metrics.
+const (
+	fiveHourWindow = 5 * time.Hour
+	sevenDayWindow = 7 * 24 * time.Hour
+)
+
+// projectedPercent extrapolates a rate window's current UsedPercentage to the
+// window reset at the current burn rate: usage divided by the elapsed fraction
+// of the window. 100 means "on track to hit the cap by reset". It gates off
+// (ok=false) while too little of the window has elapsed (< minElapsedFraction),
+// since the projection is wildly unstable early on; callers then fall back to
+// the node's base color. Also ok=false when the window is nil or the clock is
+// unset, matching the percent/reset-minutes metrics' visibility.
+func projectedPercent(w *schema.RateWindow, windowLen time.Duration, now time.Time) (float64, bool) {
+	if w == nil || now.IsZero() || windowLen <= 0 {
+		return 0, false
+	}
+	remaining := w.ResetsAt.Sub(now)
+	if remaining < 0 {
+		remaining = 0
+	}
+	if remaining > windowLen {
+		remaining = windowLen
+	}
+	elapsed := windowLen - remaining
+	frac := float64(elapsed) / float64(windowLen)
+	const minElapsedFraction = 0.10
+	if frac < minElapsedFraction {
+		return 0, false
+	}
+	return w.UsedPercentage / frac, true
 }
 
 // hyperlinkURL returns the OSC 8 target for a linkable field, or "" when no

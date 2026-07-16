@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	statusloom "github.com/yacchi/statusloom"
 	"github.com/yacchi/statusloom/internal/adapters/claude"
 	"github.com/yacchi/statusloom/internal/cache"
 )
@@ -301,6 +302,13 @@ func (s *server) provisionMonitorDir() (string, error) {
 		return dir, err
 	}
 	if err := os.WriteFile(filepath.Join(dir, "sample.json"), []byte(workspaceSampleJSON), 0o600); err != nil {
+		return dir, err
+	}
+	// The workspace CLAUDE.md points the editing LLM at markup.md for the full
+	// DSL spec; ship it locally since this workspace is isolated from the
+	// statusloom repo. Embedded from the module root (statusloom.MarkupSpec) so
+	// it stays in sync with the committed source.
+	if err := os.WriteFile(filepath.Join(dir, "markup.md"), []byte(statusloom.MarkupSpec), 0o600); err != nil {
 		return dir, err
 	}
 

@@ -324,6 +324,11 @@ var claudeCodeMetrics = []MetricDef{
 		Percent:      true,
 	},
 	{
+		Name: "five-hour-projected-percent", DisplayName: "5-Hour Projected (%)",
+		Descriptions: Descriptions{EN: "Projected 5-hour usage at the current burn rate, extrapolated to the window reset. 100 means you are on track to hit the cap by reset.", JA: "現在の消費ペースをリセット時点まで外挿した5時間ウィンドウの予測使用率（％）です。100でこのペースなら上限に到達することを意味します。"},
+		Percent:      true,
+	},
+	{
 		Name: "five-hour-reset-minutes", DisplayName: "5-Hour Reset (min)",
 		Descriptions: Descriptions{EN: "Minutes until the 5-hour rate limit window resets.", JA: "5時間のレート制限がリセットされるまでの分数です。"},
 	},
@@ -357,6 +362,11 @@ var claudeCodeMetrics = []MetricDef{
 		Percent:      true,
 	},
 	{
+		Name: "seven-day-projected-percent", DisplayName: "Weekly Projected (%)",
+		Descriptions: Descriptions{EN: "Projected 7-day usage at the current burn rate, extrapolated to the window reset. 100 means you are on track to hit the cap by reset.", JA: "現在の消費ペースをリセット時点まで外挿した7日間ウィンドウの予測使用率（％）です。100でこのペースなら上限に到達することを意味します。"},
+		Percent:      true,
+	},
+	{
 		Name: "seven-day-reset-minutes", DisplayName: "Weekly Reset (min)",
 		Descriptions: Descriptions{EN: "Minutes until the 7-day rate limit window resets.", JA: "7日間のレート制限がリセットされるまでの分数です。"},
 	},
@@ -379,8 +389,18 @@ var claudeCodeMetrics = []MetricDef{
 		Percent:      true,
 	},
 	{
+		Name: "seven-day-opus-projected-percent", DisplayName: "Weekly Projected Opus (%)",
+		Descriptions: Descriptions{EN: "Projected 7-day Opus usage at the current burn rate, extrapolated to the window reset. 100 means on track to hit the cap.", JA: "Opus系モデルの7日間ウィンドウについて、現在の消費ペースをリセット時点まで外挿した予測使用率（％）です。100でこのペースなら上限到達を意味します。"},
+		Percent:      true,
+	},
+	{
 		Name: "seven-day-sonnet-percent", DisplayName: "Weekly Usage Sonnet (%)",
 		Descriptions: Descriptions{EN: "Percentage of the rolling 7-day rate limit consumed by Sonnet models.", JA: "Sonnet系モデルの7日間レート制限の使用率です。"},
+		Percent:      true,
+	},
+	{
+		Name: "seven-day-sonnet-projected-percent", DisplayName: "Weekly Projected Sonnet (%)",
+		Descriptions: Descriptions{EN: "Projected 7-day Sonnet usage at the current burn rate, extrapolated to the window reset. 100 means on track to hit the cap.", JA: "Sonnet系モデルの7日間ウィンドウについて、現在の消費ペースをリセット時点まで外挿した予測使用率（％）です。100でこのペースなら上限到達を意味します。"},
 		Percent:      true,
 	},
 	{

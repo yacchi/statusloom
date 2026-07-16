@@ -683,6 +683,16 @@ Powerlineでは手動separatorを描画せず、line直下の可視field/text/sp
 * `self`以外は、カタログ上の任意の名前付きメトリクス（`five-hour-percent`等）を`when`/`color-rule`のsourceとして指定できる（fieldでも`self`ではなく名前付きメトリクスを参照して構わない）
 * `span`の`color-rule`で解決した色は、子孫ノードへ継承される（nearest-wins）。子field/text/spanが自前の`color`属性や自前`color-rule`を持てば、そちらが優先される
 
+閾値は「現在のレベル」しか測れないが、rate-limitウィンドウで本当に危険なのは「リセットまでの残り時間に対する消費ペース」である（5hで70%でもリセット直前なら安全、リセットが遠いのに70%なら危険）。`*-projected-percent`メトリクス（→「メトリクス名」）は現在ペースをリセット時点まで外挿した予測使用率を返すので、`%`単体ではなくペースで色分岐できる。ウィンドウ序盤（経過<10%）は非該当となり基底色へフォールバックするため、長時間ウィンドウ（7d）ほど早めに閾値を倒しておくのが安全側。
+
+```xml
+<!-- このペースなら週次上限に到達しそうなら赤（%単体でなく消費ペースで判定） -->
+<field name="weekly-usage" format="percent">
+  <color-rule when="seven-day-projected-percent ge 100" color="red"/>
+  <color-rule when="seven-day-percent ge 80" color="yellow"/>
+</field>
+```
+
 ## formatter
 
 fieldには型に応じたformatterを適用できるようにする。現行実装（`internal/render/format.go`）との対応を次に示す。
@@ -760,7 +770,9 @@ Claude Codeのpay-as-you-go overage（サブスクリプション上限超過後
 
 kebab-caseの名前付きメトリクス:
 
-`api-duration-minutes`、`cache-hit-percent`、`cache-creation-tokens`、`cache-read-tokens`、`context-output-tokens`、`context-percent`、`context-remaining-percent`、`context-tokens`、`context-usable-percent`、`context-window-tokens`、`current-input-tokens`、`current-output-tokens`、`exceeds-200k`、`extra-usage-cost-usd`、`extra-usage-limit-usd`、`extra-usage-percent`、`five-hour-percent`、`five-hour-reset-minutes`、`git-ahead`、`git-behind`、`git-clean`、`git-dirty`、`git-staged`、`git-unstaged`、`git-untracked`、`lines-added`、`lines-changed-total`、`lines-removed`、`session-cost-usd`、`session-duration-minutes`、`seven-day-opus-percent`、`seven-day-opus-reset-minutes`、`seven-day-percent`、`seven-day-reset-minutes`、`seven-day-sonnet-percent`、`seven-day-sonnet-reset-minutes`、`thinking-enabled`、`width`
+`api-duration-minutes`、`cache-hit-percent`、`cache-creation-tokens`、`cache-read-tokens`、`context-output-tokens`、`context-percent`、`context-remaining-percent`、`context-tokens`、`context-usable-percent`、`context-window-tokens`、`current-input-tokens`、`current-output-tokens`、`exceeds-200k`、`extra-usage-cost-usd`、`extra-usage-limit-usd`、`extra-usage-percent`、`five-hour-percent`、`five-hour-projected-percent`、`five-hour-reset-minutes`、`git-ahead`、`git-behind`、`git-clean`、`git-dirty`、`git-staged`、`git-unstaged`、`git-untracked`、`lines-added`、`lines-changed-total`、`lines-removed`、`session-cost-usd`、`session-duration-minutes`、`seven-day-opus-percent`、`seven-day-opus-projected-percent`、`seven-day-opus-reset-minutes`、`seven-day-percent`、`seven-day-projected-percent`、`seven-day-reset-minutes`、`seven-day-sonnet-percent`、`seven-day-sonnet-projected-percent`、`seven-day-sonnet-reset-minutes`、`thinking-enabled`、`width`
+
+`*-projected-percent`（`five-hour-projected-percent` / `seven-day-projected-percent` / per-modelの`seven-day-opus-projected-percent` / `seven-day-sonnet-projected-percent`）は、**現在の消費ペースをリセット時点まで外挿した予測使用率（％）**。`使用率 ÷ ウィンドウ経過割合` で計算し、`100`なら「このペースなら上限に到達」を意味する。selfメトリックを持たない純粋な派生メトリクス（対応fieldは無い）で、`when`/`color-rule`から参照する。ウィンドウ序盤（経過が10%未満）は外挿が不安定なため値を出さず、`color-rule`は基底色にフォールバックする（→「color-rule」の例参照）。
 
 #### `width`（全ツール共通・端末幅ブレイクポイント）
 

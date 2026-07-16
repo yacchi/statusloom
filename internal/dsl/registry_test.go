@@ -184,11 +184,12 @@ func TestMetricByName_Unknown(t *testing.T) {
 }
 
 func TestMetrics_Count(t *testing.T) {
-	// 51 base claude-code metrics + 4 merged subagent task-* metrics (the
-	// shared widthMetric is deduplicated across the two catalogs).
+	// 55 base claude-code metrics (51 original + 4 *-projected-percent) + 4
+	// merged subagent task-* metrics (the shared widthMetric is deduplicated
+	// across the two catalogs).
 	m := Metrics("claude-code")
-	if len(m) != 55 {
-		t.Errorf("Metrics count = %d, want 55", len(m))
+	if len(m) != 59 {
+		t.Errorf("Metrics count = %d, want 59", len(m))
 	}
 }
 

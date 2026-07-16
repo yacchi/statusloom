@@ -135,7 +135,8 @@ line tool (for example ccstatusline, whose config lives at
 ## Markup DSL (summary)
 
 The status line is described in an XML/JSX-style markup, one file per tool
-(` + "`claude-code.xml`" + `). See the project ` + "`markup.md`" + ` for the full spec.
+(` + "`claude-code.xml`" + `). See ` + "`markup.md`" + ` in this workspace for the
+full spec (it is shipped here for you to read).
 
     <statusloom version="1" tool="claude-code" color-level="ansi16" output-style="standard"
                 compact-threshold="60" context-percentage-mode="usable">
@@ -189,6 +190,19 @@ as themed segment transitions. Standard is the default.
       so the cost tracks the usage %. On a ` + "`<span>`" + ` the resolved color
       applies to the whole span (children inherit it unless they set their own
       color), so you can color a labelled group by one metric.
+      A raw ` + "`%`" + ` threshold only gauges a *level*, not a *pace*. What actually
+      matters for a usage window is how fast you are spending relative to the
+      time left before it resets: 70% with five hours to go is risky, 70% five
+      minutes before reset is fine. For that, use the projected metrics —
+      ` + "`five-hour-projected-percent`" + ` / ` + "`seven-day-projected-percent`" + ` (and
+      the per-model ` + "`seven-day-opus-projected-percent`" + ` /
+      ` + "`seven-day-sonnet-projected-percent`" + `). They extrapolate the current burn
+      rate to the window reset, so ` + "`<color-rule when=\"seven-day-projected-percent ge 100\" color=\"red\"/>`" + `
+      gates directly on "on track to hit the cap", not on a bare level. Early in
+      a window (little elapsed) the projection is unstable, so those metrics stay
+      empty and the rule falls back to the base color — pair them with an
+      absolute ` + "`%`" + ` rule as a floor. The weekly (` + "`seven-day`" + `) window is long, so
+      its projection stabilizes sooner; tripping its warning early is the safe side.
 
 ### Content fields
 

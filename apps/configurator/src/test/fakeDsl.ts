@@ -24,6 +24,7 @@ import type {
     ResponsiveNode,
     SpanNode,
     StatusloomNode,
+    SubagentNode,
     VariantNode,
 } from "../types.ts";
 
@@ -135,10 +136,20 @@ function assignChildIds(children: LineChild[], parentId: string): void {
     });
 }
 
+// Stamps a <subagent> region's shared-id scheme: the region and its single
+// <line> both take `id` ("L{i}.s" / "L{i}.{p}.v{v}.s"), and the line's
+// children continue as "...s.{k}" (DSL_API.md "Node IDs").
+function assignSubagentIds(sub: SubagentNode, id: string): void {
+    sub.id = id;
+    sub.line.id = id;
+    assignChildIds(sub.line.children, id);
+}
+
 // Assigns "L{i}.{p}" to a layout's line/responsive child, its comments the
 // "L{i}.{p}.c{k}" form, and recurses into a line's own children / a
 // responsive's variants ("L{i}.{p}.v{v}", lines "L{i}.{p}.v{v}.{j}",
-// variant comments "L{i}.{p}.v{v}.c{k}") — mirrors DSL_API.md "Node IDs".
+// variant comments "L{i}.{p}.v{v}.c{k}", subagent "L{i}.{p}.v{v}.s") —
+// mirrors DSL_API.md "Node IDs".
 function assignLayoutChildIds(children: LayoutChild[], layoutId: string): void {
     children.forEach((child, p) => {
         const id = `${layoutId}.${p}`;
@@ -160,6 +171,9 @@ function assignLayoutChildIds(children: LayoutChild[], layoutId: string): void {
                 line.id = `${variantId}.${j}`;
                 assignChildIds(line.children, line.id);
             });
+            if (v.subagent) {
+                assignSubagentIds(v.subagent, `${variantId}.s`);
+            }
         });
     });
 }
@@ -178,6 +192,9 @@ export function assignIds(root: StatusloomNode): StatusloomNode {
         l.comments?.forEach((c, k) => {
             c.id = `L${i}.c${k}`;
         });
+        if (l.subagent) {
+            assignSubagentIds(l.subagent, `L${i}.s`);
+        }
         assignLayoutChildIds(l.children, l.id);
     });
     return root;
@@ -261,6 +278,22 @@ export const FULL_SAMPLE: Record<string, string> = {
 export const EARLY_SAMPLE: Record<string, string> = {
     model: "Opus 4.8",
 };
+
+// Subagent-region samples: one record per running/completed task (mirrors the
+// backend's subagent-running/subagent-completed samples, 3 tasks each). Each
+// record is a field-name -> value map consumed by renderLine like the main
+// samples above.
+export const SUBAGENT_RUNNING_TASKS: Record<string, string>[] = [
+    { "task-description": "Review render pipeline", "task-model": "Opus 4.8", "task-status": "running" },
+    { "task-description": "Fix flaky drag test", "task-model": "Sonnet 4.5", "task-status": "running" },
+    { "task-description": "Update DSL docs", "task-model": "Haiku 4.5", "task-status": "running" },
+];
+
+export const SUBAGENT_COMPLETED_TASKS: Record<string, string>[] = [
+    { "task-description": "Review render pipeline", "task-model": "Opus 4.8", "task-status": "done" },
+    { "task-description": "Fix flaky drag test", "task-model": "Sonnet 4.5", "task-status": "done" },
+    { "task-description": "Update DSL docs", "task-model": "Haiku 4.5", "task-status": "done" },
+];
 
 function renderChildren(
     children: LineChild[],
@@ -392,19 +425,53 @@ export function fakePreview(
     layoutIndex: number,
     width: number,
     allVariants = false,
+    section: "main" | "subagent" = "main",
 ): {
     lines: PreviewLine[];
     diagnostics: Diagnostic[];
     fallback?: { ansi: string; active: boolean };
     selectedVariants?: Record<string, number>;
+    subagentPreview?: Record<string, PreviewLine[]>;
 } {
     const { ast, diagnostics } = fakeParse(source);
     if (!ast) {
         return { lines: [], diagnostics };
     }
-    const data = sample === "early-session" ? EARLY_SAMPLE : FULL_SAMPLE;
     const li = Math.max(0, Math.min(layoutIndex, ast.layouts.length - 1));
     const layout = ast.layouts[li];
+
+    // Subagent pass: render each width-adaptive container's <subagent> line
+    // once per sample task, keyed by container node id (variant ids for a
+    // responsive layout, else the layout id). Mirrors DSL_API.md "section".
+    if (section === "subagent") {
+        const tasks =
+            sample === "subagent-completed"
+                ? SUBAGENT_COMPLETED_TASKS
+                : SUBAGENT_RUNNING_TASKS;
+        const subagentPreview: Record<string, PreviewLine[]> = {};
+        const hasResponsive = (layout?.children ?? []).some((c) => c.kind === "responsive");
+        if (!hasResponsive) {
+            if (layout?.subagent) {
+                subagentPreview[layout.id] = tasks.map((t) =>
+                    renderLine(layout.subagent!.line, t),
+                );
+            }
+        } else {
+            for (const child of layout?.children ?? []) {
+                if (child.kind !== "responsive") {
+                    continue;
+                }
+                for (const v of child.variants) {
+                    if (v.subagent) {
+                        subagentPreview[v.id] = tasks.map((t) => renderLine(v.subagent!.line, t));
+                    }
+                }
+            }
+        }
+        return { lines: [], diagnostics, subagentPreview };
+    }
+
+    const data = sample === "early-session" ? EARLY_SAMPLE : FULL_SAMPLE;
     const lines: PreviewLine[] = [];
     const selectedVariants: Record<string, number> = {};
     for (const child of layout?.children ?? []) {
@@ -456,12 +523,9 @@ export const FIELDS: FieldCatalogEntry[] = [
         formats: ["percent"],
         preview: { text: "32%", ansi: "32%" },
     },
-];
-
-// The subagent document's field catalog — deliberately disjoint from FIELDS
-// (task-* only, per markup.md), so a switch-tool test can assert the
-// palette actually changed rather than just staying stale.
-export const SUBAGENT_FIELDS: FieldCatalogEntry[] = [
+    // Subagent-region (task-*) fields are part of the single claude-code
+    // catalog now (category "subagent" groups them in the palette and scopes
+    // them to the <subagent> region — see markup.md).
     {
         name: "task-description",
         displayName: "Task Description",
@@ -522,17 +586,11 @@ export function installFakeDslServer(initial: StatusloomNode): FakeServer {
 
             if (url.endsWith("/api/tools")) {
                 return jsonResponse({
-                    tools: [
-                        { id: "claude-code", displayName: "Claude Code" },
-                        { id: "claude-code-subagent", displayName: "Claude Code Subagent" },
-                    ],
+                    tools: [{ id: "claude-code", displayName: "Claude Code" }],
                 });
             }
             if (url.startsWith("/api/dsl/fields")) {
-                const tool = new URL(url, "http://localhost").searchParams.get("tool");
-                return jsonResponse({
-                    fields: tool === "claude-code-subagent" ? SUBAGENT_FIELDS : FIELDS,
-                });
+                return jsonResponse({ fields: FIELDS });
             }
             if (url.endsWith("/api/usage/probe")) {
                 return jsonResponse(server.usageProbe);
@@ -608,6 +666,7 @@ export function installFakeDslServer(initial: StatusloomNode): FakeServer {
                         body.layoutIndex ?? 0,
                         body.width ?? 120,
                         body.allVariants ?? false,
+                        body.section ?? "main",
                     ),
                 );
             }

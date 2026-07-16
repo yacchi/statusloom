@@ -224,7 +224,8 @@ type liveSessionResponse struct {
 //     --draft`, so a session here renders the web configurator's unsaved
 //     draft and emits to /api/live (live preview flows with no extra wiring);
 //     its subagentStatusLine runs `statusloom claude-subagent --draft` so the
-//     agent-task panel rows likewise reflect the claude-code-subagent draft;
+//     agent-task panel rows likewise reflect that same claude-code document's
+//     draft <subagent> region;
 //   - CLAUDE.md explaining the draft edit loop and the config schema;
 //   - sample.json, a representative payload for `statusloom claude < sample.json`;
 //   - a git repo with one initial commit (best-effort, only on first run), so
@@ -272,9 +273,9 @@ func (s *server) provisionMonitorDir() (string, error) {
 		"%s monitor --emit-url http://127.0.0.1:%d/api/live --token %s --draft",
 		exe, s.port, s.token,
 	)
-	// subagentStatusLine renders the claude-code-subagent draft the same way
-	// (--draft), so edits to that document also show up live in this
-	// workspace's agent-task panel rows. Unlike statusLine it needs no
+	// subagentStatusLine renders the same claude-code draft document the same
+	// way (--draft), so edits to its <subagent> region also show up live in
+	// this workspace's agent-task panel rows. Unlike statusLine it needs no
 	// --emit-url/--token: subagent rows have no live-preview forwarding.
 	subagentCommand := fmt.Sprintf("%s claude-subagent --draft", exe)
 	settings := map[string]any{

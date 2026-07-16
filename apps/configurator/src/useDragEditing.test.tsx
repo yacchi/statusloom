@@ -4,6 +4,7 @@ import type { DragEndEvent, DragOverEvent, DragStartEvent } from "@dnd-kit/core"
 import {
     LINE_ID_PREFIX,
     PALETTE_ID_PREFIX,
+    SUBAGENT_LINE_ID_PREFIX,
     VARIANT_CONTAINER_PREFIX,
     VARIANT_ID_PREFIX,
     computeDropTarget,
@@ -185,6 +186,77 @@ describe("computeDropTarget", () => {
         const payload = { kind: "node", id: "L0.0.0", nodeKind: "text" } as const;
         expect(computeDropTarget(lines(), "nope", payload, null, null)).toBeNull();
         expect(computeDropTarget(lines(), `${LINE_ID_PREFIX}9`, payload, null, null)).toBeNull();
+    });
+});
+
+// The <subagent> mutual block: a subagent line (accepts "subagent") takes
+// only task-* payloads (category "subagent"), a main line (accepts "main")
+// only non-task ones, and a structural preset (no category = "any") drops
+// into either. A blocked container never resolves to a drop target.
+describe("computeDropTarget: subagent mutual block", () => {
+    // A main line L0.0 and a layout-direct subagent line L0.s.
+    function containers(): ContainerView[] {
+        return [
+            { id: "L0.0", kind: "line", lineIndex: 0, accepts: "main", childIds: ["L0.0.0"] },
+            { id: "L0.s", kind: "line", accepts: "subagent", childIds: ["L0.s.0"] },
+        ];
+    }
+    const taskField = {
+        kind: "palette",
+        node: { id: "", kind: "field", name: "task-model" },
+        category: "subagent",
+    } as const;
+    const mainField = {
+        kind: "palette",
+        node: { id: "", kind: "field", name: "model" },
+        category: "main",
+    } as const;
+    // A structural preset carries no category -> "any" (drops anywhere).
+    const preset = {
+        kind: "palette",
+        node: { id: "", kind: "text", value: "x" },
+    } as const;
+
+    it("a task-* field lands only in the subagent line", () => {
+        expect(
+            computeDropTarget(containers(), `${SUBAGENT_LINE_ID_PREFIX}L0.s`, taskField, null, null),
+        ).toEqual({ containerId: "L0.s", index: 1 });
+        expect(
+            computeDropTarget(containers(), `${LINE_ID_PREFIX}0`, taskField, null, null),
+        ).toBeNull();
+    });
+
+    it("a non-task field lands only in a main line", () => {
+        expect(
+            computeDropTarget(containers(), `${LINE_ID_PREFIX}0`, mainField, null, null),
+        ).toEqual({ containerId: "L0.0", index: 1 });
+        expect(
+            computeDropTarget(containers(), `${SUBAGENT_LINE_ID_PREFIX}L0.s`, mainField, null, null),
+        ).toBeNull();
+    });
+
+    it("a structural preset drops into either family", () => {
+        expect(
+            computeDropTarget(containers(), `${LINE_ID_PREFIX}0`, preset, null, null),
+        ).toEqual({ containerId: "L0.0", index: 1 });
+        expect(
+            computeDropTarget(containers(), `${SUBAGENT_LINE_ID_PREFIX}L0.s`, preset, null, null),
+        ).toEqual({ containerId: "L0.s", index: 1 });
+    });
+
+    it("a blocked container never becomes the drop target (chip move too)", () => {
+        // Moving a task chip out of the subagent line onto the main line is
+        // blocked, and hovering the main line's own chip is blocked as well.
+        const taskChip = {
+            kind: "node",
+            id: "L0.s.0",
+            nodeKind: "field",
+            category: "subagent",
+        } as const;
+        expect(
+            computeDropTarget(containers(), `${LINE_ID_PREFIX}0`, taskChip, null, null),
+        ).toBeNull();
+        expect(computeDropTarget(containers(), "L0.0.0", taskChip, null, null)).toBeNull();
     });
 });
 
@@ -593,6 +665,59 @@ describe("useDragEditing", () => {
             ),
         );
         expect(onDrop).not.toHaveBeenCalled();
+    });
+
+    it("exposes dragCategory and blocks a cross-family drop over the whole drag", () => {
+        const rows: ContainerView[] = [
+            { id: "L0.0", kind: "line", lineIndex: 0, accepts: "main", childIds: [] },
+            { id: "L0.s", kind: "line", accepts: "subagent", childIds: [] },
+        ];
+        const onDrop = vi.fn<(payload: DragPayload, target: DropTarget) => void>();
+        const view = renderHook(() =>
+            useDragEditing({
+                getContainers: () => rows,
+                makePaletteNode: (key: string) => ({
+                    node: { id: "", kind: "field", name: key.slice("field:".length) } as LineChild,
+                    label: key,
+                }),
+                categoryForPalette: (key: string) =>
+                    key === "field:task-model" ? "subagent" : "main",
+                labelForNodeId: (id) => id,
+                kindForNodeId: () => "field",
+                onDrop,
+            }),
+        );
+
+        act(() =>
+            view.result.current.onDragStart(startEvent(`${PALETTE_ID_PREFIX}field:task-model`)),
+        );
+        // The canvas reads this to highlight/dim the eligible bands.
+        expect(view.result.current.dragCategory).toBe("subagent");
+
+        // Over a main line: blocked -> no drop target painted.
+        act(() =>
+            view.result.current.onDragOver(
+                overEvent(`${PALETTE_ID_PREFIX}field:task-model`, `${LINE_ID_PREFIX}0`),
+            ),
+        );
+        expect(view.result.current.dropTarget).toBeNull();
+
+        // Over the subagent line: allowed.
+        act(() =>
+            view.result.current.onDragOver(
+                overEvent(`${PALETTE_ID_PREFIX}field:task-model`, `${SUBAGENT_LINE_ID_PREFIX}L0.s`),
+            ),
+        );
+        expect(view.result.current.dropTarget).toEqual({ containerId: "L0.s", index: 0 });
+
+        // Dropping on the blocked main line commits nothing; dragCategory resets.
+        act(() =>
+            view.result.current.onDragEnd(
+                endEvent(`${PALETTE_ID_PREFIX}field:task-model`, `${LINE_ID_PREFIX}0`),
+            ),
+        );
+        expect(onDrop).not.toHaveBeenCalled();
+        expect(view.result.current.dragCategory).toBeNull();
     });
 });
 

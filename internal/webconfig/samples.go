@@ -15,12 +15,14 @@ const (
 	sampleSubagentCompleted = "subagent-completed"
 )
 
-// defaultSampleForTool is the sample name handlePreviewDSL and
-// handleDSLFields fall back to when the request/context does not name one
-// explicitly: a session-shaped sample for tool="claude-code", a
-// subagentStatusLine-shaped one for tool="claude-code-subagent".
-func defaultSampleForTool(tool string) string {
-	if tool == string(schema.ToolClaudeCodeSubagent) {
+// defaultSampleForSection is the sample name handlePreviewDSL falls back to
+// when a preview request does not name one explicitly, chosen by which region
+// of the document is being previewed (POST /api/dsl/preview's "section"):
+// the session-shaped "full" sample for the main section, the
+// subagentStatusLine-shaped "subagent-running" sample for the subagent
+// section (one row per task in its <subagent> region).
+func defaultSampleForSection(section string) string {
+	if section == "subagent" {
 		return sampleSubagentRunning
 	}
 	return sampleFull
@@ -139,6 +141,11 @@ func fullSample(now time.Time) schema.StatusSnapshot {
 			Worktree:   "feature-auth",
 			Repo:       &schema.RepoIdentity{Host: "github.com", Owner: "yacchi", Name: "statusloom"},
 		},
+		// Subagent carries one task's data so the "claude-code" catalog's
+		// merged task-* fields (markup.md "subagent") also render a real
+		// preview in GET /api/dsl/fields, instead of falling back to
+		// previewFallback the way they would against a nil Subagent.
+		Subagent: &runningSubagentTasks(now)[0],
 	}
 }
 
@@ -167,24 +174,26 @@ func earlySessionSample(now time.Time) schema.StatusSnapshot {
 	}
 }
 
-// subagentSampleModel and subagentSampleStarted anchor both subagent samples
-// to the same task identity (fixtures/claude/subagent-running.json's first
-// task), so the "running" and "completed" samples read as two snapshots of
-// one task's progress rather than unrelated tasks.
+// subagentSampleStarted anchors every subagent sample task to a fixed start
+// time, so the "running" and "completed" samples read as snapshots of the
+// same tasks' progress rather than unrelated ones, and previews are
+// reproducible across renders.
 var subagentSampleStarted = time.UnixMilli(1784104398889)
 
 const subagentSampleModelID = "claude-opus-4-8"
 
-// subagentRunningSample is a subagentStatusLine preview snapshot (one
-// agent-panel row) for a task still in progress, mirroring
-// fixtures/claude/subagent-running.json's first task.
-func subagentRunningSample(now time.Time) schema.StatusSnapshot {
-	return schema.StatusSnapshot{
-		Tool: schema.ToolSnapshot{ID: schema.ToolClaudeCodeSubagent, Version: "2.1.210"},
-		System: schema.SystemSnapshot{
-			Cwd: "/Users/dev/myapp",
-		},
-		Subagent: &schema.SubagentSnapshot{
+// runningSubagentTasks is the ordered per-task sample data behind both the
+// single-snapshot subagentRunningSample (task 0, for whole-tool / single-field
+// previews) and the multi-row subagent-section preview (POST /api/dsl/preview
+// section="subagent", one row per task — see subagentPreviewTasks). Task 0
+// mirrors fixtures/claude/subagent-running.json's first task; tasks 1-2 are
+// synthetic siblings at different stages/models, so a preview of the default
+// document's <subagent> region (config.claudeCodeDefaultDocument) shows more
+// than one row and exercises its width-gated stats (task-duration/-tokens/
+// -context-percent) at different token counts.
+func runningSubagentTasks(now time.Time) []schema.SubagentSnapshot {
+	return []schema.SubagentSnapshot{
+		{
 			ID:                "b1a2c3d4e5f60718",
 			Type:              "local_agent",
 			Status:            "running",
@@ -197,15 +206,83 @@ func subagentRunningSample(now time.Time) schema.StatusSnapshot {
 			TokenCount:        28454,
 			Cwd:               "/Users/dev/myapp",
 		},
+		{
+			ID:                "c2b3d4e5f6071829",
+			Type:              "local_agent",
+			Status:            "running",
+			Description:       "Fix flaky test in useDragEditing",
+			Label:             "Fix flaky test in useDragEditing",
+			StartedAt:         subagentSampleStarted.Add(2 * time.Minute),
+			ModelID:           "claude-sonnet-4-6",
+			ModelDisplay:      claude.PrettyModelName("claude-sonnet-4-6"),
+			ContextWindowSize: 200000,
+			TokenCount:        9120,
+			Cwd:               "/Users/dev/myapp",
+		},
+		{
+			ID:                "d3c4e5f607182930",
+			Type:              "local_agent",
+			Status:            "running",
+			Description:       "Update DSL_API.md preview contract",
+			Label:             "Update DSL_API.md preview contract",
+			StartedAt:         subagentSampleStarted.Add(4 * time.Minute),
+			ModelID:           subagentSampleModelID,
+			ModelDisplay:      claude.PrettyModelName(subagentSampleModelID),
+			ContextWindowSize: 200000,
+			TokenCount:        640,
+			Cwd:               "/Users/dev/myapp",
+		},
 	}
 }
 
-// subagentCompletedSample is the same task as subagentRunningSample once it
-// has finished, mirroring fixtures/claude/subagent-completed.json's first
-// task.
+// completedSubagentTasks is runningSubagentTasks's tasks once each has
+// finished (status flipped, token count increased), mirroring
+// fixtures/claude/subagent-completed.json's relationship to
+// subagent-running.json.
+func completedSubagentTasks(now time.Time) []schema.SubagentSnapshot {
+	tasks := runningSubagentTasks(now)
+	tasks[0].Status, tasks[0].TokenCount = "completed", 28663
+	tasks[1].Status, tasks[1].TokenCount = "completed", 9420
+	tasks[2].Status, tasks[2].TokenCount = "completed", 812
+	return tasks
+}
+
+// subagentPreviewTasks resolves a subagent-section preview sample name to its
+// ordered per-task list (POST /api/dsl/preview section="subagent": one
+// rendered row per task). ok is false for a name that is neither subagent
+// sample.
+func subagentPreviewTasks(name string, now time.Time) ([]schema.SubagentSnapshot, bool) {
+	switch name {
+	case sampleSubagentRunning:
+		return runningSubagentTasks(now), true
+	case sampleSubagentCompleted:
+		return completedSubagentTasks(now), true
+	default:
+		return nil, false
+	}
+}
+
+// subagentRunningSample is a subagentStatusLine preview snapshot (one
+// agent-panel row) for a task still in progress: runningSubagentTasks's first
+// task, mirroring fixtures/claude/subagent-running.json's first task. Used
+// for the whole-tool "subagent-running" sample name (sampleSnapshot) and as
+// the base for GET /api/dsl/fields' single-field task-* previews
+// (fullSample's embedded Subagent).
+func subagentRunningSample(now time.Time) schema.StatusSnapshot {
+	return schema.StatusSnapshot{
+		Tool: schema.ToolSnapshot{ID: schema.ToolClaudeCode, Version: "2.1.210"},
+		System: schema.SystemSnapshot{
+			Cwd: "/Users/dev/myapp",
+		},
+		Subagent: &runningSubagentTasks(now)[0],
+	}
+}
+
+// subagentCompletedSample is subagentRunningSample's task once it has
+// finished, mirroring fixtures/claude/subagent-completed.json's first task.
 func subagentCompletedSample(now time.Time) schema.StatusSnapshot {
 	snap := subagentRunningSample(now)
-	snap.Subagent.Status = "completed"
-	snap.Subagent.TokenCount = 28663
+	completed := completedSubagentTasks(now)[0]
+	snap.Subagent = &completed
 	return snap
 }

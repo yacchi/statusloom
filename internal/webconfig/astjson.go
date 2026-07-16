@@ -16,12 +16,19 @@ package webconfig
 //	                     index into layout.Children)
 //	L{i}.{p}.v{v}        the v-th <variant> of responsive L{i}.{p}
 //	L{i}.{p}.v{v}.{j}    the j-th <line> of that variant
+//	L{i}.s               the layout-direct <subagent> region's <line> (a
+//	                     dedicated LayoutNode field, not a Children entry)
+//	L{i}.{p}.v{v}.s      the <subagent> region's <line> inside variant
+//	                     L{i}.{p}.v{v} (a dedicated VariantNode field)
 //	{parent}.{k}         the k-th mixed-content child of a line/span
 //	                     (index into Children; spans nest, so paths grow)
 //	{owner}.cr{c}        the c-th <color-rule> of a field/span/text owner
 //
 // A responsive-free layout's line at position p keeps the historical L{i}.{p}
 // form (child index == line index), so IDs are unchanged for such documents.
+// A <subagent> region likewise holds at most one <line>, so its "L{i}.s" /
+// "L{i}.{p}.v{v}.s" id is shared between the region and that line (no extra
+// nesting level), and its children read "L{i}.s.{k}" / "L{i}.{p}.v{v}.s.{k}".
 //
 // The same traversal produces the AST JSON (buildAST) and the dsl.Node ->
 // node-ID map used to label preview segments, so an ID in the AST always
@@ -91,6 +98,47 @@ func responsiveIDs(root *dsl.StatusloomNode) map[*dsl.ResponsiveNode]string {
 				out[r] = fmt.Sprintf("L%d.%d", i, p)
 			}
 		}
+	}
+	return out
+}
+
+// subagentContainers resolves a layout's subagent-preview containers, keyed
+// by the AST node ID of the container the config editor's canvas addresses
+// (POST /api/dsl/preview's section="subagent" mode):
+//
+//   - When layout has a <responsive> child (only the first one participates —
+//     the same restriction render.RenderSubagentLine's resolveSubagentRegion
+//     applies), one entry per <variant>, keyed by that variant's own ID
+//     ("L{i}.{p}.v{v}"). A variant's own <subagent> wins; a variant with none
+//     of its own falls back to the layout's (mirroring resolveSubagentRegion
+//     exactly, so the preview always agrees with the real render).
+//   - Otherwise, a single entry keyed by the layout's own ID ("L{i}") holding
+//     layout.Subagent.
+//
+// A container with no subagent anywhere (neither its own nor a layout-level
+// fallback) is omitted from the result.
+func subagentContainers(layout *dsl.LayoutNode, layoutID string) map[string]*dsl.SubagentNode {
+	out := map[string]*dsl.SubagentNode{}
+	for p, ch := range layout.Children {
+		r, ok := ch.(*dsl.ResponsiveNode)
+		if !ok {
+			continue
+		}
+		responsiveID := fmt.Sprintf("%s.%d", layoutID, p)
+		for v, vr := range r.Variants {
+			sub := vr.Subagent
+			if sub == nil {
+				sub = layout.Subagent
+			}
+			if sub == nil {
+				continue
+			}
+			out[fmt.Sprintf("%s.v%d", responsiveID, v)] = sub
+		}
+		return out
+	}
+	if layout.Subagent != nil {
+		out[layoutID] = layout.Subagent
 	}
 	return out
 }
@@ -173,9 +221,41 @@ func (b *astBuilder) layout(l *dsl.LayoutNode, i int) map[string]any {
 		}
 	}
 	m["children"] = children
+	if l.Subagent != nil {
+		m["subagent"] = b.subagent(l.Subagent, id)
+	}
 	if len(l.Comments) > 0 {
 		cs := make([]any, 0, len(l.Comments))
 		for k, c := range l.Comments {
+			cs = append(cs, b.comment(c, fmt.Sprintf("%s.c%d", id, k)))
+		}
+		m["comments"] = cs
+	}
+	return m
+}
+
+// subagent emits a <subagent> region as a JSON node: kind "subagent" holding
+// a single "line" (and optional interleaved "comments"). Like responsive/
+// variant, *dsl.SubagentNode does not implement dsl.Node — it lives in a
+// dedicated LayoutNode.Subagent / VariantNode.Subagent field, never in a
+// mixed-content Children list — so it cannot register itself in b.ids.
+//
+// Its ID is derived from its container's ID with a ".s" suffix (DSL_API.md
+// "Node IDs"): "L{i}.s" for a layout-direct region, "L{i}.{p}.v{v}.s" for a
+// region inside variant "L{i}.{p}.v{v}". A <subagent> holds at most one
+// <line>, so — mirroring how a responsive-free layout's line at position p
+// keeps the historical "L{i}.{p}" form instead of gaining an extra nesting
+// level — the nested line reuses the SAME id rather than a further "L{i}.s.0"
+// suffix; its own children then read "L{i}.s.{k}".
+func (b *astBuilder) subagent(sub *dsl.SubagentNode, containerID string) map[string]any {
+	id := containerID + ".s"
+	m := map[string]any{"id": id, "kind": "subagent", "range": rangeJSON(sub.Meta.SourceRange)}
+	if sub.Line != nil {
+		m["line"] = b.line(sub.Line, id)
+	}
+	if len(sub.Comments) > 0 {
+		cs := make([]any, 0, len(sub.Comments))
+		for k, c := range sub.Comments {
 			cs = append(cs, b.comment(c, fmt.Sprintf("%s.c%d", id, k)))
 		}
 		m["comments"] = cs
@@ -216,6 +296,9 @@ func (b *astBuilder) variant(vr *dsl.VariantNode, id string) map[string]any {
 		lines = append(lines, b.line(ln, fmt.Sprintf("%s.%d", id, j)))
 	}
 	m["lines"] = lines
+	if vr.Subagent != nil {
+		m["subagent"] = b.subagent(vr.Subagent, id)
+	}
 	if len(vr.Comments) > 0 {
 		cs := make([]any, 0, len(vr.Comments))
 		for k, c := range vr.Comments {
@@ -278,6 +361,12 @@ func (b *astBuilder) node(n dsl.Node, id string) map[string]any {
 		}
 		if t.Hyperlink {
 			m["hyperlink"] = true
+		}
+		if t.MinWidth != nil {
+			m["min-width"] = *t.MinWidth
+		}
+		if t.Align != "" {
+			m["align"] = t.Align
 		}
 		b.common(m, t.Common, id)
 		return m
@@ -402,6 +491,10 @@ type astNodeJSON struct {
 	// (a layout's ordered line/responsive children use the shared "children"
 	// field below.)
 
+	// subagent (a layout's or variant's optional <subagent> region)
+	Subagent *astNodeJSON `json:"subagent"`
+	Line     *astNodeJSON `json:"line"` // subagent's single <line>, if present
+
 	// common display attributes
 	Color         string        `json:"color"`
 	Background    string        `json:"background"`
@@ -429,6 +522,8 @@ type astNodeJSON struct {
 	Currency  string `json:"currency"`
 	Raw       *bool  `json:"raw"`
 	Hyperlink *bool  `json:"hyperlink"`
+	MinWidth  *int   `json:"min-width"`
+	Align     string `json:"align"`
 
 	// flex
 	Size string `json:"size"`
@@ -494,10 +589,26 @@ func jsonToLayout(lj astNodeJSON) *dsl.LayoutNode {
 			ln.Children = append(ln.Children, jsonToLine(cj))
 		}
 	}
+	if lj.Subagent != nil {
+		ln.Subagent = jsonToSubagent(*lj.Subagent)
+	}
 	for i := range lj.Comments {
 		ln.Comments = append(ln.Comments, jsonToComment(lj.Comments[i]))
 	}
 	return ln
+}
+
+// jsonToSubagent rebuilds a <subagent> region's dsl node from its decoded
+// JSON (the "subagent" field of a layout/variant node).
+func jsonToSubagent(j astNodeJSON) *dsl.SubagentNode {
+	sa := &dsl.SubagentNode{Meta: metaJSON(j)}
+	if j.Line != nil {
+		sa.Line = jsonToLine(*j.Line)
+	}
+	for i := range j.Comments {
+		sa.Comments = append(sa.Comments, jsonToComment(j.Comments[i]))
+	}
+	return sa
 }
 
 func jsonToResponsive(j astNodeJSON) *dsl.ResponsiveNode {
@@ -515,6 +626,9 @@ func jsonToVariant(j astNodeJSON) *dsl.VariantNode {
 	vr := &dsl.VariantNode{Meta: metaJSON(j)}
 	for _, linej := range j.Lines {
 		vr.Lines = append(vr.Lines, jsonToLine(linej))
+	}
+	if j.Subagent != nil {
+		vr.Subagent = jsonToSubagent(*j.Subagent)
 	}
 	for i := range j.Comments {
 		vr.Comments = append(vr.Comments, jsonToComment(j.Comments[i]))
@@ -559,6 +673,8 @@ func jsonToNode(j astNodeJSON) dsl.Node {
 		if j.Hyperlink != nil {
 			n.Hyperlink = *j.Hyperlink
 		}
+		n.MinWidth = j.MinWidth
+		n.Align = j.Align
 		return n
 	case "flex":
 		return &dsl.FlexNode{Meta: metaJSON(j), Size: j.Size}

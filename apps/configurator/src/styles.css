@@ -972,6 +972,130 @@ input[type="number"] {
     cursor: grabbing;
 }
 
+/* ---- subagent region band ---- */
+
+/* The subagent region always sits BELOW its container's lines (mirroring the
+   real subagent statusline). A dashed left border and offset visually mark it
+   as the separate "task rows" area without changing chip widths on selection
+   (per the no-width-change-on-selection UI rule). */
+.subagent-band {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 6px;
+    padding: 4px 2px 4px 8px;
+    border-left: 2px dashed var(--border);
+}
+
+.subagent-band-empty {
+    margin-top: 6px;
+    padding-left: 8px;
+}
+
+.subagent-band-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.subagent-band-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.6;
+    user-select: none;
+}
+
+.subagent-add {
+    align-self: flex-start;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    background: transparent;
+    opacity: 0.6;
+    font-size: 11px;
+}
+
+.subagent-add:hover {
+    opacity: 1;
+    border-color: var(--accent);
+}
+
+.subagent-delete {
+    padding: 0 4px;
+    font-size: 11px;
+    opacity: 0.5;
+    background: transparent;
+}
+
+.subagent-delete:hover {
+    opacity: 1;
+    color: var(--danger);
+}
+
+/* Always shown in the band header while a region exists: a one-click way to
+   (re)seed the subagent row with the built-in default (presets.ts's
+   makeDefaultSubagentLine), whether the row is empty or already populated
+   (overwriting is undoable via history). */
+.subagent-fill-default {
+    margin-left: auto;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    background: transparent;
+    opacity: 0.75;
+    font-size: 11px;
+}
+
+.subagent-fill-default:hover {
+    opacity: 1;
+    border-color: var(--accent);
+}
+
+/* The subagent line rendered once per sample task (read-only preview). Each
+   task is its own row; a per-field <span> lets the selected template field be
+   highlighted across every task row at once. */
+.subagent-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-family: var(--mono, monospace);
+}
+
+/* Each task row is a white-space:pre block (NOT a flex row) so the per-field
+   segments render as literal inline text at their real width. A flex layout
+   would shrink the <flex/> filler span and collapse the right-alignment; a
+   pre block keeps the backend-computed spacing intact, exactly like the main
+   preview surface. The rows live inside a ${width}ch .terminal-width wrapper
+   (set in Canvas.tsx), so wide content scrolls horizontally rather than
+   forcing the band wider than the editing column. */
+.subagent-preview-line {
+    display: block;
+    white-space: pre;
+    opacity: 0.85;
+}
+
+.subagent-seg {
+    display: inline;
+}
+
+.subagent-seg.selected {
+    outline: 1px solid var(--accent);
+    border-radius: 2px;
+}
+
+/* Paint-only drop eligibility during a family-restricted (field) drag:
+   highlight the rows that accept the dragged content, dim the ones that
+   don't. Never affects layout (see the #185 note in useDragEditing.ts). */
+.row-track.drop-eligible {
+    outline: 1px dashed var(--accent);
+    outline-offset: 2px;
+}
+
+.row-track.drop-ineligible {
+    opacity: 0.4;
+}
+
 /* ---- bottom footer bar (live monitor) ---- */
 
 /* Docked at the very bottom of the app column, below the terminal drawer.

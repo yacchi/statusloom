@@ -34,13 +34,14 @@ func TestTools(t *testing.T) {
 	if err := decodeJSON(resp.Body, &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(body.Tools) != 2 {
-		t.Fatalf("len(tools) = %d, want 2", len(body.Tools))
+	// Only "claude-code" is served: its <subagent> region (markup.md
+	// "subagent") carries the subagentStatusLine task-* fields inside this
+	// one document (plans/subagent-region-dsl.md), so the config UI needs
+	// only a single tab/tool entry.
+	if len(body.Tools) != 1 {
+		t.Fatalf("len(tools) = %d, want 1", len(body.Tools))
 	}
 	if body.Tools[0].ID != "claude-code" || body.Tools[0].DisplayName != "Claude Code" {
 		t.Errorf("tools[0] = %+v, want {claude-code, Claude Code}", body.Tools[0])
-	}
-	if body.Tools[1].ID != "claude-code-subagent" || body.Tools[1].DisplayName != "Claude Code Subagent" {
-		t.Errorf("tools[1] = %+v, want {claude-code-subagent, Claude Code Subagent}", body.Tools[1])
 	}
 }

@@ -25,16 +25,17 @@ type subagentLine struct {
 // payload `statusloom claude-subagent --preview` renders, so the agent-panel
 // row can be previewed without hand-crafting a tasks[] JSON payload (mirroring
 // what a sample.json gives `statusloom claude`). It carries three tasks that
-// differ in status, model, and token usage so each row of the default
-// claude-code-subagent document renders visibly differently:
+// differ in status, model, and token usage so each row of the claude-code
+// document's <subagent> region renders visibly differently:
 //
 //   - a running Opus task partway through its context window (~21%)
 //   - a running Sonnet task just getting started (~8%)
 //   - a completed Haiku task with the lightest usage (~4%)
 //
-// columns is wide enough (120) to clear every width breakpoint the default
-// document's task-duration/task-tokens/task-context-percent fields gate on
-// (width ge 48/64/80), so every stat renders. startTime values are fixed
+// columns is wide enough (120) to clear typical width breakpoints a
+// <subagent> region's task-duration/task-tokens/task-context-percent fields
+// might gate on, so every stat renders once the claude-code document defines
+// such a region. startTime values are fixed
 // past epoch milliseconds (not relative to time.Now()): task-duration is
 // elapsed wall-clock and grows with real time, exactly like the captured
 // fixtures/claude/subagent-*.json payloads.
@@ -98,23 +99,27 @@ const subagentPreviewPayload = `{
 // emits no line at all (the caller's default DSL rendering never falls
 // back to the session fallback line for a subagent render).
 //
+// It reads and renders the same single claude-code document the `claude`
+// subcommand does (markup.md "subagent" — subagent rows come from the
+// document's <subagent> region, not a separate document/tool), resolving
+// the region per RenderSubagentLine's container-selection rule against the
+// task's columns.
+//
 // With --draft (used by the monitor workspace's subagentStatusLine, mirroring
 // `statusloom monitor --draft`) it renders the shared draft
-// claude-code-subagent.draft.xml instead, falling back to the saved document
-// when the draft is absent or invalid. Without --draft, output is
-// byte-identical to before this flag existed.
+// claude-code.draft.xml instead, falling back to the saved document when the
+// draft is absent or invalid.
 //
 // With --preview, stdin is not read at all (even if piped) - the built-in
 // subagentPreviewPayload is decoded instead, so the agent-panel row can be
 // previewed without hand-crafting a tasks[] JSON payload. --preview composes
 // with --draft exactly like the stdin path: --preview alone renders the
-// saved (or built-in default) claude-code-subagent document, and
-// --preview --draft renders the shared draft against the same built-in
-// payload.
+// saved (or built-in default) claude-code document, and --preview --draft
+// renders the shared draft against the same built-in payload.
 func runSubagentRender(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("claude-subagent", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	draft := fs.Bool("draft", false, "render against the shared draft document (claude-code-subagent.draft.xml) instead of the saved document")
+	draft := fs.Bool("draft", false, "render against the shared draft document (claude-code.draft.xml) instead of the saved document")
 	preview := fs.Bool("preview", false, "render a built-in representative payload instead of reading stdin (no JSON needed)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -137,7 +142,7 @@ func runSubagentRender(args []string, stdin io.Reader, stdout, stderr io.Writer)
 	}
 	columns := claude.DecodeSubagentColumns(raw)
 
-	tool := string(schema.ToolClaudeCodeSubagent)
+	tool := string(schema.ToolClaudeCode)
 	doc := resolveRenderDocument(tool, *draft, stderr)
 	opts := render.Options{Width: columns, Now: time.Now()}
 
@@ -146,11 +151,11 @@ func runSubagentRender(args []string, stdin io.Reader, stdout, stderr io.Writer)
 
 	for _, task := range tasks {
 		snap := schema.StatusSnapshot{
-			Tool:     schema.ToolSnapshot{ID: schema.ToolClaudeCodeSubagent},
+			Tool:     schema.ToolSnapshot{ID: schema.ToolClaudeCode},
 			System:   schema.SystemSnapshot{Cwd: task.Cwd},
 			Subagent: &task,
 		}
-		content := joinVisibleLines(render.RenderDocument(snap, doc, opts))
+		content := joinVisibleLines(render.RenderSubagentLine(snap, doc, opts))
 		if content == "" {
 			continue
 		}

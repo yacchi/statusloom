@@ -193,6 +193,89 @@ git情報収集の設定。rootの直下に0または1個だけ置ける。省�
 
 compactとの関係: `compact-threshold`によるcompact変換は`responsive`と当面併存する（compactは全体の閾値、`responsive`はコンテナ単位の表現切替）。自然幅の計測はその時点のcompact状態で行う。
 
+### `subagent`
+
+Claude Codeの`subagentStatusLine`（実行中subagentタスクのパネル。**1タスク=1行**で描画され、実ステータスラインの下に表示される）を編集するための領域。`claude-code-subagent`のような独立tool/独立ドキュメントは持たない。同一の`claude-code`ドキュメント内に、幅選択コンテナの子として`<subagent>`要素を置く。
+
+```xml
+<subagent>
+  <line>
+    <field name="task-description"/>
+  </line>
+</subagent>
+```
+
+配置ルール:
+
+* `<subagent>`は**幅選択コンテナの子**としてのみ置ける。具体的には`<layout>`の直下（`responsive`を使わないレイアウト）、または`<responsive>`を使う場合は各`<variant>`の中
+* ソース上・描画上ともに、そのコンテナの`<line>`群（`layout`直下のlines、またはその`variant`のlines）より**後**に置く（＝メインの行の下に表示される）
+* コンテナ（`layout`または各`variant`）ごとに**最大1つ**
+* `<subagent>`は**ちょうど1つの`<line>`**を含む。`<responsive>`/`<variant>`の入れ子や複数`<line>`はvalidation error
+* `<subagent>`自身は装飾属性を持たない（`<responsive>`/`<variant>`と同様）。中の`<line>`/`<span>`/`<field>`は通常どおり文字装飾・`prefix`/`suffix`/`padding`・`optional`・`when`・`color-rule`を持てる
+
+フィールドのスコープ規則:
+
+* `<subagent><line>`の中に置けるのは`Category:"subagent"`のfield（`task-description`、`task-model`、`task-model-id`、`task-status`、`task-tokens`、`task-context-size`、`task-context-percent`、`task-duration`、`task-effort`）と、tool非依存の`width`メトリクス（`when`/`color-rule`用）のみ
+* メインの`<line>`（`layout`直下 / `variant`内）には`Category:"subagent"`**以外**のfieldのみ置ける
+* 違反はvalidation error（task-*をメインlineに置く、非task-*を`<subagent>`内に置く、いずれも不可）
+
+描画セマンティクス（2パス。同一ドキュメントを両パスが共有する）:
+
+* **メインパス**（`claude`サブコマンド）: active layoutのlines（`responsive`使用時は幅で選ばれたvariantのlines）を描画し、`<subagent>`は**無視**する。現行の`claude`出力に影響しない
+* **subagentパス**（`claude-subagent`サブコマンド）: active layoutを取り、幅で描画コンテナを選択し、その`<subagent>`の`<line>`を**タスクごとに1行**描画する（1タスク=1行、空行はskip）。コンテナ選択（subagent解決規則）は次の順:
+  1. active layoutが`<responsive>`を持つ → 幅（subagent stdinの`columns`）で選ばれた`<variant>`の`<subagent>`
+  2. `<responsive>`を持たない、または選ばれた`<variant>`に`<subagent>`が無い → `<layout>`直下の`<subagent>`へフォールバック
+  3. いずれも`<subagent>`が無ければ、そのタスクは出力なし
+* メインパスとsubagentパスは同じ端末幅（`COLUMNS`）を見るため同じ`<variant>`が選ばれる。したがってメインの表現とsubagent行の表現の幅一貫性は構造的に保証される
+
+例（`responsive`あり: 各`variant`に`<subagent>`を内包）:
+
+```xml
+<layout active="true">
+  <responsive>
+    <variant>
+      <line>
+        <field name="model"/>
+        <text role="separator" padding="1">|</text>
+        <field name="context-percentage-usable" format="percent" precision="0"/>
+      </line>
+      <subagent>
+        <line>
+          <field name="task-description"/>
+          <field name="task-status" prefix=" "/>
+        </line>
+      </subagent>
+    </variant>
+    <variant>
+      <line><field name="model"/></line>
+      <subagent>
+        <line><field name="task-description"/></line>
+      </subagent>
+    </variant>
+  </responsive>
+</layout>
+```
+
+広い方の`variant`が選ばれれば、メイン行は`Model: … | Context: …`、subagent行はタスクごとに`<説明> <状態>`で描画される。狭い方が選ばれればメイン行はmodelのみ、subagent行は説明のみになる。
+
+例（`responsive`を使わない場合: `<layout>`直下に`<subagent>`）:
+
+```xml
+<layout active="true">
+  <line>
+    <field name="model"/>
+    <text role="separator" padding="1">|</text>
+    <field name="context-percentage-usable" format="percent" precision="0"/>
+  </line>
+  <subagent>
+    <line>
+      <field name="task-description"/>
+      <field name="task-tokens" prefix=" · ↓ " format="compact-number" optional="task-tokens"/>
+    </line>
+  </subagent>
+</layout>
+```
+
 ### `span`
 
 子ノードをまとめるコンテナ。
@@ -679,18 +762,23 @@ kebab-caseの名前付きメトリクス:
 
 #### `width`（全ツール共通・端末幅ブレイクポイント）
 
-`width` は端末の幅（桁数）を返す全ツール共通のメトリクスで、`when` で幅に応じて`<field>`/`<span>`の表示/非表示を切り替えるために使う。1行しか出せないSubagentLine（subagentStatusLine）で特に有用。
+`width` は端末の幅（桁数）を返す全ツール共通のメトリクスで、`when` で幅に応じて`<field>`/`<span>`の表示/非表示を切り替えるために使う。`<subagent>`要素（→「subagent」参照）は単一`<line>`しか持てず`<responsive>`/`<variant>`の入れ子で表現を切り替えられないため、その1行内で幅に応じて表示するfieldを段階的に増減させたい場合に特に有用。
 
 * 値は`Options.Width`（`claude`は`COLUMNS`、`claude-subagent`はpayloadの`columns`から解決）。
 * **幅不明時（`Options.Width <= 0`。例: Claude Code v2.1.153未満や`COLUMNS`未提供）は無制限扱い**（大きなsentinel値を返す）。よって`width ge N`は真となり、幅が判定できないときに内容を隠すことはない。
 * `self`メトリックではないため、`<field>`だけでなく`<span>`/`<text>`でも参照できる。`optional`と`when`は併用でき、両方満たすときのみ表示される（AND）。
 
-例（幅が広がるにつれ段階的にstatsを出す）:
+例（`<subagent>`の`<line>`内で、幅が広がるにつれ段階的にstatsを出す）:
 
 ```xml
-<field name="task-duration" format="duration" when="width ge 48"/>
-<field name="task-tokens" prefix=" · ↓ " format="compact-number" optional="task-tokens" when="width ge 64"/>
-<field name="task-context-percent" prefix=" (" suffix=")" format="percent" precision="0" optional="task-context-percent" when="width ge 80"/>
+<subagent>
+  <line>
+    <field name="task-description"/>
+    <field name="task-duration" format="duration" when="width ge 48"/>
+    <field name="task-tokens" prefix=" · ↓ " format="compact-number" optional="task-tokens" when="width ge 64"/>
+    <field name="task-context-percent" prefix=" (" suffix=")" format="percent" precision="0" optional="task-context-percent" when="width ge 80"/>
+  </line>
+</subagent>
 ```
 
 selfメトリックを持つfield（`self`参照が可能）と対応メトリクス:

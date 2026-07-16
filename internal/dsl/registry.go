@@ -396,11 +396,13 @@ var widthMetric = MetricDef{
 	},
 }
 
-// claudeCodeSubagentFields is the tool="claude-code-subagent" content field
-// catalog: one entry per subagentStatusLine task (an agent-panel row), per
-// the subagent-status-line implementation spec. All fields read
-// schema.StatusSnapshot.Subagent, which is nil outside a subagent render
-// context (the renderer treats every field here as nil-safe).
+// claudeCodeSubagentFields is the subagent (task-*) content field catalog:
+// one entry per subagentStatusLine task (an agent-panel row), per the
+// subagent-status-line implementation spec. It is merged into the unified
+// "claude-code" catalog (see toolCatalogs) rather than registered under a
+// tool name of its own. All fields read schema.StatusSnapshot.Subagent,
+// which is nil outside a subagent render context (the renderer treats every
+// field here as nil-safe).
 var claudeCodeSubagentFields = []FieldDef{
 	{
 		Name: "task-description", Category: "subagent", DisplayName: "Task Description",
@@ -454,8 +456,10 @@ var claudeCodeSubagentFields = []FieldDef{
 	},
 }
 
-// claudeCodeSubagentMetrics is the tool="claude-code-subagent" named-metric
-// catalog, backing the self metrics above for when/color-rule expressions.
+// claudeCodeSubagentMetrics is the subagent (task-*) named-metric catalog,
+// backing the self metrics above for when/color-rule expressions. Like
+// claudeCodeSubagentFields, it is merged into the unified "claude-code"
+// catalog rather than registered under a tool name of its own.
 var claudeCodeSubagentMetrics = []MetricDef{
 	{
 		Name: "task-token-count", DisplayName: "Task Tokens",
@@ -482,13 +486,54 @@ type toolCatalog struct {
 	metrics []MetricDef
 }
 
-// toolCatalogs is keyed by the `tool` root attribute value: "claude-code"
-// (the session statusLine) and "claude-code-subagent" (one row per
-// subagentStatusLine task). Unknown tools yield zero values / false from
-// every lookup function below.
+// concatFields concatenates field catalogs, dropping any duplicate name
+// (first occurrence wins). It is used to merge the subagent task-* fields
+// into the unified "claude-code" catalog so FieldByName("claude-code",
+// "task-model") resolves; the Category:"subagent" marker is preserved and is
+// what the validator's field-scope check and the palette grouping key on.
+func concatFields(groups ...[]FieldDef) []FieldDef {
+	var out []FieldDef
+	seen := make(map[string]bool)
+	for _, g := range groups {
+		for _, f := range g {
+			if seen[f.Name] {
+				continue
+			}
+			seen[f.Name] = true
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// concatMetrics concatenates metric catalogs, dropping any duplicate name
+// (first occurrence wins). Both claudeCodeMetrics and claudeCodeSubagentMetrics
+// end with the shared widthMetric, so the merge keeps only the first copy.
+func concatMetrics(groups ...[]MetricDef) []MetricDef {
+	var out []MetricDef
+	seen := make(map[string]bool)
+	for _, g := range groups {
+		for _, m := range g {
+			if seen[m.Name] {
+				continue
+			}
+			seen[m.Name] = true
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// toolCatalogs is keyed by the `tool` root attribute value. "claude-code" is
+// the sole Claude Code catalog: it merges the subagent task-* fields/metrics
+// (claudeCodeSubagentFields/claudeCodeSubagentMetrics) so a single document
+// can carry both its main lines and a <subagent> region. Unknown tools yield
+// zero values / false from every lookup function below.
 var toolCatalogs = map[string]toolCatalog{
-	"claude-code":          {fields: claudeCodeFields, metrics: claudeCodeMetrics},
-	"claude-code-subagent": {fields: claudeCodeSubagentFields, metrics: claudeCodeSubagentMetrics},
+	"claude-code": {
+		fields:  concatFields(claudeCodeFields, claudeCodeSubagentFields),
+		metrics: concatMetrics(claudeCodeMetrics, claudeCodeSubagentMetrics),
+	},
 }
 
 // FieldByName looks up a field definition by tool and field name.

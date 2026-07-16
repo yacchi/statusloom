@@ -11,10 +11,9 @@ import "time"
 type ToolID string
 
 const (
-	ToolClaudeCode         ToolID = "claude-code"
-	ToolClaudeCodeSubagent ToolID = "claude-code-subagent"
-	ToolCodex              ToolID = "codex"
-	ToolCopilot            ToolID = "github-copilot"
+	ToolClaudeCode ToolID = "claude-code"
+	ToolCodex      ToolID = "codex"
+	ToolCopilot    ToolID = "github-copilot"
 )
 
 // StatusSnapshot is the normalized, tool-agnostic representation of a

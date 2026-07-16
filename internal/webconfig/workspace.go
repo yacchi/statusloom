@@ -93,9 +93,10 @@ falls back to the saved document. The user saves them from the web UI.
 
 The same applies to the **agent panel row** shown for running sub-agent
 tasks: this session's ` + "`subagentStatusLine`" + ` runs
-` + "`statusloom claude-subagent --draft`" + `, so editing the
-` + "`claude-code-subagent`" + ` document in the web UI (a separate document
-from the main status line) updates that row live here too.
+` + "`statusloom claude-subagent --draft`" + `, so editing the same
+` + "`claude-code`" + ` document's ` + "`<subagent>`" + ` region (markup.md
+"subagent") in the web UI updates that row live here too — it is not a
+separate document from the main status line.
 
 ## Preview a render
 
@@ -110,8 +111,8 @@ tasks[] payload:
     statusloom claude-subagent --preview
 
 Add ` + "`--draft`" + ` to preview that same built-in payload against the
-` + "`claude-code-subagent`" + ` draft you're editing here, instead of the
-saved document:
+draft ` + "`<subagent>`" + ` region of the ` + "`claude-code`" + ` document
+you're editing here, instead of the saved document:
 
     statusloom claude-subagent --preview --draft
 

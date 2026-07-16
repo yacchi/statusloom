@@ -18,6 +18,7 @@ import type {
     LineNode,
     ResponsiveNode,
     StatusloomNode,
+    SubagentNode,
     VariantNode,
 } from "./types.ts";
 
@@ -40,6 +41,10 @@ export type IdStep =
     | { t: "variant"; v: number }
     | { t: "variantComment"; k: number }
     | { t: "variantLine"; j: number }
+    // The ".s" segment of a subagent region ("L{i}.s" / "L{i}.{p}.v{v}.s").
+    // It carries no index: a region holds at most one <line>, which shares the
+    // region's ID, so the step navigates straight to that line.
+    | { t: "subagent" }
     | { t: "child"; k: number }
     | { t: "colorRule"; c: number };
 
@@ -81,6 +86,15 @@ export function parseNodeId(id: string): IdStep[] | null {
         steps.push({ t: "layoutComment", k: Number(lc[1]) });
         return steps;
     }
+
+    // "L{i}.s..." — a <subagent> region directly under the layout. Its single
+    // <line> shares the region's ID (no extra nesting level), so the remainder
+    // of the path is that line's own child/color-rule tail.
+    if (parts[idx] === "s") {
+        steps.push({ t: "subagent" });
+        return parseChildTail(steps, parts, idx + 1);
+    }
+
     if (!/^\d+$/.test(parts[idx])) {
         return null;
     }
@@ -118,6 +132,12 @@ export function parseNodeId(id: string): IdStep[] | null {
             return steps;
         }
 
+        // "L{i}.{p}.v{v}.s..." — a <subagent> region inside the variant.
+        if (parts[idx] === "s") {
+            steps.push({ t: "subagent" });
+            return parseChildTail(steps, parts, idx + 1);
+        }
+
         if (!/^\d+$/.test(parts[idx])) {
             return null;
         }
@@ -125,6 +145,14 @@ export function parseNodeId(id: string): IdStep[] | null {
         idx += 1;
     }
 
+    return parseChildTail(steps, parts, idx);
+}
+
+// parseChildTail consumes a node ID's trailing mixed-content child indices and
+// an optional final "cr{c}" color-rule, pushing "child"/"colorRule" steps onto
+// `steps`. Returns null on any malformed segment (a color-rule must be the last
+// segment). Shared by the line, variant-line, and subagent-line paths.
+function parseChildTail(steps: IdStep[], parts: string[], idx: number): IdStep[] | null {
     for (; idx < parts.length; idx += 1) {
         const cr = /^cr(\d+)$/.exec(parts[idx]);
         if (cr) {
@@ -230,6 +258,13 @@ function childOf(node: AstNode, step: IdStep): AstNode | null {
             return node.kind === "variant" ? (node.comments?.[step.k] ?? null) : null;
         case "variantLine":
             return node.kind === "variant" ? (node.lines[step.j] ?? null) : null;
+        case "subagent":
+            // A subagent region's single <line> shares the region's ID, so the
+            // "subagent" step resolves straight to that line (the region
+            // wrapper itself is only ever touched by add/deleteSubagent).
+            return node.kind === "layout" || node.kind === "variant"
+                ? (node.subagent?.line ?? null)
+                : null;
         case "child":
             return node.kind === "line" || node.kind === "span"
                 ? (node.children[step.k] ?? null)
@@ -345,6 +380,23 @@ function replaceChild(node: AstNode, step: IdStep, next: AstNode | null): AstNod
         case "variantLine": {
             const v = node as VariantNode;
             return { ...v, lines: spliceArr(v.lines, step.j, next as LineNode | null) };
+        }
+        case "subagent": {
+            // `next` is the region's (possibly modified) <line>, or null to
+            // drop the whole region. The wrapper's other properties (id/range/
+            // comments) are preserved so its source is reused verbatim while
+            // the inner line is regenerated.
+            const c = node as LayoutNode | VariantNode;
+            const out = { ...c };
+            if (next === null) {
+                delete out.subagent;
+                return out;
+            }
+            const sub = c.subagent;
+            out.subagent = sub
+                ? { ...sub, line: next as LineNode }
+                : { id: "", kind: "subagent", line: next as LineNode };
+            return out;
         }
         case "child": {
             const p = node as LineNode; // line or span; both have `children`
@@ -586,6 +638,98 @@ export function duplicateLineNode(root: StatusloomNode, lineId: string): Statusl
         });
     }
     return root;
+}
+
+// ---- subagent-region operations ----
+//
+// A <subagent> region lives in a dedicated LayoutNode.subagent /
+// VariantNode.subagent field (never a Children entry), so — unlike lines — it
+// is added/removed with these helpers rather than the generic child ops. Its
+// inner <line> is edited through the normal child ops via the region's shared
+// "L{i}.s" / "L{i}.{p}.v{v}.s" id (see childOf's "subagent" step); addLine /
+// deleteLine / duplicateLineNode never apply (a region is a fixed single line).
+
+function newSubagent(line: LineNode): SubagentNode {
+    return { id: "", kind: "subagent", line };
+}
+
+// Attaches an empty <subagent><line/></subagent> to `containerId` — a layout
+// ("L{i}") or a variant ("L{i}.{p}.v{v}"). The region starts with no fields
+// (an empty <line/>); the user places task-* fields, or clicks "Reset to
+// default" (fillSubagentDefault) to seed the built-in default. Returns `root`
+// unchanged when the container already has a region or the id is not a
+// layout/variant (a region created here carries no source range, so the
+// serialize -> parse round trip assigns its real id).
+export function addSubagent(root: StatusloomNode, containerId: string): StatusloomNode {
+    const container = getNode(root, containerId);
+    if (
+        !container ||
+        (container.kind !== "layout" && container.kind !== "variant") ||
+        container.subagent
+    ) {
+        return root;
+    }
+    return transformNode(root, containerId, (node) => {
+        if (node.kind !== "layout" && node.kind !== "variant") {
+            return node;
+        }
+        // Stamp the container dirty so the serializer reconstructs it to place
+        // the new, range-less region.
+        return markDirty({ ...node, subagent: newSubagent(newEmptyLine()) });
+    });
+}
+
+// Replaces the children of an existing subagent <line> (addressed by its own
+// id, "L{i}.s" / "L{i}.{p}.v{v}.s" — see the "subagent" IdStep, which
+// resolves straight to the line) with `line`'s children. Used by the "Reset to
+// default" affordance to (re)seed a subagent row — whether empty or already
+// populated — with the built-in default, without touching the region wrapper.
+// A no-op when `subagentLineId` does not resolve
+// to a line (e.g. the region was deleted, or the id is still a pending ""
+// from a not-yet-round-tripped add).
+export function fillSubagentDefault(
+    root: StatusloomNode,
+    subagentLineId: string,
+    line: LineNode,
+): StatusloomNode {
+    // Guard up front (like addSubagent/deleteSubagent) so a dangling id or an
+    // id that resolves to something other than a line returns `root`'s exact
+    // identity, not just an equivalent rebuild.
+    const target = getNode(root, subagentLineId);
+    if (!target || target.kind !== "line") {
+        return root;
+    }
+    return transformNode(root, subagentLineId, (node) => {
+        if (node.kind !== "line") {
+            return node;
+        }
+        // Stamp dirty: the line's content changed, so the serializer must
+        // regenerate it rather than reusing its base-source slice.
+        return markDirty({ ...node, children: line.children });
+    });
+}
+
+// Removes the <subagent> region from `containerId` (a layout or variant).
+// Returns `root` unchanged when there is no region to remove.
+export function deleteSubagent(root: StatusloomNode, containerId: string): StatusloomNode {
+    const container = getNode(root, containerId);
+    if (
+        !container ||
+        (container.kind !== "layout" && container.kind !== "variant") ||
+        !container.subagent
+    ) {
+        return root;
+    }
+    return transformNode(root, containerId, (node) => {
+        if (node.kind !== "layout" && node.kind !== "variant") {
+            return node;
+        }
+        const out = { ...node };
+        delete out.subagent;
+        // The container's structure changed (region dropped): stamp it dirty
+        // so the serializer reconstructs it without the region.
+        return markDirty(out);
+    });
 }
 
 // ---- responsive / variant operations ----

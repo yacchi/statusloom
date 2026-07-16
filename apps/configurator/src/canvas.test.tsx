@@ -18,7 +18,7 @@ import {
     variant,
     type FakeServer,
 } from "./test/fakeDsl.ts";
-import type { StatusloomNode } from "./types.ts";
+import type { ResponsiveNode, StatusloomNode } from "./types.ts";
 
 const TOKEN = "a".repeat(32);
 
@@ -262,16 +262,20 @@ describe("canvas drop indicators (standalone)", () => {
                 <DndContext>
                     <Canvas
                         children={children}
+                        layoutId="L0"
+                        layoutSubagent={ast.layouts[0].subagent}
                         previewLines={null}
                         selectedVariants={null}
+                        subagentPreview={null}
                         fallback={null}
                         selection={null}
                         activeLine={0}
                         dropTarget={dropTarget}
+                        dragCategory={null}
                         theme="dark"
                         width={120}
                         previewSource={{ kind: "sample", sample: "full" }}
-                        subagentMode={false}
+                        subagentSample="subagent-running"
                         sessions={[]}
                         pureOutput={false}
                         loading={false}
@@ -289,8 +293,12 @@ describe("canvas drop indicators (standalone)", () => {
                         onAddVariant={noop}
                         onDeleteVariant={noop}
                         onDuplicateVariant={noop}
+                        onAddSubagent={noop}
+                        onDeleteSubagent={noop}
+                        onFillSubagentDefault={noop}
                         onWidth={noop}
                         onPreviewSourceChange={noop}
+                        onSubagentSampleChange={noop}
                         onRefreshSessions={noop}
                         onTheme={noop}
                         onPureOutput={noop}
@@ -420,5 +428,258 @@ describe("canvas responsive / variant editing", () => {
         await waitFor(() => expect(document.querySelectorAll(".responsive-row")).toHaveLength(2), {
             timeout: 3000,
         });
+    });
+});
+
+// L0.0: model (plain line); L0.s: subagent line [task-description, task-model]
+function subagentLayoutDoc(): StatusloomNode {
+    const d = doc([lay("Default", [ln([fld("model")])], true)]);
+    d.layouts[0].subagent = {
+        id: "",
+        kind: "subagent",
+        line: ln([fld("task-description"), fld("task-model")]),
+    };
+    return d;
+}
+
+// L0.0: model (plain line); L0.s: subagent region with a line that has lost
+// all its fields (a hand-authored/legacy empty <line/>, or one emptied out by
+// deleting every chip) — exercises the "Use default fields" affordance.
+function subagentEmptyLayoutDoc(): StatusloomNode {
+    const d = doc([lay("Default", [ln([fld("model")])], true)]);
+    d.layouts[0].subagent = { id: "", kind: "subagent", line: ln([]) };
+    return d;
+}
+
+// L0.0: model; L0.1 responsive — v0 (wide) subagent [task-description],
+// v1 (fallback) subagent [task-model].
+function subagentVariantDoc(): StatusloomNode {
+    const d = doc([
+        lay(
+            "Default",
+            [
+                ln([fld("model")]),
+                resp([variant([ln([txt("X".repeat(60))])]), variant([ln([txt("Y")])])]),
+            ],
+            true,
+        ),
+    ]);
+    const r = d.layouts[0].children[1] as ResponsiveNode;
+    r.variants[0].subagent = { id: "", kind: "subagent", line: ln([fld("task-description")]) };
+    r.variants[1].subagent = { id: "", kind: "subagent", line: ln([fld("task-model")]) };
+    return d;
+}
+
+// L0.0: model; L0.s: subagent line [task-description, <flex/>, task-model] —
+// the flex should push task-model to the right in the preview.
+function subagentFlexLayoutDoc(): StatusloomNode {
+    const d = doc([lay("Default", [ln([fld("model")])], true)]);
+    d.layouts[0].subagent = {
+        id: "",
+        kind: "subagent",
+        line: ln([fld("task-description"), { id: "", kind: "flex" }, fld("task-model")]),
+    };
+    return d;
+}
+
+describe("canvas subagent band", () => {
+    it("shows an Add subagent row button for a region-less layout", async () => {
+        // The default testDoc() (installed in beforeEach) has no subagent.
+        await renderApp();
+        await waitFor(() => expect(screen.getByTestId("subagent-add-L0")).toBeTruthy(), {
+            timeout: 3000,
+        });
+        expect(screen.queryByTestId("subagent-band-L0")).toBeNull();
+    });
+
+    it("renders the editable subagent line and per-task preview rows", async () => {
+        server = installFakeDslServer(subagentLayoutDoc());
+        await renderApp();
+        await waitFor(() => expect(screen.getByTestId("subagent-band-L0")).toBeTruthy(), {
+            timeout: 3000,
+        });
+        // The editable line shows the task field chips (plain labels).
+        expect(screen.getByTestId("subagent-band-L0").textContent).toContain("Task Description");
+        // While a region exists, a "Reset to default" affordance is always shown
+        // (even for a populated row — resetting is undoable via history).
+        expect(screen.getByTestId("subagent-fill-default-L0").textContent).toContain(
+            "Reset to default",
+        );
+        // Three running tasks -> three preview rows carrying task values.
+        await waitFor(
+            () => {
+                const preview = screen.getByTestId("subagent-preview-L0");
+                expect(preview.querySelectorAll(".subagent-preview-line").length).toBe(3);
+                expect(preview.textContent).toContain("Review render pipeline");
+            },
+            { timeout: 3000 },
+        );
+    });
+
+    it("selecting a subagent field highlights it in every task preview row", async () => {
+        server = installFakeDslServer(subagentLayoutDoc());
+        await renderApp();
+        await waitFor(() => expect(screen.getByTestId("subagent-preview-L0")).toBeTruthy(), {
+            timeout: 3000,
+        });
+        // The subagent line's first chip (task-description, id L0.s.0).
+        fireEvent.click(screen.getByTestId("seg-L0.s-0"));
+        await waitFor(
+            () =>
+                expect(
+                    document.querySelectorAll(
+                        ".subagent-preview-line .subagent-seg.selected",
+                    ).length,
+                ).toBe(3),
+            { timeout: 3000 },
+        );
+    });
+
+    it("adds an EMPTY region, seeds it via Reset to default, and deletes it, round-tripping through serialize", async () => {
+        await renderApp();
+        fireEvent.click(screen.getByTestId("subagent-add-L0"));
+        await waitFor(() => expect(screen.getByTestId("subagent-band-L0")).toBeTruthy(), {
+            timeout: 3000,
+        });
+        // The freshly added region is EMPTY (no task-* fields): it exposes a
+        // persistent "Reset to default" affordance, and round-trips as an empty
+        // <subagent> line through serialize.
+        const resetBtn = await screen.findByTestId("subagent-fill-default-L0");
+        expect(resetBtn.textContent).toContain("Reset to default");
+        await waitFor(
+            () => {
+                const last = server.putDraftBodies[server.putDraftBodies.length - 1] ?? "";
+                expect(last).toContain('"kind":"subagent"');
+                expect(last).not.toContain('"name":"task-description"');
+            },
+            { timeout: 3000 },
+        );
+
+        // Reset to default seeds the built-in default fields (presets.ts's
+        // makeDefaultSubagentLine, mirroring document.go).
+        fireEvent.click(screen.getByTestId("subagent-fill-default-L0"));
+        await waitFor(
+            () => {
+                const last = server.putDraftBodies[server.putDraftBodies.length - 1] ?? "";
+                expect(last).toContain('"name":"task-description"');
+                expect(last).toContain('"name":"task-model"');
+                expect(last).toContain('"name":"task-duration"');
+                expect(last).toContain('"name":"task-tokens"');
+                expect(last).toContain('"name":"task-context-percent"');
+            },
+            { timeout: 3000 },
+        );
+
+        fireEvent.click(screen.getByTestId("subagent-delete-L0"));
+        await waitFor(() => expect(screen.getByTestId("subagent-add-L0")).toBeTruthy(), {
+            timeout: 3000,
+        });
+    });
+
+    it("seeds an empty subagent line with the default fields via Reset to default", async () => {
+        server = installFakeDslServer(subagentEmptyLayoutDoc());
+        await renderApp();
+        await waitFor(() => expect(screen.getByTestId("subagent-band-L0")).toBeTruthy(), {
+            timeout: 3000,
+        });
+        const fillButton = await screen.findByTestId("subagent-fill-default-L0");
+        expect(fillButton.textContent).toContain("Reset to default");
+        fireEvent.click(fillButton);
+
+        await waitFor(
+            () => {
+                const last = server.putDraftBodies[server.putDraftBodies.length - 1] ?? "";
+                expect(last).toContain('"name":"task-description"');
+                expect(last).toContain('"name":"task-context-percent"');
+            },
+            { timeout: 3000 },
+        );
+        // The affordance persists (it can re-seed an already-populated row too).
+        expect(screen.getByTestId("subagent-fill-default-L0")).toBeTruthy();
+    });
+
+    it("toggles the subagent sample and re-requests the subagent preview", async () => {
+        server = installFakeDslServer(subagentLayoutDoc());
+        await renderApp();
+        const select = (await screen.findByTestId(
+            "subagent-sample-select",
+        )) as HTMLSelectElement;
+        expect(select.value).toBe("subagent-running");
+
+        fireEvent.change(select, { target: { value: "subagent-completed" } });
+        await waitFor(() => expect(select.value).toBe("subagent-completed"));
+        await waitFor(
+            () => {
+                const bodies = server.fetchMock.mock.calls
+                    .filter((c: unknown[]) => String(c[0]).endsWith("/api/dsl/preview"))
+                    .map((c: unknown[]) =>
+                        JSON.parse(String((c[1] as RequestInit).body)),
+                    );
+                expect(
+                    bodies.some(
+                        (b) => b.section === "subagent" && b.sample === "subagent-completed",
+                    ),
+                ).toBe(true);
+            },
+            { timeout: 3000 },
+        );
+    });
+
+    it("renders per-variant subagent bands in a responsive layout (no layout-level band)", async () => {
+        server = installFakeDslServer(subagentVariantDoc());
+        await renderApp();
+        await waitFor(() => expect(screen.getByTestId("subagent-band-L0.1.v0")).toBeTruthy(), {
+            timeout: 3000,
+        });
+        expect(screen.getByTestId("subagent-band-L0.1.v1")).toBeTruthy();
+        // A responsive layout carries its subagent inside each variant, so no
+        // layout-level band / add button appears.
+        expect(screen.queryByTestId("subagent-band-L0")).toBeNull();
+        expect(screen.queryByTestId("subagent-add-L0")).toBeNull();
+    });
+
+    it("preserves <flex/> whitespace in the subagent preview (right-alignment)", async () => {
+        server = installFakeDslServer(subagentFlexLayoutDoc());
+        await renderApp();
+        const preview = await screen.findByTestId("subagent-preview-L0");
+        // The preview rows render inside a ${width}ch terminal-width wrapper,
+        // like the main preview surface, so the flex filler renders at literal
+        // width instead of being shrunk by a flex row.
+        expect(preview.querySelector(".terminal-width")).toBeTruthy();
+        await waitFor(
+            () => {
+                const rows = preview.querySelectorAll(".subagent-preview-line");
+                expect(rows.length).toBeGreaterThan(0);
+                const first = rows[0];
+                // The <flex/> filler renders as its own whitespace segment
+                // between the fields — a flex layout would have collapsed it,
+                // killing the right-alignment. Its whitespace must survive.
+                const segs = Array.from(first.querySelectorAll(".subagent-seg"));
+                expect(segs.some((s) => /^\s+$/.test(s.textContent ?? ""))).toBe(true);
+                // Order: description, then (flex space), then model.
+                expect(first.textContent).toMatch(/Review render pipeline\s+Opus 4\.8/);
+            },
+            { timeout: 3000 },
+        );
+    });
+
+    it("renders subagent rows below the main lines in pure output", async () => {
+        server = installFakeDslServer(subagentLayoutDoc());
+        await renderApp();
+        // Wait until the subagent preview data has arrived.
+        await waitFor(() => expect(screen.getByTestId("subagent-preview-L0")).toBeTruthy(), {
+            timeout: 3000,
+        });
+        fireEvent.click(screen.getByLabelText(/Pure output/));
+        await waitFor(
+            () => {
+                const pre = document.querySelector(".pure-pre");
+                expect(pre).toBeTruthy();
+                // The subagent task values (only produced by the subagent pass)
+                // now appear in the pure output, stacked below the main lines.
+                expect(pre?.textContent).toContain("Review render pipeline");
+            },
+            { timeout: 3000 },
+        );
     });
 });

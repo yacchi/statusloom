@@ -565,7 +565,7 @@ func TestRenderDocument_FieldMinWidthNoop(t *testing.T) {
 // both reach the same *column* width, so right-hand fields following them
 // (via a subsequent right-aligned field) line up.
 func TestRenderDocument_FieldMinWidthEastAsianWidth(t *testing.T) {
-	src := `<statusloom version="1" tool="claude-code-subagent" color-level="none">` +
+	src := `<statusloom version="1" tool="claude-code" color-level="none">` +
 		`<layout name="a" active="true"><line>` +
 		`<field name="task-description" min-width="12"/>` +
 		`<field name="task-model" prefix="|"/>` +
@@ -574,7 +574,7 @@ func TestRenderDocument_FieldMinWidthEastAsianWidth(t *testing.T) {
 	// "レビュー中" is 5 runes, each a 2-column Hiragana/Katakana/Kanji glyph
 	// -> 10 display columns -> needs 2 more spaces to reach min-width=12.
 	jaSnap := schema.StatusSnapshot{
-		Tool:     schema.ToolSnapshot{ID: schema.ToolClaudeCodeSubagent},
+		Tool:     schema.ToolSnapshot{ID: schema.ToolClaudeCode},
 		Subagent: &schema.SubagentSnapshot{Description: "レビュー中", ModelDisplay: "Opus"},
 	}
 	if got, want := renderDocStr(t, src, jaSnap, Options{Now: fixedNow}), "レビュー中  |Opus"; got != want {
@@ -583,7 +583,7 @@ func TestRenderDocument_FieldMinWidthEastAsianWidth(t *testing.T) {
 
 	// "review PR" is 9 ASCII columns -> needs 3 more spaces to reach 12.
 	enSnap := schema.StatusSnapshot{
-		Tool:     schema.ToolSnapshot{ID: schema.ToolClaudeCodeSubagent},
+		Tool:     schema.ToolSnapshot{ID: schema.ToolClaudeCode},
 		Subagent: &schema.SubagentSnapshot{Description: "review PR", ModelDisplay: "Opus"},
 	}
 	if got, want := renderDocStr(t, src, enSnap, Options{Now: fixedNow}), "review PR   |Opus"; got != want {

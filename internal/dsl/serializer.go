@@ -254,6 +254,13 @@ func serializeLayout(b *strings.Builder, depth int, n *LayoutNode) {
 	}
 	emitSorted(items)
 
+	// The subagent region always renders below the layout's lines, so it is
+	// emitted after the positioned children rather than interleaved by source
+	// offset (which would misplace a hand-built node whose range is zero).
+	if n.Subagent != nil {
+		serializeSubagent(b, depth+1, n.Subagent)
+	}
+
 	b.WriteString(ind)
 	b.WriteString("</layout>\n")
 }
@@ -298,8 +305,34 @@ func serializeVariant(b *strings.Builder, depth int, n *VariantNode) {
 	}
 	emitSorted(items)
 
+	if n.Subagent != nil {
+		serializeSubagent(b, depth+1, n.Subagent)
+	}
+
 	b.WriteString(ind)
 	b.WriteString("</variant>\n")
+}
+
+// serializeSubagent emits a <subagent> region: its single <line> and any
+// interleaved comments, in source-position order.
+func serializeSubagent(b *strings.Builder, depth int, n *SubagentNode) {
+	ind := indentStr(depth)
+	b.WriteString(ind)
+	b.WriteString("<subagent>\n")
+
+	var items []serItem
+	if n.Line != nil {
+		ln := n.Line
+		items = append(items, serItem{ln.Meta.SourceRange.Start, func() { serializeLine(b, depth+1, ln) }})
+	}
+	for _, c := range n.Comments {
+		c := c
+		items = append(items, serItem{c.Meta.SourceRange.Start, func() { serializeComment(b, depth+1, c) }})
+	}
+	emitSorted(items)
+
+	b.WriteString(ind)
+	b.WriteString("</subagent>\n")
 }
 
 // writeLineOpenTag writes "<line ...>" up to but not including the closing

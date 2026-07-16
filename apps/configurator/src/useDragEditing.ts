@@ -42,6 +42,11 @@ export const LINE_ID_PREFIX = "line-";
 // the line's own AST id follows the colon (variant-nested lines have no
 // single flat index to key on the way top-level lines do).
 export const VARIANT_LINE_ID_PREFIX = "vline:";
+// Droppable id prefix for a <subagent> region's single <line>; the line's own
+// AST id ("L{i}.s" / "L{i}.{p}.v{v}.s") follows the colon. A subagent line is
+// a drop container that only accepts subagent-category (task-*) content — see
+// `accepts` on ContainerView and the mutual-block check in computeDropTarget.
+export const SUBAGENT_LINE_ID_PREFIX = "saline:";
 // Draggable id prefix for a <variant> card being reordered within its
 // <responsive>; the variant's own AST id follows the colon.
 export const VARIANT_ID_PREFIX = "variant:";
@@ -51,6 +56,13 @@ export const VARIANT_ID_PREFIX = "variant:";
 // responsive's own AST id follows the colon.
 export const VARIANT_CONTAINER_PREFIX = "variants-of:";
 
+// Which family of content a container accepts / a dragged payload belongs to.
+// A <subagent> region's line (and its spans) accept only "subagent" (task-*)
+// content; every other line/span accepts only "main" (non-subagent) content.
+// A structural preset (text/separator/flex/span — anything that is not a
+// field) is "any" and drops into either family.
+export type DropCategory = "subagent" | "main" | "any";
+
 // A drop container as the drag logic sees it: a line or a span (nested spans
 // included), with the AST node IDs of its direct children (the chips).
 export interface ContainerView {
@@ -59,6 +71,11 @@ export interface ContainerView {
     // For kind "line": the index of the line within the edited layout
     // (matches the row droppable's "line-N" id).
     lineIndex?: number;
+    // Which content family this container accepts (default "main"): a subagent
+    // region's line/spans are "subagent", everything else "main". Drives the
+    // mutual-block check so task-* fields can only land inside <subagent> and
+    // non-task fields only outside it.
+    accepts?: "subagent" | "main";
     childIds: string[];
 }
 
@@ -74,9 +91,15 @@ export interface DropTarget {
 // its kind (needed to reject line-only nodes as span content); a variant
 // drag reorders a whole <variant> card within its <responsive> and never
 // touches line/span content at all.
+//
+// `category` (present on chip payloads, absent = "any") is the content family
+// the payload belongs to, so a drop into a container of a different family is
+// rejected (task-* only inside <subagent>, non-task only outside). It is only
+// attached when the payload is family-restricted (a field), so a structural
+// preset / an unresolved drag keeps the pre-subagent payload shape.
 export type DragPayload =
-    | { kind: "palette"; node: LineChild }
-    | { kind: "node"; id: string; nodeKind: string }
+    | { kind: "palette"; node: LineChild; category?: DropCategory }
+    | { kind: "node"; id: string; nodeKind: string; category?: DropCategory }
     | { kind: "variant"; id: string };
 
 // A <responsive>'s variant list, as the drag logic sees it: the responsive's
@@ -102,18 +125,35 @@ interface VRect {
 
 // Flatten the span containers (nested included, in document order) out of a
 // mixed-content child list. Used by App.tsx to build the container list.
-export function spanContainersOf(children: readonly LineChild[]): ContainerView[] {
+// `accepts` (default "main") is stamped onto every span so a span inside a
+// <subagent> line inherits the region's subagent-only acceptance.
+export function spanContainersOf(
+    children: readonly LineChild[],
+    accepts: "subagent" | "main" = "main",
+): ContainerView[] {
     const out: ContainerView[] = [];
     const walk = (nodes: readonly LineChild[]) => {
         for (const n of nodes) {
             if (n.kind === "span") {
-                out.push({ id: n.id, kind: "span", childIds: n.children.map((c) => c.id) });
+                out.push({ id: n.id, kind: "span", accepts, childIds: n.children.map((c) => c.id) });
                 walk(n.children);
             }
         }
     };
     walk(children);
     return out;
+}
+
+// Whether `container` accepts the dragged `payload`'s content family. A
+// structural preset / an unresolved drag ("any") drops anywhere; a family-
+// restricted field only into a matching container. Containers default to
+// "main" so pre-subagent call sites (and the hook's own tests) are unchanged.
+function acceptsCategory(container: ContainerView, payload: ChipDragPayload): boolean {
+    const cat = payload.category ?? "any";
+    if (cat === "any") {
+        return true;
+    }
+    return cat === (container.accepts ?? "main");
 }
 
 // The chip-drag payloads computeDropTarget/resolveRawTarget understand —
@@ -142,6 +182,11 @@ export function computeDropTarget(
     }
     const container = containers.find((c) => c.id === raw.containerId);
     if (!container) {
+        return null;
+    }
+    // Mutual block: task-* only inside a <subagent> line, non-task only
+    // outside it (structural presets go anywhere).
+    if (!acceptsCategory(container, payload)) {
         return null;
     }
     // <flex> is line-only: the DSL rejects it inside <span>.
@@ -173,6 +218,10 @@ function lineContainerOf(
     }
     if (overId.startsWith(VARIANT_LINE_ID_PREFIX)) {
         const lineId = overId.slice(VARIANT_LINE_ID_PREFIX.length);
+        return containers.find((c) => c.kind === "line" && c.id === lineId) ?? null;
+    }
+    if (overId.startsWith(SUBAGENT_LINE_ID_PREFIX)) {
+        const lineId = overId.slice(SUBAGENT_LINE_ID_PREFIX.length);
         return containers.find((c) => c.kind === "line" && c.id === lineId) ?? null;
     }
     // overId is a chip or span id: climb owners until a line is reached.
@@ -230,6 +279,9 @@ function validateGeometric(
     kind: string,
 ): DropTarget | null {
     const container = containers.find((c) => c.id === target.containerId);
+    if (container && !acceptsCategory(container, payload)) {
+        return null;
+    }
     if (container && kind === "flex" && container.kind === "span") {
         return null;
     }
@@ -285,6 +337,9 @@ export function resolveGeometricTarget(
             const r = rects.get(c.id);
             if (!r || !rectContains(r, pointerX)) {
                 continue;
+            }
+            if (!acceptsCategory(c, payload)) {
+                continue; // wrong content family for this span
             }
             if (
                 payload.kind === "node" &&
@@ -360,6 +415,11 @@ function resolveRawTarget(
     }
     if (overId.startsWith(VARIANT_LINE_ID_PREFIX)) {
         const lineId = overId.slice(VARIANT_LINE_ID_PREFIX.length);
+        const line = containers.find((c) => c.kind === "line" && c.id === lineId);
+        return line ? { containerId: line.id, index: line.childIds.length } : null;
+    }
+    if (overId.startsWith(SUBAGENT_LINE_ID_PREFIX)) {
+        const lineId = overId.slice(SUBAGENT_LINE_ID_PREFIX.length);
         const line = containers.find((c) => c.kind === "line" && c.id === lineId);
         return line ? { containerId: line.id, index: line.childIds.length } : null;
     }
@@ -465,6 +525,12 @@ function sameTarget(a: DropTarget | null, b: DropTarget | null): boolean {
 export interface DragEditing {
     dragLabel: string | null;
     dropTarget: DropTarget | null;
+    // The content family of the in-flight chip drag, or null when nothing (or
+    // a variant card) is being dragged. The canvas reads it to highlight the
+    // drop-eligible bands and dim the ineligible ones — paint-only, fixed for
+    // the whole drag (it never changes as the pointer moves), so it cannot
+    // feed the #185 restructure loop.
+    dragCategory: DropCategory | null;
     onDragStart: (e: DragStartEvent) => void;
     onDragOver: (e: DragOverEvent) => void;
     onDragEnd: (e: DragEndEvent) => void;
@@ -490,6 +556,13 @@ interface Args {
     // Build the AST node (and overlay label) for a palette key
     // ("field:<name>" / "preset:<id>"); null cancels the drag.
     makePaletteNode: (key: string) => { node: LineChild; label: string } | null;
+    // The content family a palette key belongs to ("subagent" for a task-*
+    // field, "main" for any other field, "any" for a structural preset).
+    // Defaults to "any" (no family restriction) when omitted.
+    categoryForPalette?: (key: string) => DropCategory;
+    // The content family an existing canvas chip belongs to (by its node id),
+    // same rules as categoryForPalette. Defaults to "any" when omitted.
+    categoryForNodeId?: (id: string) => DropCategory;
     // Overlay label for an existing canvas chip or variant card.
     labelForNodeId: (id: string) => string;
     // AST node kind for an existing canvas chip (null = unknown).
@@ -503,12 +576,15 @@ export function useDragEditing({
     getVariantLists = () => null,
     getRects = () => null,
     makePaletteNode,
+    categoryForPalette = () => "any",
+    categoryForNodeId = () => "any",
     labelForNodeId,
     kindForNodeId,
     onDrop,
 }: Args): DragEditing {
     const [dragLabel, setDragLabel] = useState<string | null>(null);
     const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+    const [dragCategory, setDragCategory] = useState<DropCategory | null>(null);
     // The payload resolved at drag start; identity is stable all drag.
     const payloadRef = useRef<DragPayload | null>(null);
 
@@ -516,28 +592,41 @@ export function useDragEditing({
         payloadRef.current = null;
         setDragLabel(null);
         setDropTarget(null);
+        setDragCategory(null);
     }, []);
 
     const onDragStart = useCallback(
         (e: DragStartEvent) => {
             const id = String(e.active.id);
             if (id.startsWith(PALETTE_ID_PREFIX)) {
-                const made = makePaletteNode(id.slice(PALETTE_ID_PREFIX.length));
+                const key = id.slice(PALETTE_ID_PREFIX.length);
+                const made = makePaletteNode(key);
                 if (!made) {
                     return;
                 }
-                payloadRef.current = { kind: "palette", node: made.node };
+                const category = categoryForPalette(key);
+                // Only attach a family-restriction to the payload for fields;
+                // structural presets stay the pre-subagent shape ("any").
+                payloadRef.current =
+                    category === "any"
+                        ? { kind: "palette", node: made.node }
+                        : { kind: "palette", node: made.node, category };
+                setDragCategory(category);
                 setDragLabel(made.label);
             } else if (id.startsWith(VARIANT_ID_PREFIX)) {
                 const variantId = id.slice(VARIANT_ID_PREFIX.length);
                 payloadRef.current = { kind: "variant", id: variantId };
+                setDragCategory(null); // variant reorder has no family restriction
                 setDragLabel(labelForNodeId(variantId));
             } else {
-                payloadRef.current = { kind: "node", id, nodeKind: kindForNodeId(id) ?? "" };
+                const category = categoryForNodeId(id);
+                const base = { kind: "node" as const, id, nodeKind: kindForNodeId(id) ?? "" };
+                payloadRef.current = category === "any" ? base : { ...base, category };
+                setDragCategory(category);
                 setDragLabel(labelForNodeId(id));
             }
         },
-        [kindForNodeId, labelForNodeId, makePaletteNode],
+        [categoryForNodeId, categoryForPalette, kindForNodeId, labelForNodeId, makePaletteNode],
     );
 
     // Resolves the current drop target for `payload` against `overId`,
@@ -621,5 +710,5 @@ export function useDragEditing({
         [onDrop, reset, resolveTarget],
     );
 
-    return { dragLabel, dropTarget, onDragStart, onDragOver, onDragEnd, onDragCancel: reset };
+    return { dragLabel, dropTarget, dragCategory, onDragStart, onDragOver, onDragEnd, onDragCancel: reset };
 }

@@ -31,9 +31,10 @@ func TestFieldByName_UnknownTool(t *testing.T) {
 }
 
 func TestFields_Count(t *testing.T) {
+	// 67 base claude-code fields + 9 merged subagent task-* fields.
 	fields := Fields("claude-code")
-	if len(fields) != 67 {
-		t.Errorf("Fields count = %d, want 67", len(fields))
+	if len(fields) != 76 {
+		t.Errorf("Fields count = %d, want 76", len(fields))
 	}
 }
 
@@ -98,6 +99,11 @@ func TestFields_SelfMetrics(t *testing.T) {
 		"weekly-usage-sonnet": "seven-day-sonnet-percent",
 		"weekly-reset-opus":   "seven-day-opus-reset-minutes",
 		"weekly-reset-sonnet": "seven-day-sonnet-reset-minutes",
+		// Merged subagent task-* fields with self metrics.
+		"task-tokens":          "task-token-count",
+		"task-context-size":    "task-context-window-tokens",
+		"task-context-percent": "task-context-percent",
+		"task-duration":        "task-duration-seconds",
 	}
 	fields := Fields("claude-code")
 	if len(fields) == 0 {
@@ -142,8 +148,8 @@ func TestFields_DisplayMetadataPopulated(t *testing.T) {
 		if f.Descriptions.EN == "" || f.Descriptions.JA == "" {
 			t.Errorf("field %q missing localized descriptions: %+v", f.Name, f.Descriptions)
 		}
-		if f.Category != "common" && f.Category != "claude" {
-			t.Errorf("field %q Category = %q, want common|claude", f.Name, f.Category)
+		if f.Category != "common" && f.Category != "claude" && f.Category != "subagent" {
+			t.Errorf("field %q Category = %q, want common|claude|subagent", f.Name, f.Category)
 		}
 	}
 }
@@ -178,9 +184,11 @@ func TestMetricByName_Unknown(t *testing.T) {
 }
 
 func TestMetrics_Count(t *testing.T) {
+	// 51 base claude-code metrics + 4 merged subagent task-* metrics (the
+	// shared widthMetric is deduplicated across the two catalogs).
 	m := Metrics("claude-code")
-	if len(m) != 51 {
-		t.Errorf("Metrics count = %d, want 51", len(m))
+	if len(m) != 55 {
+		t.Errorf("Metrics count = %d, want 55", len(m))
 	}
 }
 
@@ -246,7 +254,9 @@ func TestFields_OAuthUsageFields(t *testing.T) {
 // keep an unset Capability, since only the new oauth-usage fields opt in.
 func TestFields_CapabilityDefaultsEmpty(t *testing.T) {
 	for _, f := range Fields("claude-code") {
-		if f.Capability != "" && f.Capability != "oauth-usage" {
+		// oauth-usage (extra-usage/weekly-*) and subagent-effort (merged
+		// task-effort) are the only non-empty capabilities.
+		if f.Capability != "" && f.Capability != "oauth-usage" && f.Capability != "subagent-effort" {
 			t.Errorf("field %q has unexpected Capability = %q", f.Name, f.Capability)
 		}
 	}
@@ -279,10 +289,10 @@ func TestMetrics_OAuthUsageMetrics(t *testing.T) {
 	}
 }
 
-// TestFields_ClaudeCodeSubagentCatalog verifies the tool="claude-code-subagent"
-// field catalog (subagentStatusLine task fields) resolves with the expected
-// self metrics, formats, and capability gate, and that every field carries
-// full display metadata.
+// TestFields_ClaudeCodeSubagentCatalog verifies the subagentStatusLine
+// task-* fields merged into the unified tool="claude-code" catalog resolve
+// with the expected self metrics, formats, and capability gate, and that
+// every field carries full display metadata.
 func TestFields_ClaudeCodeSubagentCatalog(t *testing.T) {
 	want := []struct {
 		name       string
@@ -300,12 +310,8 @@ func TestFields_ClaudeCodeSubagentCatalog(t *testing.T) {
 		{"task-duration", "task-duration-seconds", []string{"duration"}, ""},
 		{"task-effort", "", []string{"enum"}, "subagent-effort"},
 	}
-	fields := Fields("claude-code-subagent")
-	if len(fields) != len(want) {
-		t.Fatalf("Fields(claude-code-subagent) count = %d, want %d", len(fields), len(want))
-	}
 	for _, w := range want {
-		f, ok := FieldByName("claude-code-subagent", w.name)
+		f, ok := FieldByName("claude-code", w.name)
 		if !ok {
 			t.Fatalf("field %q not found", w.name)
 		}
@@ -331,15 +337,12 @@ func TestFields_ClaudeCodeSubagentCatalog(t *testing.T) {
 }
 
 // TestMetrics_ClaudeCodeSubagentCatalog verifies the subagent self metrics
-// (plus the shared "width" metric) are registered with non-empty localized
-// descriptions.
+// merged into the unified tool="claude-code" catalog (plus the shared
+// "width" metric) are registered with non-empty localized descriptions.
 func TestMetrics_ClaudeCodeSubagentCatalog(t *testing.T) {
 	names := []string{"task-token-count", "task-context-window-tokens", "task-context-percent", "task-duration-seconds", "width"}
-	if got := Metrics("claude-code-subagent"); len(got) != len(names) {
-		t.Fatalf("Metrics(claude-code-subagent) count = %d, want %d", len(got), len(names))
-	}
 	for _, name := range names {
-		m, ok := MetricByName("claude-code-subagent", name)
+		m, ok := MetricByName("claude-code", name)
 		if !ok {
 			t.Fatalf("metric %q not found", name)
 		}

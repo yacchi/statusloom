@@ -125,6 +125,20 @@ export interface LineNode extends AstBase, CommonAttrs {
     children: LineChild[];
 }
 
+// <subagent> — a subagent-region container held in a dedicated
+// LayoutNode.subagent / VariantNode.subagent field (never a Children entry),
+// so it is always rendered below its container's lines. It holds exactly one
+// <line> (task-* fields). Its node ID is its container's ID with a ".s"
+// suffix ("L{i}.s" / "L{i}.{p}.v{v}.s"), and — since it holds at most one
+// line — that line SHARES the region's ID rather than gaining an extra
+// nesting level (its children then read "L{i}.s.{k}"). Carries no attributes
+// of its own; the inner <line>/<span>/<field> carry decoration/when/optional.
+export interface SubagentNode extends AstBase {
+    kind: "subagent";
+    line: LineNode;
+    comments?: CommentNode[];
+}
+
 // A layout's ordered child: its rendered rows (LineNode) interleaved with any
 // width-adaptive containers (ResponsiveNode). A responsive-free layout's
 // children are all LineNode, and its node IDs are unchanged from before this
@@ -136,6 +150,8 @@ export type LayoutChild = LineNode | ResponsiveNode;
 export interface VariantNode extends AstBase {
     kind: "variant";
     lines: LineNode[];
+    // Optional <subagent> region rendered below this variant's lines.
+    subagent?: SubagentNode;
     comments?: CommentNode[];
 }
 
@@ -154,6 +170,9 @@ export interface LayoutNode extends AstBase {
     name?: string;
     active?: boolean;
     children: LayoutChild[];
+    // Optional <subagent> region rendered below the layout's lines (used when
+    // the layout has no <responsive>; otherwise each variant carries its own).
+    subagent?: SubagentNode;
     comments?: CommentNode[];
 }
 
@@ -186,6 +205,7 @@ export type AstNode =
     | LayoutNode
     | ResponsiveNode
     | VariantNode
+    | SubagentNode
     | LineNode
     | LineChild
     | ColorRuleNode;
@@ -254,6 +274,11 @@ export interface PreviewRequest {
     // real output rather than falling back to placeholder widget names for
     // the non-selected variants.
     allVariants?: boolean;
+    // Which region of the document to render. Omitted / "main" renders the
+    // status line itself (subagent regions ignored). "subagent" renders each
+    // width-adaptive container's <subagent> line — one PreviewLine per task of
+    // the sample — returned in `subagentPreview` keyed by container node ID.
+    section?: "main" | "subagent";
 }
 
 export interface PreviewSegment {
@@ -289,6 +314,13 @@ export interface PreviewResponse {
     // `width` would actually select. Absent when `allVariants` was omitted
     // or false.
     selectedVariants?: Record<string, number>;
+    // Present when the request had `section: "subagent"`: maps each
+    // width-adaptive container's node ID (a responsive layout's variant IDs
+    // "L{i}.{p}.v{v}", or the layout's own ID "L{i}" for a responsive-free
+    // layout) to that container's subagent line rendered once per sample task.
+    // A container with no subagent (its own nor a layout-level fallback) is
+    // omitted from the map.
+    subagentPreview?: Record<string, PreviewLine[]>;
 }
 
 // GET /api/dsl/fields entry: the palette catalog, from the Go DSL registry.

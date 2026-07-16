@@ -8,15 +8,24 @@ the server also serves `GET /api/tools`, `GET /api/sessions`,
 127.0.0.1-only bind, `Authorization: Bearer <token>`, Host + Origin validation,
 no cookies.
 
-Two tools are supported: `claude-code` (the regular session `statusLine`)
-and `claude-code-subagent` (Claude Code's `subagentStatusLine`, one row per
-agent-panel task). `GET /api/tools` lists both, `claude-code` first. Every
-endpoint below that takes a `tool` parameter accepts either value; an
-unrecognized tool is rejected with `400`. The two tools have disjoint field
-catalogs (`claude-code`'s session/account/git fields vs.
-`claude-code-subagent`'s `task-*` fields, see `GET /api/dsl/fields`) and
-separate documents (`<configDir>/claude-code.xml` vs.
-`<configDir>/claude-code-subagent.xml`, and their own drafts).
+Exactly one tool is supported: `claude-code` (the regular session
+`statusLine`). `GET /api/tools` returns this single entry. Every endpoint
+below that takes a `tool` parameter accepts only this value; any other tool
+name is rejected with `400`. The document lives at
+`<configDir>/claude-code.xml`, with its own draft.
+
+Claude Code's `subagentStatusLine` (one row per agent-panel task) is a
+`<subagent>` region (markup.md "subagent") nested inside the `claude-code`
+document itself — directly under `<layout>` when the layout has no
+`<responsive>`, or inside each `<variant>` when it does — so the same
+document, the same width breakpoints, and the same visual editor canvas cover
+both the main status line and its subagent row (see
+`plans/subagent-region-dsl.md`). Its `task-*` fields (`Category: "subagent"`)
+are merged into the single `claude-code` field/metric catalog (`GET
+/api/dsl/fields`/`/metrics`); the field-scope validator enforces that
+`task-*` fields only appear inside `<subagent>` and non-`task-*` fields never
+appear inside one. `POST /api/dsl/preview`'s `section` field selects which
+region a request previews — see that endpoint below.
 
 ## AST JSON
 
@@ -66,9 +75,10 @@ per responsive in the response's `selectedVariants` map — see
 |------|-----------|------------------|
 | `statusloom` | `version`, `tool`, `color-level`, `compact-threshold`, `context-percentage-mode`, `context-reserve-tokens` | `git?`, `layouts[]`, `comments[]?` |
 | `git` | `cache-ttl-ms`, `timeout-ms`, `include-untracked`, `collect-numstat` | — |
-| `layout` | `name`, `active` | `children[]` (ordered `line` \| `responsive`), `comments[]?` |
+| `layout` | `name`, `active` | `children[]` (ordered `line` \| `responsive`), `subagent?`, `comments[]?` |
 | `responsive` | — | `variants[]`, `comments[]?` |
-| `variant` | — | `lines[]`, `comments[]?` |
+| `variant` | — | `lines[]`, `subagent?`, `comments[]?` |
+| `subagent` | — | `line?` (its single `<line>`), `comments[]?` |
 | `line` | *common* | `children[]` |
 | `span` | *common* | `children[]`, `colorRules[]?` |
 | `text` | `role`, `value`, *common* | `colorRules[]?` |
@@ -85,6 +95,15 @@ per responsive in the response's `selectedVariants` map — see
 - `text` / `raw-text` / `comment` carry their text in `value`.
 - Color-rules are **not** in `children`; they live in a separate `colorRules`
   array so `children` indices stay aligned with the renderer's leaf nodes.
+- `subagent` is a `layout`'s or `variant`'s **optional**, at-most-one region
+  (markup.md "subagent"): the row(s) `statusloom claude-subagent` renders
+  below the main status line, one row per running/completed task. It carries
+  no attributes of its own and holds a single `line` (never `responsive` /
+  `variant` / a second `line` — the parser/validator reject those). A layout
+  with a `<responsive>` child instead nests its `subagent` inside each
+  `variant` it wants a subagent design for (a `variant` with none falls back
+  to the layout's own at render time, see `POST /api/dsl/preview`'s
+  `section="subagent"` below).
 
 ### Node IDs
 
@@ -101,6 +120,8 @@ L{i}.c{k}            k-th comment directly under layout i
 L{i}.{p}             p-th child of layout i — a line or a responsive (index into layout.children)
 L{i}.{p}.v{v}        v-th <variant> of responsive L{i}.{p}
 L{i}.{p}.v{v}.{j}    j-th <line> of that variant
+L{i}.s               the layout-direct <subagent> region's <line>
+L{i}.{p}.v{v}.s      the <subagent> region's <line> inside variant L{i}.{p}.v{v}
 {parent}.{k}         k-th mixed-content child of a line/span (index into children)
 {owner}.cr{c}        c-th <color-rule> of a field/span/text owner
 ```
@@ -114,6 +135,17 @@ index), so IDs are unchanged for such documents. Comments that appear inside a
 line/span are ordinary `children` entries (kind `comment`) and take a numeric
 child index; root-level, layout-level, responsive-level, and variant-level
 comments use the `.c{k}` form.
+
+A `<subagent>` region is a dedicated field on its `layout`/`variant` (never a
+`children` entry), so it does not consume a position index the way a
+`responsive` does; its id is its container's id with a `.s` suffix appended
+directly: `L{i}.s` for a layout-direct region, `L{i}.{p}.v{v}.s` for one
+nested in variant `L{i}.{p}.v{v}`. A `<subagent>` holds at most one `<line>`,
+and — mirroring the responsive-free-layout rule above — that line reuses the
+region's own id rather than gaining an extra nesting level, so its children
+read `L{i}.s.{k}` / `L{i}.{p}.v{v}.s.{k}`. For example, in a responsive-free
+layout 0 whose `<subagent><line><field .../><field .../></line></subagent>`
+holds two fields, their ids are `L0.s.0` and `L0.s.1`.
 
 ## Endpoints
 
@@ -168,8 +200,8 @@ Saves `source` to the shared draft **unconditionally** (last-writer-wins). The
 draft is a text-sharing channel that tolerates in-progress, invalid input;
 diagnostics are returned for the editor but never block the write.
 
-### `POST /api/dsl/preview` `{ "tool", "source", "width", "sample", "sessionId"?, "layoutIndex"?, "allVariants"? }`
-→ `200 { "lines": [...], "diagnostics": [...], "fallback": { "ansi", "active" }, "selectedVariants"? }`
+### `POST /api/dsl/preview` `{ "tool", "source", "width", "sample", "sessionId"?, "layoutIndex"?, "allVariants"?, "section"? }`
+→ `200 { "lines": [...], "diagnostics": [...], "fallback": { "ansi", "active" }, "selectedVariants"?, "subagentPreview"? }`
 
 ```jsonc
 "lines": [
@@ -177,7 +209,7 @@ diagnostics are returned for the editor but never block the write.
     "omitted": false,
     "ansi": "…",                       // concatenated visible-segment ANSI
     "segments": [
-      { "nodeId": "L0.0.1", "text": "Opus 4.8", "ansi": "[36m…", "visible": true }
+      { "nodeId": "L0.0.1", "text": "Opus 4.8", "ansi": "[36m…", "visible": true }
     ]
   }
 ]
@@ -203,54 +235,74 @@ diagnostics are returned for the editor but never block the write.
   of falling back to placeholder text for the others; the field is present
   (possibly `{}`) whenever `allVariants` was requested, and absent otherwise.
 - `sessionId` renders against a real cached session (see `GET /api/sessions`);
-  otherwise `sample` selects a synthetic snapshot. Sample names are
-  independent of `tool` — the same synthetic snapshot names are accepted no
-  matter which tool's source is being previewed — but when `sample` is
-  omitted the default depends on `tool`: `"full"` for `tool=claude-code`
-  (`"early-session"` is the other `claude-code` sample), `"subagent-running"`
-  for `tool=claude-code-subagent` (`"subagent-completed"` is the other
-  subagent sample, same task further along: same id/model, `status` flipped
-  to `"completed"`, higher `tokenCount`). `width` is clamped to [20, 400]
-  (default 120).
+  otherwise `sample` selects a synthetic snapshot, defaulting (when omitted)
+  to `"full"` for the main section (`"early-session"` is the other main
+  sample) or `"subagent-running"` for the subagent section
+  (`"subagent-completed"` is the other subagent sample — see `section`
+  below). `width` is clamped to [20, 400] (default 120).
 - `fallback.active` is `true` when every line is omitted, in which case
   `fallback.ansi` is the fallback line (model + tool-version).
+- `section` (default `""`/`"main"`) selects which region of the document this
+  request previews (markup.md "subagent"):
+  - `""` / `"main"`: unchanged from before — `lines` carries the main status
+    line only; the `<subagent>` region is never rendered here (matching the
+    real `claude` render pass exactly). `subagentPreview` is absent.
+  - `"subagent"`: previews the `<subagent>` region(s) instead. `lines` is
+    always `[]` and `fallback.active` is always `false` (they are meaningless
+    for this section). The response instead carries **`subagentPreview`**: a
+    map from a **container's** AST node ID to an array of rendered rows, one
+    row per task in the sample's task list — `dslPreviewLine` (the same shape
+    as an entry of `lines`) each. A container is the layout itself
+    (`"L{i}"`) when it has no `<responsive>`, or each of its variants
+    (`"L{i}.{p}.v{v}"`) when it does; a variant with no `<subagent>` of its
+    own falls back to the layout's (same underlying node, so its rows'
+    segment `nodeId`s are the layout-level `"L{i}.s.*"`, not that variant's
+    own `"L{i}.{p}.v{v}.s.*"`) — mirroring exactly how the real
+    `claude-subagent` render path resolves which region to use, so the
+    preview never disagrees with the real output. A container with no
+    `<subagent>` anywhere is omitted from `subagentPreview`. `sample` for
+    this section is one of `"subagent-running"` / `"subagent-completed"`:
+    each names an ordered task list (currently three tasks), rendered
+    independently per container. `selectedVariants` is still included under
+    the same "whenever `allVariants` was requested" rule as the main section,
+    computed against the main section's own default sample/sessionId (so it
+    reports the same width-selected variant the main line would show — the
+    same-width, same-variant guarantee plans/subagent-region-dsl.md
+    requires).
 
 ### `GET /api/dsl/fields?tool=claude-code`
 → `200 { "fields": [ { "name", "displayName", "descriptions": {"en","ja"}, "category", "linkable"?, "selfMetric"?, "formats"?, "capability"?, "preview": {"text","ansi"} } ] }`
 
 The field catalog for the palette, sourced entirely from the Go DSL registry
-(single source of truth) — `tool=claude-code` returns the session/account/git
-field set, `tool=claude-code-subagent` returns the disjoint `task-*` set (one
-entry per subagentStatusLine task attribute: `task-description`,
+(single source of truth): the session/account/git field set **plus** the
+`task-*` set merged in from the subagent task field catalog (one entry per
+subagentStatusLine task attribute: `task-description`,
 `task-model`, `task-model-id`, `task-status`, `task-tokens`,
 `task-context-size`, `task-context-percent`, `task-duration`, `task-effort`;
-all `category: "subagent"`). `preview` is a single-field rendering against
-that tool's default sample snapshot (the `full` session sample for
-`claude-code`, the `subagent-running` task sample for
-`claude-code-subagent` — see `POST /api/dsl/preview`'s default-sample rule
-above). `capability` (optional; absent = always available) names a runtime
-capability the field depends on: `"oauth-usage"` (the authenticated OAuth
-usage API) for the `claude-code` extra-usage / weekly-usage / weekly-reset
-fields, or `"subagent-effort"` for `claude-code-subagent`'s `task-effort`
-(Claude Code does not yet report per-task reasoning effort, so this
-capability is unavailable in every environment today). Capability gating is
-entirely client-side: the server only tags the field, it never filters the
-response by availability. The configurator probes `"oauth-usage"` via
-`GET /api/usage/probe` and hides those fields from the palette when
-unreachable; there is no analogous probe for `"subagent-effort"` yet, so a
-`capability`-tagged field with no matching probe should be hidden
-unconditionally until one exists.
+all `category: "subagent"`, valid only inside a `<subagent>` region). `preview`
+is a single-field rendering against the `"full"` sample snapshot, which also
+carries a sample task so `task-*` fields render real content rather than
+falling back. `capability` (optional; absent = always available) names a
+runtime capability the field depends on: `"oauth-usage"` (the authenticated
+OAuth usage API) for the extra-usage / weekly-usage / weekly-reset fields, or
+`"subagent-effort"` for `task-effort` (Claude Code does not yet report
+per-task reasoning effort, so this capability is unavailable in every
+environment today). Capability gating is entirely client-side: the server
+only tags the field, it never filters the response by availability. The
+configurator probes `"oauth-usage"` via `GET /api/usage/probe` and hides
+those fields from the palette when unreachable; there is no analogous probe
+for `"subagent-effort"` yet, so a `capability`-tagged field with no matching
+probe should be hidden unconditionally until one exists.
 
 ### `GET /api/dsl/metrics?tool=claude-code`
 → `200 { "metrics": [ { "name", "displayName", "descriptions": {"en","ja"} } ] }`
 
 The named-metric catalog for `when` / `color-rule` editing, from the DSL
-registry (`tool=claude-code-subagent` returns the `task-*` self-metrics
-backing `task-tokens`/`task-context-size`/`task-context-percent`/
-`task-duration`). Both tools additionally return the tool-agnostic `width`
-metric (terminal width in columns), which backs width breakpoints such as
-`when="width ge 80"`; an unknown width counts as unbounded so a width
-condition never hides content.
+registry: the session/account metrics plus the `task-*` self-metrics backing
+`task-tokens`/`task-context-size`/`task-context-percent`/`task-duration`, and
+the tool-agnostic `width` metric (terminal width in columns), which backs
+width breakpoints such as `when="width ge 80"`; an unknown width counts as
+unbounded so a width condition never hides content.
 
 ### `GET /api/usage/probe`
 → `200 { "available": bool, "reason": "ok" | "no-token" | "unauthorized" | "rate-limited" | "error", "extraUsageEnabled": bool }`

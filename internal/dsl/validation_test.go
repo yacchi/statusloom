@@ -138,24 +138,22 @@ func TestValidateInvalidWhenExpression(t *testing.T) {
 }
 
 // TestValidateWidthMetric confirms the tool-agnostic "width" metric is a
-// valid named metric in a when= expression on both tools, on fields, spans,
-// and text nodes (it has no "self" restriction).
+// valid named metric in a when= expression on fields, spans, and text nodes
+// (it has no "self" restriction), both at top level and inside a <subagent>
+// region of the unified claude-code catalog.
 func TestValidateWidthMetric(t *testing.T) {
 	// claude-code: field, span, and text.
 	expectNoErrors(t, validateWrapped(t, `<field name="model" when="width ge 80"/>`))
 	expectNoErrors(t, validateWrapped(t, `<span when="width ge 80"><field name="model"/></span>`))
 	expectNoErrors(t, validateWrapped(t, `<text when="width lt 60">narrow</text>`))
-	// width is registered on both tools, so MetricByName resolves it.
+	// width is registered on the claude-code catalog, so MetricByName resolves it.
 	if _, ok := MetricByName("claude-code", "width"); !ok {
 		t.Error("width metric not found for claude-code")
 	}
-	if _, ok := MetricByName("claude-code-subagent", "width"); !ok {
-		t.Error("width metric not found for claude-code-subagent")
-	}
-	// claude-code-subagent: width in a when= on a task field.
-	sub := `<statusloom version="1" tool="claude-code-subagent"><layout name="d" active="true"><line>` +
+	// width in a when= on a task field inside a <subagent> region.
+	sub := `<statusloom version="1" tool="claude-code"><layout name="d" active="true"><subagent><line>` +
 		`<field name="task-description"/><field name="task-tokens" optional="task-tokens" when="width ge 64"/>` +
-		`</line></layout></statusloom>`
+		`</line></subagent></layout></statusloom>`
 	expectNoErrors(t, validate(t, sub))
 }
 

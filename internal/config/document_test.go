@@ -26,7 +26,7 @@ func TestDocumentPath_ConfigDirIsADirectory(t *testing.T) {
 }
 
 func TestDefaultDocument_ParsesAndValidates(t *testing.T) {
-	for _, tool := range []string{"claude-code", "claude-code-subagent"} {
+	for _, tool := range []string{"claude-code"} {
 		t.Run(tool, func(t *testing.T) {
 			src := DefaultDocument(tool)
 			if src == "" {
@@ -43,6 +43,55 @@ func TestDefaultDocument_ParsesAndValidates(t *testing.T) {
 	}
 	if DefaultDocument("unknown-tool") != "" {
 		t.Error("DefaultDocument(unknown-tool) should be empty")
+	}
+}
+
+// TestDefaultDocument_ClaudeCodeHasSubagentRegion verifies the phase-2b
+// integration of a <subagent> region (plans/subagent-region-dsl.md) into the
+// single claude-code default document: the layout has no
+// <responsive>/<variant> breakpoints, so the region is expected directly
+// under <layout>, below its two <line> elements, containing exactly one
+// <line> built from task-* fields only.
+func TestDefaultDocument_ClaudeCodeHasSubagentRegion(t *testing.T) {
+	src := DefaultDocument("claude-code")
+	doc, diags := dsl.Parse(src)
+	if doc == nil || doc.Root == nil {
+		t.Fatalf("claude-code default document did not parse: %v", diags)
+	}
+	if diags := append(diags, dsl.Validate(doc)...); dsl.HasErrors(diags) {
+		t.Fatalf("claude-code default document has validation errors: %v", diags)
+	}
+
+	if len(doc.Root.Layouts) != 1 {
+		t.Fatalf("expected exactly one layout, got %d", len(doc.Root.Layouts))
+	}
+	layout := doc.Root.Layouts[0]
+	for _, child := range layout.Children {
+		if _, ok := child.(*dsl.ResponsiveNode); ok {
+			t.Fatal("claude-code default layout unexpectedly uses <responsive>; test assumes layout-direct placement")
+		}
+	}
+	if layout.Subagent == nil {
+		t.Fatal("claude-code default layout has no <subagent> region")
+	}
+	if layout.Subagent.Line == nil {
+		t.Fatal("<subagent> region has no <line>")
+	}
+
+	var fieldNames []string
+	for _, child := range layout.Subagent.Line.Children {
+		if f, ok := child.(*dsl.FieldNode); ok {
+			fieldNames = append(fieldNames, f.Name)
+		}
+	}
+	want := []string{"task-description", "task-model", "task-duration", "task-tokens", "task-context-percent"}
+	if len(fieldNames) != len(want) {
+		t.Fatalf("subagent line fields = %v, want %v", fieldNames, want)
+	}
+	for i, name := range want {
+		if fieldNames[i] != name {
+			t.Errorf("subagent line field[%d] = %q, want %q", i, fieldNames[i], name)
+		}
 	}
 }
 

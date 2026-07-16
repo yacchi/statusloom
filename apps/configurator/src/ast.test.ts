@@ -4,17 +4,20 @@ import {
     addLayout,
     addLine,
     addResponsive,
+    addSubagent,
     addVariant,
     adjustIdAfterRemoval,
     appendLayouts,
     applyDropEdit,
     deleteLayout,
     deleteLine,
+    deleteSubagent,
     deleteVariant,
     duplicateChild,
     duplicateLayout,
     duplicateLineNode,
     duplicateVariant,
+    fillSubagentDefault,
     getNode,
     insertChild,
     insertVariant,
@@ -33,15 +36,82 @@ import {
     updateGitAttrs,
     updateRootAttrs,
 } from "./ast.ts";
+import { makeDefaultSubagentLine } from "./presets.ts";
 import { assignIds, doc, fld, lay, ln, resp, spn, txt, variant } from "./test/fakeDsl.ts";
 import type {
     FieldNode,
+    LineChild,
     LineNode,
     ResponsiveNode,
     SpanNode,
     StatusloomNode,
+    SubagentNode,
     VariantNode,
 } from "./types.ts";
+
+// ---- subagent-region test fixtures ----
+//
+// The fakeDsl assignIds helper does not descend into <subagent> regions (they
+// live in a dedicated field, not Children), so these stamp the backend-scheme
+// ids ("L{i}.s" / "L{i}.{p}.v{v}.s", children "...s.{k}") the region and its
+// single shared-id <line> would receive from a real parse.
+function saRegion(children: LineChild[]): SubagentNode {
+    return { id: "", kind: "subagent", line: { id: "", kind: "line", children } };
+}
+
+function stampSubagent(sub: SubagentNode, id: string): void {
+    sub.id = id;
+    sub.line.id = id;
+    sub.line.children.forEach((c, k) => {
+        c.id = `${id}.${k}`;
+    });
+}
+
+function assignSubagentIds(root: StatusloomNode): StatusloomNode {
+    root.layouts.forEach((l, i) => {
+        if (l.subagent) {
+            stampSubagent(l.subagent, `L${i}.s`);
+        }
+        l.children.forEach((child, p) => {
+            if (child.kind === "responsive") {
+                child.variants.forEach((v, vi) => {
+                    if (v.subagent) {
+                        stampSubagent(v.subagent, `L${i}.${p}.v${vi}.s`);
+                    }
+                });
+            }
+        });
+    });
+    return root;
+}
+
+// A responsive-free layout carrying a layout-direct <subagent> region:
+// L0.0: [model] (plain line); L0.s: subagent line [task-description, task-model]
+function subagentLayoutFixture(): StatusloomNode {
+    const root = doc([lay("Default", [ln([fld("model")])], true)]);
+    root.layouts[0].subagent = saRegion([fld("task-description"), fld("task-model")]);
+    return assignSubagentIds(assignIds(root));
+}
+
+// A responsive layout whose two variants each carry their own <subagent>:
+// L0.0: [model]; L0.1 responsive: v0 (line [git-branch], subagent [task-description]),
+// v1 (line [session-cost], subagent [task-model]).
+function subagentVariantFixture(): StatusloomNode {
+    const root = doc([
+        lay(
+            "Default",
+            [
+                ln([fld("model")]),
+                resp([variant([ln([fld("git-branch")])]), variant([ln([fld("session-cost")])])]),
+            ],
+            true,
+        ),
+    ]);
+    const responsive = root.layouts[0].children[1] as ResponsiveNode;
+    responsive.variants[0].subagent = saRegion([fld("task-description")]);
+    responsive.variants[1].subagent = saRegion([fld("task-model")]);
+    return assignSubagentIds(assignIds(root));
+}
 
 // A document with ids assigned per the backend scheme:
 // L0.0: [model, span[thinking-effort], text"|"], L0.1: [git-branch]
@@ -157,6 +227,40 @@ describe("parseNodeId", () => {
         ]);
     });
 
+    it("parses subagent forms", () => {
+        // A layout-direct region's line shares the region's "L{i}.s" id; its
+        // children continue with the plain "child" tail.
+        expect(parseNodeId("L0.s")).toEqual([
+            { t: "layout", i: 0 },
+            { t: "subagent" },
+        ]);
+        expect(parseNodeId("L0.s.1")).toEqual([
+            { t: "layout", i: 0 },
+            { t: "subagent" },
+            { t: "child", k: 1 },
+        ]);
+        expect(parseNodeId("L0.s.0.cr1")).toEqual([
+            { t: "layout", i: 0 },
+            { t: "subagent" },
+            { t: "child", k: 0 },
+            { t: "colorRule", c: 1 },
+        ]);
+        // A variant-nested region: "...v{v}.s...".
+        expect(parseNodeId("L0.1.v0.s")).toEqual([
+            { t: "layout", i: 0 },
+            { t: "layoutChild", p: 1 },
+            { t: "variant", v: 0 },
+            { t: "subagent" },
+        ]);
+        expect(parseNodeId("L0.1.v0.s.2")).toEqual([
+            { t: "layout", i: 0 },
+            { t: "layoutChild", p: 1 },
+            { t: "variant", v: 0 },
+            { t: "subagent" },
+            { t: "child", k: 2 },
+        ]);
+    });
+
     it("rejects malformed ids", () => {
         expect(parseNodeId("")).toBeNull();
         expect(parseNodeId("X0")).toBeNull();
@@ -165,6 +269,8 @@ describe("parseNodeId", () => {
         expect(parseNodeId("root.c1.0")).toBeNull();
         expect(parseNodeId("L0.1.v0.x")).toBeNull();
         expect(parseNodeId("L0.1.vX")).toBeNull();
+        expect(parseNodeId("L0.s.x")).toBeNull();
+        expect(parseNodeId("L0.s.0.cr0.0")).toBeNull(); // color-rules are leaves
     });
 });
 
@@ -751,5 +857,248 @@ describe("applyDropEdit", () => {
                 { containerId: "L0.0.0", index: 0 }, // a field, not a container
             ),
         ).toEqual({ next: root, select: null });
+    });
+});
+
+// A <subagent> region is a dedicated LayoutNode.subagent / VariantNode.subagent
+// field (never a Children entry) whose single <line> shares the region's
+// "L{i}.s" / "L{i}.{p}.v{v}.s" id. getNode resolves that id to the line so the
+// normal child ops edit it; the region wrapper is added/removed with dedicated
+// helpers.
+describe("subagent regions", () => {
+    const isDirty = (root: StatusloomNode, id: string): boolean =>
+        (getNode(root, id) as { dirty?: boolean } | null)?.dirty === true;
+    const saNames = (root: StatusloomNode, id: string): string[] =>
+        (getNode(root, id) as LineNode).children.map((c) =>
+            c.kind === "field" ? (c.name ?? "") : c.kind === "text" ? c.value : c.kind,
+        );
+
+    it("getNode resolves a layout-direct region's line and fields", () => {
+        const root = subagentLayoutFixture();
+        // "L{i}.s" resolves to the region's <line> — the drop/edit container.
+        expect(getNode(root, "L0.s")?.kind).toBe("line");
+        expect(saNames(root, "L0.s")).toEqual(["task-description", "task-model"]);
+        expect((getNode(root, "L0.s.0") as FieldNode).name).toBe("task-description");
+        expect((getNode(root, "L0.s.1") as FieldNode).name).toBe("task-model");
+        // No region on a bare layout.
+        expect(getNode(fixture(), "L0.s")).toBeNull();
+    });
+
+    it("getNode resolves per-variant regions' lines and fields", () => {
+        const root = subagentVariantFixture();
+        expect(getNode(root, "L0.1.v0.s")?.kind).toBe("line");
+        expect((getNode(root, "L0.1.v0.s.0") as FieldNode).name).toBe("task-description");
+        expect((getNode(root, "L0.1.v1.s.0") as FieldNode).name).toBe("task-model");
+    });
+
+    it("parentIdOf / parentChildId / predictChildId address subagent ids", () => {
+        expect(parentIdOf("L0.s")).toBe("L0");
+        expect(parentIdOf("L0.s.1")).toBe("L0.s");
+        expect(parentIdOf("L0.1.v0.s")).toBe("L0.1.v0");
+        expect(parentIdOf("L0.1.v0.s.2")).toBe("L0.1.v0.s");
+        expect(parentChildId("L0.s.1")).toEqual({ parentId: "L0.s", index: 1 });
+        expect(parentChildId("L0.1.v0.s.0")).toEqual({ parentId: "L0.1.v0.s", index: 0 });
+        expect(predictChildId("L0.s", 2)).toBe("L0.s.2");
+    });
+
+    it("addSubagent attaches an empty region to a layout and is idempotent", () => {
+        const root = fixture(); // Compact layout (L1) has no region
+        const added = addSubagent(root, "L1");
+        const sa = added.layouts[1].subagent;
+        expect(sa?.kind).toBe("subagent");
+        expect(sa?.line.kind).toBe("line");
+        // The region starts empty: the user drops task-* fields, or clicks
+        // "Reset to default" to seed the built-in default (fillSubagentDefault).
+        expect(sa?.line.children).toEqual([]);
+        expect(isDirty(added, "L1")).toBe(true);
+        // Adding a second time is a no-op (same root identity).
+        expect(addSubagent(added, "L1")).toBe(added);
+    });
+
+    it("addSubagent attaches an empty region to a variant", () => {
+        const root = responsiveFixture();
+        const added = addSubagent(root, "L0.1.v0");
+        const responsive = added.layouts[0].children[1] as ResponsiveNode;
+        expect(responsive.variants[0].subagent?.line.kind).toBe("line");
+        expect(responsive.variants[0].subagent?.line.children).toEqual([]);
+        expect(responsive.variants[1].subagent).toBeUndefined(); // sibling untouched
+        expect(addSubagent(added, "L0.1.v0")).toBe(added);
+    });
+
+    it("addSubagent is a no-op for a non-container id", () => {
+        const root = fixture();
+        expect(addSubagent(root, "L0.0")).toBe(root); // a line
+        expect(addSubagent(root, "root")).toBe(root);
+        expect(addSubagent(root, "L9")).toBe(root); // dangling
+    });
+
+    it("makeDefaultSubagentLine mirrors document.go's claudeCodeDefaultDocument subagent line", () => {
+        // internal/config/document.go is the single source of truth for this
+        // shape; this locks the frontend's mirror of it (fields, order, and
+        // the width-adaptive attrs: prefix/suffix/format/precision/optional/
+        // when/min-width/align).
+        const line = makeDefaultSubagentLine();
+        expect(line.children).toEqual([
+            { id: "", kind: "field", name: "task-description" },
+            { id: "", kind: "field", name: "task-model", prefix: "  " },
+            { id: "", kind: "flex" },
+            {
+                id: "",
+                kind: "field",
+                name: "task-duration",
+                format: "duration",
+                when: "width ge 48",
+                "min-width": 7,
+                align: "right",
+            },
+            {
+                id: "",
+                kind: "field",
+                name: "task-tokens",
+                prefix: " · ↓ ",
+                format: "compact-number",
+                optional: "task-tokens",
+                when: "width ge 64",
+                "min-width": 6,
+                align: "right",
+            },
+            {
+                id: "",
+                kind: "field",
+                name: "task-context-percent",
+                prefix: " (",
+                suffix: ")",
+                format: "percent",
+                precision: "0",
+                optional: "task-context-percent",
+                when: "width ge 80",
+                "min-width": 4,
+                align: "right",
+            },
+        ]);
+    });
+
+    it("fillSubagentDefault replaces an emptied-out subagent line's children", () => {
+        const root = subagentLayoutFixture(); // L0.s already has task-description/task-model
+        const emptied: StatusloomNode = {
+            ...root,
+            layouts: root.layouts.map((l, i) =>
+                i === 0 && l.subagent ? { ...l, subagent: { ...l.subagent, line: { ...l.subagent.line, children: [] } } } : l,
+            ),
+        };
+        const filled = fillSubagentDefault(emptied, "L0.s", makeDefaultSubagentLine());
+        const sa = filled.layouts[0].subagent;
+        expect(sa?.line.children.map((c) => (c.kind === "field" ? c.name : c.kind))).toEqual([
+            "task-description",
+            "task-model",
+            "flex",
+            "task-duration",
+            "task-tokens",
+            "task-context-percent",
+        ]);
+        // The line's own resolved id is preserved (only its content changed).
+        expect(sa?.line.id).toBe("L0.s");
+        expect(isDirty(filled, "L0.s")).toBe(true);
+    });
+
+    it("fillSubagentDefault resets an already-populated subagent line to the default", () => {
+        // "Reset to default" also overwrites a non-empty row (undoable via
+        // history), not just an emptied-out one.
+        const root = subagentLayoutFixture(); // L0.s has task-description/task-model
+        const reset = fillSubagentDefault(root, "L0.s", makeDefaultSubagentLine());
+        expect(reset).not.toBe(root);
+        const sa = reset.layouts[0].subagent;
+        expect(sa?.line.children.map((c) => (c.kind === "field" ? c.name : c.kind))).toEqual([
+            "task-description",
+            "task-model",
+            "flex",
+            "task-duration",
+            "task-tokens",
+            "task-context-percent",
+        ]);
+        expect(isDirty(reset, "L0.s")).toBe(true);
+    });
+
+    it("fillSubagentDefault is a no-op for a dangling or non-line id", () => {
+        const root = subagentLayoutFixture();
+        const line = makeDefaultSubagentLine();
+        expect(fillSubagentDefault(root, "L0.s.9.9", line)).toBe(root); // dangling
+        expect(fillSubagentDefault(root, "L0", line)).toBe(root); // a layout, not a line
+    });
+
+    it("deleteSubagent removes the region (layout and variant)", () => {
+        const layoutRoot = subagentLayoutFixture();
+        const removed = deleteSubagent(layoutRoot, "L0");
+        expect(removed.layouts[0].subagent).toBeUndefined();
+        expect(isDirty(removed, "L0")).toBe(true);
+        // No-op when absent (same root identity).
+        const bare = fixture();
+        expect(deleteSubagent(bare, "L0")).toBe(bare);
+
+        const variantRoot = subagentVariantFixture();
+        const vRemoved = deleteSubagent(variantRoot, "L0.1.v0");
+        const responsive = vRemoved.layouts[0].children[1] as ResponsiveNode;
+        expect(responsive.variants[0].subagent).toBeUndefined();
+        expect(responsive.variants[1].subagent).toBeDefined(); // sibling kept
+    });
+
+    it("insertChild / removeNode edit a layout-direct region's line", () => {
+        const root = subagentLayoutFixture();
+        const inserted = insertChild(root, "L0.s", 1, txt("|"));
+        expect(saNames(inserted, "L0.s")).toEqual(["task-description", "|", "task-model"]);
+        expect(isDirty(inserted, "L0.s")).toBe(true); // the line container is stamped
+
+        const removed = removeNode(root, "L0.s.0");
+        expect(saNames(removed, "L0.s")).toEqual(["task-model"]);
+        expect(isDirty(removed, "L0.s")).toBe(true);
+    });
+
+    it("insertChild edits a variant-nested region's line", () => {
+        const root = subagentVariantFixture();
+        const inserted = insertChild(root, "L0.1.v0.s", 1, fld("task-status"));
+        expect(saNames(inserted, "L0.1.v0.s")).toEqual(["task-description", "task-status"]);
+        // The sibling variant's region is untouched.
+        expect(saNames(inserted, "L0.1.v1.s")).toEqual(["task-model"]);
+    });
+
+    it("updateAttrs edits a field inside a region's line", () => {
+        const root = subagentLayoutFixture();
+        const next = updateAttrs(root, "L0.s.1", { color: "cyan" });
+        expect((getNode(next, "L0.s.1") as FieldNode).color).toBe("cyan");
+        expect(isDirty(next, "L0.s.1")).toBe(true);
+    });
+
+    it("duplicateChild duplicates a chip inside a region's line", () => {
+        const root = subagentLayoutFixture();
+        const { next, select } = duplicateChild(root, "L0.s.0");
+        expect(saNames(next, "L0.s")).toEqual([
+            "task-description",
+            "task-description",
+            "task-model",
+        ]);
+        expect(select).toBe("L0.s.1");
+    });
+
+    it("applyDropEdit drops a palette field into a region's line", () => {
+        const root = subagentLayoutFixture();
+        const { next, select } = applyDropEdit(
+            root,
+            { kind: "palette", node: fld("task-status") },
+            { containerId: "L0.s", index: 2 },
+        );
+        expect(saNames(next, "L0.s")).toEqual([
+            "task-description",
+            "task-model",
+            "task-status",
+        ]);
+        expect(select).toBe("L0.s.2");
+    });
+
+    it("moveChild moves a chip out of a region's line into a main line", () => {
+        const root = subagentLayoutFixture();
+        // Move task-model (L0.s.1) into the main line L0.0 at its end.
+        const next = moveChild(root, "L0.s.1", "L0.0", 1);
+        expect(saNames(next, "L0.s")).toEqual(["task-description"]);
+        expect((getNode(next, "L0.0.1") as FieldNode).name).toBe("task-model");
     });
 });

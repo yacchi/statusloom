@@ -40,9 +40,11 @@ import { nodeLabel } from "../presets.ts";
 import { effectiveLines, matchPreview, type PreviewMatch } from "../previewMatch.ts";
 import {
     LINE_ID_PREFIX,
+    SUBAGENT_LINE_ID_PREFIX,
     VARIANT_CONTAINER_PREFIX,
     VARIANT_ID_PREFIX,
     VARIANT_LINE_ID_PREFIX,
+    type DropCategory,
     type DropTarget,
 } from "../useDragEditing.ts";
 import type {
@@ -57,9 +59,40 @@ import type {
     SampleKind,
     SessionSummary,
     SpanNode,
+    SubagentNode,
     VariantNode,
 } from "../types.ts";
 import { HelpTip } from "./HelpTip.tsx";
+
+// The subagent-region samples the subagent preview toggle picks between.
+type SubagentSample = "subagent-running" | "subagent-completed";
+
+// Paint-only drop eligibility of a band for the in-flight drag: "valid" when
+// the dragged content family matches the band's, "invalid" when it doesn't,
+// "idle" when there is no family-restricted drag (nothing dragged, a variant
+// reorder, or a structural preset that drops anywhere). Fixed for the whole
+// drag, so it never feeds the #185 restructure loop.
+type Eligibility = "idle" | "valid" | "invalid";
+
+function eligibilityFor(
+    dragCategory: DropCategory | null,
+    accepts: "subagent" | "main",
+): Eligibility {
+    if (dragCategory === null || dragCategory === "any") {
+        return "idle";
+    }
+    return dragCategory === accepts ? "valid" : "invalid";
+}
+
+function eligibilityClass(e: Eligibility): string {
+    if (e === "valid") {
+        return " drop-eligible";
+    }
+    if (e === "invalid") {
+        return " drop-ineligible";
+    }
+    return "";
+}
 
 // Encodes/decodes the sample-selector's <option value>: "sample:<kind>" for a
 // synthetic sample, "session:<id>" for a captured real session.
@@ -577,6 +610,11 @@ interface CanvasRowProps {
     // False disables the delete button without disabling the row (used to
     // keep a variant's last line, which validation requires).
     canDelete: boolean;
+    // Hides the per-row duplicate/delete-line buttons (used by the subagent
+    // band, whose single line is added/removed via the band header, not here).
+    hideRowActions?: boolean;
+    // Paint-only drop eligibility of this row for the current drag.
+    eligibility?: Eligibility;
     displayName: (field: string) => string;
     onSelect: (id: string, topIndex: number) => void;
     onActivateLine: (topIndex: number) => void;
@@ -596,6 +634,8 @@ function CanvasRow({
     dropTarget,
     readOnly,
     canDelete,
+    hideRowActions = false,
+    eligibility = "idle",
     displayName,
     onSelect,
     onActivateLine,
@@ -627,7 +667,8 @@ function CanvasRow({
                         "row-track" +
                         (isPowerline ? " powerline-row" : "") +
                         (isOver ? " over" : "") +
-                        (isDropLine && children.length === 0 ? " drop-empty" : "")
+                        (isDropLine && children.length === 0 ? " drop-empty" : "") +
+                        eligibilityClass(eligibility)
                     }
                 >
                     {children.length === 0 ? (
@@ -657,28 +698,193 @@ function CanvasRow({
             {previewLine?.omitted ? (
                 <span className="omit-badge">{t(lang, "omittedBadge")}</span>
             ) : null}
-            <button
-                className="row-duplicate"
-                title="Duplicate line"
-                disabled={readOnly}
-                onClick={(e) => {
-                    e.stopPropagation();
-                    onDuplicateLine(line.id);
-                }}
-            >
-                ⧉
-            </button>
-            <button
-                className="row-delete"
-                title="Delete line"
-                disabled={readOnly || !canDelete}
-                onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteLine(line.id);
-                }}
-            >
-                ✕
-            </button>
+            {hideRowActions ? null : (
+                <>
+                    <button
+                        className="row-duplicate"
+                        title="Duplicate line"
+                        disabled={readOnly}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onDuplicateLine(line.id);
+                        }}
+                    >
+                        ⧉
+                    </button>
+                    <button
+                        className="row-delete"
+                        title="Delete line"
+                        disabled={readOnly || !canDelete}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteLine(line.id);
+                        }}
+                    >
+                        ✕
+                    </button>
+                </>
+            )}
+        </div>
+    );
+}
+
+interface SubagentBandProps {
+    // The width-adaptive container the region belongs to: a layout id ("L{i}")
+    // for a responsive-free layout, or a variant id ("L{i}.{p}.v{v}"). Used as
+    // the add/delete target and the subagentPreview map key.
+    containerId: string;
+    // The layout-child position this band's owning row lives at, reported to
+    // onSelect so selecting a subagent chip keeps that row active.
+    topIndex: number;
+    subagent: SubagentNode | undefined;
+    // The subagent line rendered once per sample task (subagentPreview for this
+    // container), or null while no preview has arrived.
+    previewLines: PreviewLine[] | null;
+    theme: Theme;
+    // Simulated terminal width (COLUMNS): the preview rows render inside a
+    // ${width}ch container so <flex/>-driven spacing (right-alignment) shows
+    // at literal width, exactly like the main preview surface.
+    width: number;
+    selection: string | null;
+    dropTarget: DropTarget | null;
+    readOnly: boolean;
+    // Paint-only drop eligibility of the subagent line for the current drag.
+    eligibility: Eligibility;
+    displayName: (field: string) => string;
+    onSelect: (id: string, topIndex: number) => void;
+    onAddSubagent: (containerId: string) => void;
+    onDeleteSubagent: (containerId: string) => void;
+    onFillSubagentDefault: (subagentLineId: string) => void;
+}
+
+// One subagent region: a labelled band holding the editable subagent <line>
+// (task-* only) and, below it, that line rendered once per sample task
+// (subagentPreview). When the container has no region yet, an "add" button.
+// The band mirrors the real subagent statusline: it always sits BELOW its
+// container's lines (Canvas renders it after the layout's lines / a variant's
+// lines).
+function SubagentBand({
+    containerId,
+    topIndex,
+    subagent,
+    previewLines,
+    theme,
+    width,
+    selection,
+    dropTarget,
+    readOnly,
+    eligibility,
+    displayName,
+    onSelect,
+    onAddSubagent,
+    onDeleteSubagent,
+    onFillSubagentDefault,
+}: SubagentBandProps) {
+    if (!subagent) {
+        return (
+            <div className="subagent-band subagent-band-empty">
+                <button
+                    className="subagent-add"
+                    data-testid={`subagent-add-${containerId}`}
+                    title="Add subagent row"
+                    disabled={readOnly}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onAddSubagent(containerId);
+                    }}
+                >
+                    + Add subagent row
+                </button>
+            </div>
+        );
+    }
+    const line = subagent.line;
+    return (
+        <div className="subagent-band" data-testid={`subagent-band-${containerId}`}>
+            <div className="subagent-band-header">
+                <span className="subagent-band-title">Subagent</span>
+                {/* Always available while a region exists: (re)seed the row with
+                    the built-in default fields (presets.ts's
+                    makeDefaultSubagentLine). Overwriting a populated row is
+                    undoable via history, so no confirmation is needed. */}
+                <button
+                    className="subagent-fill-default"
+                    data-testid={`subagent-fill-default-${containerId}`}
+                    title="Reset to default"
+                    disabled={readOnly}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onFillSubagentDefault(line.id);
+                    }}
+                >
+                    Reset to default
+                </button>
+                <button
+                    className="subagent-delete"
+                    data-testid={`subagent-delete-${containerId}`}
+                    title="Delete subagent row"
+                    disabled={readOnly}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteSubagent(containerId);
+                    }}
+                >
+                    ✕
+                </button>
+            </div>
+            <CanvasRow
+                dropId={SUBAGENT_LINE_ID_PREFIX + line.id}
+                rowLabel={null}
+                topIndex={topIndex}
+                line={line}
+                previewLine={null}
+                theme={theme}
+                selection={selection}
+                active={false}
+                dropTarget={dropTarget}
+                readOnly={readOnly}
+                canDelete={false}
+                hideRowActions
+                eligibility={eligibility}
+                displayName={displayName}
+                onSelect={onSelect}
+                onActivateLine={() => {}}
+                onDeleteLine={() => {}}
+                onDuplicateLine={() => {}}
+            />
+            {previewLines && previewLines.length > 0 ? (
+                <div className="subagent-preview" data-testid={`subagent-preview-${containerId}`}>
+                    {/* Render inside a ${width}ch terminal-width container, like
+                        the main preview surface: the per-field segments are inline
+                        (never flex items) inside a white-space:pre line, so the
+                        <flex/> filler span keeps its literal width and trailing
+                        fields stay right-aligned at the simulated width. */}
+                    <div className="terminal-width" style={{ width: `${width}ch` }}>
+                        {previewLines.map((taskLine, ti) => (
+                            <div className={"subagent-preview-line " + theme} key={ti}>
+                                {line.children.map((child) => {
+                                    const segs = segsFor(taskLine.segments, child.id);
+                                    const ansi = visibleAnsi(segs);
+                                    if (ansi === "") {
+                                        return null;
+                                    }
+                                    const selected = selection === child.id;
+                                    return (
+                                        <span
+                                            key={child.id}
+                                            className={
+                                                "subagent-seg" + (selected ? " selected" : "")
+                                            }
+                                        >
+                                            {ansiSpans(ansi, theme)}
+                                        </span>
+                                    );
+                                })}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            ) : null}
         </div>
     );
 }
@@ -696,10 +902,17 @@ interface VariantCardProps {
     topIndex: number;
     match: PreviewMatch;
     theme: Theme;
+    // Simulated terminal width, forwarded to the variant's subagent band.
+    width: number;
     selection: string | null;
     dropTarget: DropTarget | null;
     readOnly: boolean;
     canDeleteVariant: boolean;
+    // The in-flight drag's content family, for per-band drop eligibility.
+    dragCategory: DropCategory | null;
+    // Each container's subagent line rendered per sample task, keyed by
+    // container node id (this variant's id).
+    subagentPreview: Record<string, PreviewLine[]> | null;
     displayName: (field: string) => string;
     onSelect: (id: string, topIndex: number) => void;
     onActivateLine: (topIndex: number) => void;
@@ -708,6 +921,9 @@ interface VariantCardProps {
     onAddLine: () => void;
     onDeleteVariant: () => void;
     onDuplicate: () => void;
+    onAddSubagent: (containerId: string) => void;
+    onDeleteSubagent: (containerId: string) => void;
+    onFillSubagentDefault: (subagentLineId: string) => void;
 }
 
 // One <variant> candidate: a draggable, sortable card (reordering variants
@@ -724,10 +940,13 @@ function VariantCard({
     topIndex,
     match,
     theme,
+    width,
     selection,
     dropTarget,
     readOnly,
     canDeleteVariant,
+    dragCategory,
+    subagentPreview,
     displayName,
     onSelect,
     onActivateLine,
@@ -736,6 +955,9 @@ function VariantCard({
     onAddLine,
     onDeleteVariant,
     onDuplicate,
+    onAddSubagent,
+    onDeleteSubagent,
+    onFillSubagentDefault,
 }: VariantCardProps) {
     const lang = useLang();
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -814,6 +1036,7 @@ function VariantCard({
                         dropTarget={dropTarget}
                         readOnly={readOnly}
                         canDelete={variant.lines.length > 1}
+                        eligibility={eligibilityFor(dragCategory, "main")}
                         displayName={displayName}
                         onSelect={onSelect}
                         onActivateLine={onActivateLine}
@@ -831,6 +1054,23 @@ function VariantCard({
             >
                 + Line
             </button>
+            <SubagentBand
+                containerId={variant.id}
+                topIndex={topIndex}
+                subagent={variant.subagent}
+                previewLines={subagentPreview?.[variant.id] ?? null}
+                theme={theme}
+                width={width}
+                selection={selection}
+                dropTarget={dropTarget}
+                readOnly={readOnly}
+                eligibility={eligibilityFor(dragCategory, "subagent")}
+                displayName={displayName}
+                onSelect={onSelect}
+                onAddSubagent={onAddSubagent}
+                onDeleteSubagent={onDeleteSubagent}
+                onFillSubagentDefault={onFillSubagentDefault}
+            />
         </div>
     );
 }
@@ -840,10 +1080,14 @@ interface ResponsiveBlockProps {
     topIndex: number;
     match: PreviewMatch;
     theme: Theme;
+    // Simulated terminal width, forwarded to each variant's subagent band.
+    width: number;
     selection: string | null;
     active: boolean;
     dropTarget: DropTarget | null;
     readOnly: boolean;
+    dragCategory: DropCategory | null;
+    subagentPreview: Record<string, PreviewLine[]> | null;
     displayName: (field: string) => string;
     onSelect: (id: string, topIndex: number) => void;
     onActivateLine: (topIndex: number) => void;
@@ -853,6 +1097,9 @@ interface ResponsiveBlockProps {
     onAddVariant: (responsiveId: string) => void;
     onDeleteVariant: (variantId: string) => void;
     onDuplicateVariant: (variantId: string) => void;
+    onAddSubagent: (containerId: string) => void;
+    onDeleteSubagent: (containerId: string) => void;
+    onFillSubagentDefault: (subagentLineId: string) => void;
 }
 
 // A <responsive> row: a horizontal, reorderable track of <variant> cards
@@ -863,10 +1110,13 @@ function ResponsiveBlock({
     topIndex,
     match,
     theme,
+    width,
     selection,
     active,
     dropTarget,
     readOnly,
+    dragCategory,
+    subagentPreview,
     displayName,
     onSelect,
     onActivateLine,
@@ -876,6 +1126,9 @@ function ResponsiveBlock({
     onAddVariant,
     onDeleteVariant,
     onDuplicateVariant,
+    onAddSubagent,
+    onDeleteSubagent,
+    onFillSubagentDefault,
 }: ResponsiveBlockProps) {
     const selectedVariant = match.selectedVariant.get(responsive.id) ?? null;
     const dragIds = responsive.variants.map((v, i) =>
@@ -903,10 +1156,13 @@ function ResponsiveBlock({
                                 topIndex={topIndex}
                                 match={match}
                                 theme={theme}
+                                width={width}
                                 selection={selection}
                                 dropTarget={dropTarget}
                                 readOnly={readOnly}
                                 canDeleteVariant={responsive.variants.length > 1}
+                                dragCategory={dragCategory}
+                                subagentPreview={subagentPreview}
                                 displayName={displayName}
                                 onSelect={onSelect}
                                 onActivateLine={onActivateLine}
@@ -915,6 +1171,9 @@ function ResponsiveBlock({
                                 onAddLine={() => onAddLineToVariant(variant.id)}
                                 onDeleteVariant={() => onDeleteVariant(variant.id)}
                                 onDuplicate={() => onDuplicateVariant(variant.id)}
+                                onAddSubagent={onAddSubagent}
+                                onDeleteSubagent={onDeleteSubagent}
+                                onFillSubagentDefault={onFillSubagentDefault}
                             />
                         ))}
                     </div>
@@ -938,23 +1197,31 @@ function ResponsiveBlock({
 
 interface CanvasProps {
     children: LayoutChild[];
+    // The edited layout's own id ("L{i}") and its layout-level <subagent>
+    // region (used only for a responsive-free layout: its band renders below
+    // all the layout's lines, keyed by the layout id).
+    layoutId: string;
+    layoutSubagent: SubagentNode | undefined;
     previewLines: PreviewLine[] | null;
     // Responsive AST id -> the variant index the preview response selected
     // at the current width (see DSL_API.md "allVariants"). Null while no
     // preview response with this data has arrived yet.
     selectedVariants: Record<string, number> | null;
+    // Each width-adaptive container's <subagent> line rendered once per sample
+    // task, keyed by container node id (a responsive-free layout's id, or each
+    // variant's id). Null while no subagent preview has arrived.
+    subagentPreview: Record<string, PreviewLine[]> | null;
     fallback: PreviewResponse["fallback"] | null;
     selection: string | null;
     activeLine: number;
     dropTarget: DropTarget | null;
+    // The in-flight chip drag's content family, for drop-eligibility painting.
+    dragCategory: DropCategory | null;
     theme: Theme;
     width: number;
     previewSource: PreviewSource;
-    // True while editing the subagentStatusLine document: the sample
-    // selector offers running/completed task samples instead of
-    // full/early-session, and hides "Live sessions" (captured session
-    // snapshots aren't a valid preview source for this document).
-    subagentMode: boolean;
+    // Which subagent-region sample the subagent preview rows use.
+    subagentSample: SubagentSample;
     sessions: SessionSummary[];
     pureOutput: boolean;
     loading: boolean;
@@ -974,8 +1241,12 @@ interface CanvasProps {
     onAddVariant: (responsiveId: string) => void;
     onDeleteVariant: (variantId: string) => void;
     onDuplicateVariant: (variantId: string) => void;
+    onAddSubagent: (containerId: string) => void;
+    onDeleteSubagent: (containerId: string) => void;
+    onFillSubagentDefault: (subagentLineId: string) => void;
     onWidth: (w: number) => void;
     onPreviewSourceChange: (source: PreviewSource) => void;
+    onSubagentSampleChange: (sample: SubagentSample) => void;
     onRefreshSessions: () => void;
     onTheme: (t: Theme) => void;
     onPureOutput: (v: boolean) => void;
@@ -983,16 +1254,20 @@ interface CanvasProps {
 
 export function Canvas({
     children,
+    layoutId,
+    layoutSubagent,
     previewLines,
     selectedVariants,
+    subagentPreview,
     fallback,
     selection,
     activeLine,
     dropTarget,
+    dragCategory,
     theme,
     width,
     previewSource,
-    subagentMode,
+    subagentSample,
     sessions,
     pureOutput,
     loading,
@@ -1010,8 +1285,12 @@ export function Canvas({
     onAddVariant,
     onDeleteVariant,
     onDuplicateVariant,
+    onAddSubagent,
+    onDeleteSubagent,
+    onFillSubagentDefault,
     onWidth,
     onPreviewSourceChange,
+    onSubagentSampleChange,
     onRefreshSessions,
     onTheme,
     onPureOutput,
@@ -1022,6 +1301,27 @@ export function Canvas({
     // a responsive's variant-nested lines match only the ones its
     // width-selected variant actually rendered.
     const match = matchPreview(previewLines, selectedVariants);
+    // In pure output the real terminal stacks the subagent statusline BELOW
+    // the main lines. Resolve the width-selected container's subagent rows the
+    // same way the backend does: the width-selected variant of a responsive,
+    // else the layout-level region.
+    const pureSubagentLines: PreviewLine[] | null = (() => {
+        if (!subagentPreview) {
+            return null;
+        }
+        for (const child of children) {
+            if (child.kind === "responsive") {
+                const v = selectedVariants?.[child.id];
+                if (v != null) {
+                    const variant = child.variants[v];
+                    if (variant && subagentPreview[variant.id]) {
+                        return subagentPreview[variant.id];
+                    }
+                }
+            }
+        }
+        return subagentPreview[layoutId] ?? null;
+    })();
     return (
         <div className="panel canvas-panel">
             <h2>
@@ -1051,24 +1351,9 @@ export function Canvas({
                         value={sourceValue(previewSource)}
                         onChange={(e) => onPreviewSourceChange(parseSourceValue(e.target.value))}
                     >
-                        {subagentMode ? (
-                            <>
-                                <option value="sample:subagent-running">
-                                    {t(lang, "sampleSubagentRunning")}
-                                </option>
-                                <option value="sample:subagent-completed">
-                                    {t(lang, "sampleSubagentCompleted")}
-                                </option>
-                            </>
-                        ) : (
-                            <>
-                                <option value="sample:full">{t(lang, "sampleFull")}</option>
-                                <option value="sample:early-session">
-                                    {t(lang, "sampleEarly")}
-                                </option>
-                            </>
-                        )}
-                        {!subagentMode && sessions.length > 0 ? (
+                        <option value="sample:full">{t(lang, "sampleFull")}</option>
+                        <option value="sample:early-session">{t(lang, "sampleEarly")}</option>
+                        {sessions.length > 0 ? (
                             <optgroup label="Live sessions">
                                 {sessions.map((s) => (
                                     <option key={s.id} value={`session:${s.id}`}>
@@ -1086,6 +1371,23 @@ export function Canvas({
                     >
                         ⟳
                     </button>
+                </label>
+                <label>
+                    Subagent{" "}
+                    <select
+                        data-testid="subagent-sample-select"
+                        value={subagentSample}
+                        onChange={(e) =>
+                            onSubagentSampleChange(e.target.value as SubagentSample)
+                        }
+                    >
+                        <option value="subagent-running">
+                            {t(lang, "sampleSubagentRunning")}
+                        </option>
+                        <option value="subagent-completed">
+                            {t(lang, "sampleSubagentCompleted")}
+                        </option>
+                    </select>
                 </label>
                 <label>
                     Background{" "}
@@ -1130,55 +1432,99 @@ export function Canvas({
                                     .map((l, i) => (
                                         <div key={i}>{ansiSpans(l.ansi, theme)}</div>
                                     ))}
+                                {/* The subagent statusline stacks below the main
+                                    lines, one row per running/completed task. */}
+                                {pureSubagentLines
+                                    ? pureSubagentLines
+                                          .filter((l) => !l.omitted)
+                                          .map((l, i) => (
+                                              <div key={`sa-${i}`}>
+                                                  {ansiSpans(l.ansi, theme)}
+                                              </div>
+                                          ))
+                                    : null}
                             </pre>
                         ) : (
                             <span className="hint">{t(lang, "noPreview")}</span>
                         )
                     ) : (
-                        children.map((child, p) =>
-                            child.kind === "line" ? (
-                                <CanvasRow
-                                    key={child.id !== "" ? child.id : `line-${p}`}
-                                    dropId={LINE_ID_PREFIX + p}
-                                    rowLabel={String(p + 1)}
-                                    topIndex={p}
-                                    line={child}
-                                    previewLine={match.byLineId.get(child.id) ?? null}
+                        <>
+                            {children.map((child, p) =>
+                                child.kind === "line" ? (
+                                    <CanvasRow
+                                        key={child.id !== "" ? child.id : `line-${p}`}
+                                        dropId={LINE_ID_PREFIX + p}
+                                        rowLabel={String(p + 1)}
+                                        topIndex={p}
+                                        line={child}
+                                        previewLine={match.byLineId.get(child.id) ?? null}
+                                        theme={theme}
+                                        selection={selection}
+                                        active={p === activeLine}
+                                        dropTarget={dropTarget}
+                                        readOnly={readOnly}
+                                        canDelete
+                                        eligibility={eligibilityFor(dragCategory, "main")}
+                                        displayName={displayName}
+                                        onSelect={onSelect}
+                                        onActivateLine={onActivateLine}
+                                        onDeleteLine={onDeleteLine}
+                                        onDuplicateLine={onDuplicateLine}
+                                    />
+                                ) : (
+                                    <ResponsiveBlock
+                                        key={child.id !== "" ? child.id : `responsive-${p}`}
+                                        responsive={child}
+                                        topIndex={p}
+                                        match={match}
+                                        theme={theme}
+                                        width={width}
+                                        selection={selection}
+                                        active={p === activeLine}
+                                        dropTarget={dropTarget}
+                                        readOnly={readOnly}
+                                        dragCategory={dragCategory}
+                                        subagentPreview={subagentPreview}
+                                        displayName={displayName}
+                                        onSelect={onSelect}
+                                        onActivateLine={onActivateLine}
+                                        onDeleteLine={onDeleteLine}
+                                        onDuplicateLine={onDuplicateLine}
+                                        onAddLineToVariant={onAddLineToVariant}
+                                        onAddVariant={onAddVariant}
+                                        onDeleteVariant={onDeleteVariant}
+                                        onDuplicateVariant={onDuplicateVariant}
+                                        onAddSubagent={onAddSubagent}
+                                        onDeleteSubagent={onDeleteSubagent}
+                                        onFillSubagentDefault={onFillSubagentDefault}
+                                    />
+                                ),
+                            )}
+                            {/* A responsive-free layout carries its <subagent>
+                                region at the layout level, rendered below all
+                                its lines. A layout that has any <responsive>
+                                puts subagent bands inside each variant instead
+                                (matching the width-selected container). */}
+                            {children.some((c) => c.kind === "responsive") ? null : (
+                                <SubagentBand
+                                    containerId={layoutId}
+                                    topIndex={activeLine}
+                                    subagent={layoutSubagent}
+                                    previewLines={subagentPreview?.[layoutId] ?? null}
                                     theme={theme}
+                                    width={width}
                                     selection={selection}
-                                    active={p === activeLine}
                                     dropTarget={dropTarget}
                                     readOnly={readOnly}
-                                    canDelete
+                                    eligibility={eligibilityFor(dragCategory, "subagent")}
                                     displayName={displayName}
                                     onSelect={onSelect}
-                                    onActivateLine={onActivateLine}
-                                    onDeleteLine={onDeleteLine}
-                                    onDuplicateLine={onDuplicateLine}
+                                    onAddSubagent={onAddSubagent}
+                                    onDeleteSubagent={onDeleteSubagent}
+                                    onFillSubagentDefault={onFillSubagentDefault}
                                 />
-                            ) : (
-                                <ResponsiveBlock
-                                    key={child.id !== "" ? child.id : `responsive-${p}`}
-                                    responsive={child}
-                                    topIndex={p}
-                                    match={match}
-                                    theme={theme}
-                                    selection={selection}
-                                    active={p === activeLine}
-                                    dropTarget={dropTarget}
-                                    readOnly={readOnly}
-                                    displayName={displayName}
-                                    onSelect={onSelect}
-                                    onActivateLine={onActivateLine}
-                                    onDeleteLine={onDeleteLine}
-                                    onDuplicateLine={onDuplicateLine}
-                                    onAddLineToVariant={onAddLineToVariant}
-                                    onAddVariant={onAddVariant}
-                                    onDeleteVariant={onDeleteVariant}
-                                    onDuplicateVariant={onDuplicateVariant}
-                                />
-                            ),
-                        )
+                            )}
+                        </>
                     )}
                 </div>
             </div>

@@ -62,7 +62,8 @@ func TestProvision_StatusLineHasDraftFlag(t *testing.T) {
 // TestProvision_SubagentStatusLineRegistered confirms provisionMonitorDir
 // also registers Claude Code's subagentStatusLine (agent-panel task rows),
 // not just statusLine: without it, embedded monitor sessions render the
-// default subagent line instead of the user's claude-code-subagent document.
+// default subagent line instead of the user's claude-code document's
+// <subagent> region.
 func TestProvision_SubagentStatusLineRegistered(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 	t.Setenv("HOME", t.TempDir()) // isolate the ~/.claude.json janitor
@@ -108,7 +109,7 @@ func TestProvision_WritesWorkspaceDocs(t *testing.T) {
 	}
 	for _, want := range []string{
 		"statusloom draft pull", "statusloom draft push", "statusloom claude < sample.json", "<statusloom",
-		"claude-code-subagent", "subagentStatusLine", "statusloom claude-subagent --draft",
+		"<subagent>", "subagentStatusLine", "statusloom claude-subagent --draft",
 	} {
 		if !strings.Contains(string(claudeMD), want) {
 			t.Errorf("CLAUDE.md missing %q", want)

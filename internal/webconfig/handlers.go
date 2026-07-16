@@ -17,11 +17,15 @@ type toolInfo struct {
 	DisplayName string `json:"displayName"`
 }
 
+// handleTools handles GET /api/tools: a single entry for "claude-code", the
+// unified session-statusLine document. Its <subagent> region (markup.md
+// "subagent") carries the subagentStatusLine task-* fields inside this one
+// document, so the config UI needs only a single tab (see
+// plans/subagent-region-dsl.md).
 func (s *server) handleTools(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tools": []toolInfo{
 			{ID: string(schema.ToolClaudeCode), DisplayName: "Claude Code"},
-			{ID: string(schema.ToolClaudeCodeSubagent), DisplayName: "Claude Code Subagent"},
 		},
 	})
 }

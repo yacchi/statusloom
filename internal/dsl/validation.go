@@ -25,6 +25,29 @@ type validator struct {
 	tool      string
 	toolKnown bool
 	rootRange SourceRange
+	// enforceSubagentScope is true only for tools whose catalog mixes
+	// subagent (task-*) and non-subagent fields (currently just the unified
+	// "claude-code" catalog). It gates the field-scope check so a
+	// single-scope tool (every field the same Category, no <subagent>
+	// wrapper expected) is not rejected for placing task-* fields at top
+	// level.
+	enforceSubagentScope bool
+}
+
+// toolHasMixedScope reports whether a tool's catalog contains both
+// subagent (Category=="subagent") and non-subagent fields, which is the
+// signal that its documents distinguish a <subagent> region and must have
+// the field-scope rule enforced.
+func toolHasMixedScope(tool string) bool {
+	hasMain, hasSub := false, false
+	for _, f := range Fields(tool) {
+		if f.Category == "subagent" {
+			hasSub = true
+		} else {
+			hasMain = true
+		}
+	}
+	return hasMain && hasSub
 }
 
 func (v *validator) errf(r SourceRange, format string, args ...any) {
@@ -44,6 +67,7 @@ func (v *validator) validateRoot(root *StatusloomNode) {
 	if !v.toolKnown {
 		v.errf(r, "unknown tool %q", root.Tool)
 	}
+	v.enforceSubagentScope = toolHasMixedScope(root.Tool)
 	if cl := root.Settings.ColorLevel; cl != "" && !validColorLevels[cl] {
 		v.errf(r, "invalid color-level %q: expected none, ansi16, ansi256, or truecolor", cl)
 	}
@@ -94,10 +118,13 @@ func (v *validator) validateLayoutChildren(l *LayoutNode) {
 	for _, ch := range l.Children {
 		switch c := ch.(type) {
 		case *LineNode:
-			v.validateLineNode(c)
+			v.validateLineNode(c, false)
 		case *ResponsiveNode:
 			v.validateResponsive(c)
 		}
+	}
+	if l.Subagent != nil {
+		v.validateSubagent(l.Subagent)
 	}
 }
 
@@ -110,29 +137,44 @@ func (v *validator) validateResponsive(r *ResponsiveNode) {
 			v.errf(vr.Meta.SourceRange, "<variant> requires at least one <line>")
 		}
 		for _, ln := range vr.Lines {
-			v.validateLineNode(ln)
+			v.validateLineNode(ln, false)
+		}
+		if vr.Subagent != nil {
+			v.validateSubagent(vr.Subagent)
 		}
 	}
 }
 
-func (v *validator) validateLineNode(ln *LineNode) {
+// validateSubagent checks a <subagent> region: it must hold exactly one
+// <line> (markup.md "subagent"), whose fields are validated with the
+// subagent scope in force. Structural nesting violations (extra lines,
+// disallowed <responsive>/<variant>) were already reported by the parser.
+func (v *validator) validateSubagent(sa *SubagentNode) {
+	if sa.Line == nil {
+		v.errf(sa.Meta.SourceRange, "<subagent> requires exactly one <line>")
+		return
+	}
+	v.validateLineNode(sa.Line, true)
+}
+
+func (v *validator) validateLineNode(ln *LineNode, inSubagent bool) {
 	v.validateCommon(ln.Common, ln.Meta.SourceRange, "")
 	for _, ch := range ln.Children {
-		v.validateNode(ch)
+		v.validateNode(ch, inSubagent)
 	}
 }
 
-func (v *validator) validateNode(n Node) {
+func (v *validator) validateNode(n Node, inSubagent bool) {
 	switch t := n.(type) {
 	case *SpanNode:
 		v.validateCommon(t.Common, t.Meta.SourceRange, "")
 		for _, ch := range t.Children {
-			v.validateNode(ch)
+			v.validateNode(ch, inSubagent)
 		}
 	case *TextNode:
 		v.validateCommon(t.Common, t.Meta.SourceRange, "")
 	case *FieldNode:
-		v.validateField(t)
+		v.validateField(t, inSubagent)
 	case *FlexNode:
 		v.validateFlex(t)
 	case *RawTextNode, *CommentNode:
@@ -144,7 +186,7 @@ func (v *validator) validateNode(n Node) {
 // ("" is unspecified/left and is not in this set; validated separately).
 var validAligns = map[string]bool{"left": true, "right": true}
 
-func (v *validator) validateField(f *FieldNode) {
+func (v *validator) validateField(f *FieldNode, inSubagent bool) {
 	if f.Align != "" && !validAligns[f.Align] {
 		v.errf(f.Meta.SourceRange, "invalid align %q: expected left or right", f.Align)
 	}
@@ -154,6 +196,13 @@ func (v *validator) validateField(f *FieldNode) {
 			v.errf(f.Meta.SourceRange, "<field> requires a name attribute")
 		} else if def, ok := FieldByName(v.tool, f.Name); ok {
 			selfMetric = def.SelfMetric
+			if v.enforceSubagentScope {
+				if inSubagent && def.Category != "subagent" {
+					v.errf(f.Meta.SourceRange, "field %q can only be used inside <subagent>", f.Name)
+				} else if !inSubagent && def.Category == "subagent" {
+					v.errf(f.Meta.SourceRange, "field %q cannot be used outside <subagent>", f.Name)
+				}
+			}
 			if f.Hyperlink && !def.Linkable {
 				v.errf(f.Meta.SourceRange, "field %q does not support hyperlink", f.Name)
 			}

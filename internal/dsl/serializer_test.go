@@ -51,12 +51,27 @@ func normalizeForCompare(doc *Document) *Document {
 					for _, ln := range vr.Lines {
 						normalizeLineForCompare(ln)
 					}
+					normalizeSubagentForCompare(vr.Subagent)
 				}
 			}
 		}
+		normalizeSubagentForCompare(l.Subagent)
 	}
 	// Keep Source out of the comparison; it necessarily differs.
 	return &Document{Root: r}
+}
+
+func normalizeSubagentForCompare(sa *SubagentNode) {
+	if sa == nil {
+		return
+	}
+	sa.Meta = NodeMeta{}
+	for _, cm := range sa.Comments {
+		cm.Meta = NodeMeta{}
+	}
+	if sa.Line != nil {
+		normalizeLineForCompare(sa.Line)
+	}
 }
 
 func normalizeLineForCompare(ln *LineNode) {
@@ -191,7 +206,7 @@ func TestSerialize_ExplicitFalseDecoration(t *testing.T) {
 // re-parse) as part of the same canonical-attribute-order contract as the
 // other <field> attributes.
 func TestSerialize_MinWidthAndAlign(t *testing.T) {
-	src := `<statusloom version="1" tool="claude-code-subagent"><layout name="a" active="true"><line>` +
+	src := `<statusloom version="1" tool="claude-code"><layout name="a" active="true"><line>` +
 		`<field name="task-tokens" format="compact-number" min-width="6" align="right"/>` +
 		`<field name="task-description"/>` +
 		`</line></layout></statusloom>`

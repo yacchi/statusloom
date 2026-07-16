@@ -69,6 +69,11 @@ func TestDSLFields_CapabilityMarksOAuthUsageFields(t *testing.T) {
 			}
 			continue
 		}
+		// task-effort (a merged subagent field) carries the "subagent-effort"
+		// capability; it is not an oauth-usage field, so skip it here.
+		if f.Capability == "subagent-effort" {
+			continue
+		}
 		sawPlain = true
 		if f.Capability != "" {
 			t.Errorf("field %q capability = %q, want empty", f.Name, f.Capability)

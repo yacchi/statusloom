@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -31,8 +32,12 @@ import (
 const maxDSLBodyBytes = 2 << 20 // 2MB
 
 // knownTool reports whether tool is a tool statusloom can serve DSL for.
+// "claude-code" is the only DSL-served tool: its <subagent> region (markup.md
+// "subagent") folds the subagentStatusLine task-* fields into the unified
+// document (plans/subagent-region-dsl.md), so there is no separate
+// subagent-only tool id to accept here.
 func knownTool(tool string) bool {
-	return tool == string(schema.ToolClaudeCode) || tool == string(schema.ToolClaudeCodeSubagent)
+	return tool == string(schema.ToolClaudeCode)
 }
 
 // sourceVersion is the deterministic content hash (sha256 hex) of DSL source
@@ -261,6 +266,14 @@ type dslPreviewRequest struct {
 	// for the non-selected ones. The default (false) keeps the original
 	// selected-only behavior for the real statusline preview.
 	AllVariants bool `json:"allVariants"`
+	// Section selects which region of the document this request previews
+	// (markup.md "subagent"; plans/subagent-region-dsl.md "Preview契約"):
+	// "" / "main" (default) previews the main status line exactly as before
+	// (the <subagent> region is never rendered here, matching the real
+	// "claude" render pass). "subagent" instead renders the active layout's
+	// <subagent> region(s), one row per task of a subagent sample, and
+	// returns them in the response's subagentPreview map instead of lines.
+	Section string `json:"section"`
 }
 
 // dslPreviewSegment is one leaf node's rendered result within a preview line,
@@ -279,10 +292,16 @@ type dslPreviewLine struct {
 	Segments []dslPreviewSegment `json:"segments"`
 }
 
-// handlePreviewDSL handles POST /api/dsl/preview: it parses source, renders the
-// requested layout, and returns per-line, per-node segments referenced by node
-// ID (matching the AST from /api/dsl/parse), plus diagnostics and the fallback
-// line. Invalid (unparseable) source yields empty lines and diagnostics only.
+// handlePreviewDSL handles POST /api/dsl/preview: it parses source, renders
+// the requested layout, and returns per-line, per-node segments referenced by
+// node ID (matching the AST from /api/dsl/parse), plus diagnostics and the
+// fallback line. Invalid (unparseable) source yields empty lines and
+// diagnostics only.
+//
+// Section (default "main") selects which region of the document is
+// previewed. "subagent" delegates entirely to handleSubagentSectionPreview,
+// whose response shape differs (subagentPreview instead of populated lines);
+// see that function and DSL_API.md.
 func (s *server) handlePreviewDSL(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxDSLBodyBytes)
 	var req dslPreviewRequest
@@ -304,13 +323,18 @@ func (s *server) handlePreviewDSL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snap, ok := s.previewSnapshot(w, req.Tool, req.Sample, req.SessionID)
-	if !ok {
+	opts := render.Options{Width: clampPreviewWidth(req.Width), Now: time.Now()}
+	_, ids := buildAST(doc)
+
+	if req.Section == "subagent" {
+		s.handleSubagentSectionPreview(w, doc, ids, req, diags, opts)
 		return
 	}
 
-	opts := render.Options{Width: clampPreviewWidth(req.Width), Now: time.Now()}
-	_, ids := buildAST(doc)
+	snap, ok := s.previewSnapshot(w, "main", req.Sample, req.SessionID)
+	if !ok {
+		return
+	}
 
 	var docLines []render.DocLine
 	var selectedVariants map[string]int
@@ -324,41 +348,15 @@ func (s *server) handlePreviewDSL(w http.ResponseWriter, r *http.Request) {
 		withActiveLayout(doc, req.LayoutIndex, func() {
 			docLines, selected = render.RenderDocumentPreview(snap, doc, opts)
 		})
-		if len(selected) > 0 {
-			rids := responsiveIDs(doc.Root)
-			selectedVariants = make(map[string]int, len(selected))
-			for rn, idx := range selected {
-				if id, ok := rids[rn]; ok {
-					selectedVariants[id] = idx
-				}
-			}
-		}
+		selectedVariants = selectedVariantIDs(doc, selected)
 	} else {
 		withActiveLayout(doc, req.LayoutIndex, func() {
 			docLines = render.RenderDocument(snap, doc, opts)
 		})
 	}
 
-	lines := make([]dslPreviewLine, 0, len(docLines))
-	allOmitted := true
-	for _, dl := range docLines {
-		if !dl.Omitted {
-			allOmitted = false
-		}
-		var ansi strings.Builder
-		segs := make([]dslPreviewSegment, 0, len(dl.Segments))
-		for _, seg := range dl.Segments {
-			ansi.WriteString(seg.ANSI)
-			nodeID := ""
-			if seg.Node != nil {
-				nodeID = ids[seg.Node]
-			}
-			segs = append(segs, dslPreviewSegment{
-				NodeID: nodeID, Text: seg.Text, ANSI: seg.ANSI, Visible: seg.Visible,
-			})
-		}
-		lines = append(lines, dslPreviewLine{Omitted: dl.Omitted, ANSI: ansi.String(), Segments: segs})
-	}
+	lines := docLinesToPreviewLines(docLines, ids)
+	allOmitted := allDocLinesOmitted(docLines)
 
 	fallbackANSI := ""
 	if allOmitted {
@@ -383,13 +381,142 @@ func (s *server) handlePreviewDSL(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleSubagentSectionPreview handles POST /api/dsl/preview when
+// section=="subagent" (plans/subagent-region-dsl.md "Preview契約"): rather
+// than the main status line, it renders every subagent-preview container of
+// the (possibly layout-index-selected) active layout — one entry per
+// <responsive> variant when the layout has one, or a single layout-level
+// entry otherwise; see subagentContainers — against a subagent sample's task
+// list (one rendered row per task), and returns them keyed by container node
+// ID in subagentPreview instead of populating lines.
+//
+// selectedVariants is computed the same way as the main path's (rendered
+// against the main-section default sample / sessionId, since the <subagent>
+// region's own container selection always follows the same width-selected
+// variant as the main lines — markup.md "subagent" 幅一貫性) whenever
+// AllVariants was requested, so the editor can mark which container is the
+// one the real statusline would actually use.
+func (s *server) handleSubagentSectionPreview(w http.ResponseWriter, doc *dsl.Document, ids map[dsl.Node]string, req dslPreviewRequest, diags []dsl.Diagnostic, opts render.Options) {
+	sampleName := req.Sample
+	if sampleName == "" {
+		sampleName = defaultSampleForSection("subagent")
+	}
+	tasks, ok := subagentPreviewTasks(sampleName, time.Now())
+	if !ok {
+		writeError(w, http.StatusBadRequest, "unknown sample")
+		return
+	}
+
+	var mainSnap schema.StatusSnapshot
+	if req.AllVariants {
+		var snapOK bool
+		mainSnap, snapOK = s.previewSnapshot(w, "main", "", req.SessionID)
+		if !snapOK {
+			return
+		}
+	}
+
+	subagentPreview := map[string][]dslPreviewLine{}
+	var selectedVariants map[string]int
+	withActiveLayout(doc, req.LayoutIndex, func() {
+		if len(doc.Root.Layouts) == 0 {
+			return
+		}
+		idx := clampLayoutIndex(doc, req.LayoutIndex)
+		layout := doc.Root.Layouts[idx]
+		layoutID := fmt.Sprintf("L%d", idx)
+		for containerID, sub := range subagentContainers(layout, layoutID) {
+			lines := make([]dslPreviewLine, 0, len(tasks))
+			for i := range tasks {
+				taskSnap := schema.StatusSnapshot{
+					Tool:     schema.ToolSnapshot{ID: schema.ToolClaudeCode, Version: "2.1.210"},
+					System:   schema.SystemSnapshot{Cwd: "/Users/dev/myapp"},
+					Subagent: &tasks[i],
+				}
+				docLines := render.RenderSubagentNode(taskSnap, sub, doc, opts)
+				lines = append(lines, docLinesToPreviewLines(docLines, ids)...)
+			}
+			subagentPreview[containerID] = lines
+		}
+		if req.AllVariants {
+			_, selected := render.RenderDocumentPreview(mainSnap, doc, opts)
+			selectedVariants = selectedVariantIDs(doc, selected)
+		}
+	})
+
+	resp := map[string]any{
+		"lines":           []dslPreviewLine{},
+		"diagnostics":     toDiagsJSON(diags),
+		"fallback":        map[string]any{"ansi": "", "active": false},
+		"subagentPreview": subagentPreview,
+	}
+	if req.AllVariants {
+		if selectedVariants == nil {
+			selectedVariants = map[string]int{}
+		}
+		resp["selectedVariants"] = selectedVariants
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// docLinesToPreviewLines converts rendered DocLines into the wire
+// dslPreviewLine shape, labeling each segment with its AST node ID via ids
+// (the buildAST-produced dsl.Node -> id map). Shared by the main and
+// subagent-section preview paths so a segment's nodeId is computed identically
+// in both.
+func docLinesToPreviewLines(docLines []render.DocLine, ids map[dsl.Node]string) []dslPreviewLine {
+	lines := make([]dslPreviewLine, 0, len(docLines))
+	for _, dl := range docLines {
+		var ansi strings.Builder
+		segs := make([]dslPreviewSegment, 0, len(dl.Segments))
+		for _, seg := range dl.Segments {
+			ansi.WriteString(seg.ANSI)
+			nodeID := ""
+			if seg.Node != nil {
+				nodeID = ids[seg.Node]
+			}
+			segs = append(segs, dslPreviewSegment{
+				NodeID: nodeID, Text: seg.Text, ANSI: seg.ANSI, Visible: seg.Visible,
+			})
+		}
+		lines = append(lines, dslPreviewLine{Omitted: dl.Omitted, ANSI: ansi.String(), Segments: segs})
+	}
+	return lines
+}
+
+// allDocLinesOmitted reports whether every line is omitted (main-path fallback
+// trigger).
+func allDocLinesOmitted(docLines []render.DocLine) bool {
+	for _, dl := range docLines {
+		if !dl.Omitted {
+			return false
+		}
+	}
+	return true
+}
+
+// selectedVariantIDs turns RenderDocumentPreview's *dsl.ResponsiveNode -> index
+// selection map into the id-keyed form the response reports (responseIDs maps
+// each <responsive> to its AST node ID; see responsiveIDs).
+func selectedVariantIDs(doc *dsl.Document, selected map[*dsl.ResponsiveNode]int) map[string]int {
+	if len(selected) == 0 {
+		return nil
+	}
+	rids := responsiveIDs(doc.Root)
+	out := make(map[string]int, len(selected))
+	for rn, idx := range selected {
+		if id, ok := rids[rn]; ok {
+			out[id] = idx
+		}
+	}
+	return out
+}
+
 // previewSnapshot resolves the snapshot a preview renders against: a real
 // cached session (sessionId, as listed by GET /api/sessions), else a named
-// sample (defaulting to defaultSampleForTool(tool) — a session-shaped sample
-// for tool="claude-code", a subagentStatusLine-shaped one for
-// tool="claude-code-subagent"). It writes the error response and returns
-// ok=false on failure.
-func (s *server) previewSnapshot(w http.ResponseWriter, tool, sample, sessionID string) (schema.StatusSnapshot, bool) {
+// sample (defaulting to defaultSampleForSection(section)). It writes the
+// error response and returns ok=false on failure.
+func (s *server) previewSnapshot(w http.ResponseWriter, section, sample, sessionID string) (schema.StatusSnapshot, bool) {
 	if sessionID != "" {
 		entry, err := cache.LoadSnapshot(sessionID)
 		if err != nil {
@@ -404,7 +531,7 @@ func (s *server) previewSnapshot(w http.ResponseWriter, tool, sample, sessionID 
 	}
 	name := sample
 	if name == "" {
-		name = defaultSampleForTool(tool)
+		name = defaultSampleForSection(section)
 	}
 	snap, ok := sampleSnapshot(name, time.Now())
 	if !ok {
@@ -427,6 +554,24 @@ func clampPreviewWidth(width int) int {
 	return width
 }
 
+// clampLayoutIndex clamps idx into [0, len(doc.Root.Layouts)-1] (0 for an
+// empty document), matching withActiveLayout's own clamping so a caller that
+// needs the layout's AST ID ("L{i}") independently — e.g.
+// handleSubagentSectionPreview — computes the exact same index.
+func clampLayoutIndex(doc *dsl.Document, idx int) int {
+	n := len(doc.Root.Layouts)
+	if n == 0 {
+		return 0
+	}
+	if idx < 0 {
+		return 0
+	}
+	if idx >= n {
+		return n - 1
+	}
+	return idx
+}
+
 // withActiveLayout temporarily makes layout idx (clamped) the active one, runs
 // fn, then restores the original active flags. This lets the preview render a
 // layout other than the document's own active one without mutating the AST the
@@ -438,12 +583,7 @@ func withActiveLayout(doc *dsl.Document, idx int, fn func()) {
 		fn()
 		return
 	}
-	if idx < 0 {
-		idx = 0
-	}
-	if idx >= len(layouts) {
-		idx = len(layouts) - 1
-	}
+	idx = clampLayoutIndex(doc, idx)
 	saved := make([]*bool, len(layouts))
 	tru := true
 	for i, l := range layouts {
@@ -485,7 +625,10 @@ type dslFieldEntry struct {
 
 // handleDSLFields handles GET /api/dsl/fields?tool=: the field catalog for the
 // visual editor's palette, built from the dsl registry. Each entry carries a
-// rendered preview (previewFor) produced against the full sample snapshot.
+// rendered preview (previewFor) produced against the "full" sample snapshot,
+// which (since the merged claude-code catalog includes the task-* subagent
+// fields, markup.md "subagent") carries a Subagent task too, so those fields
+// preview real values instead of falling back to previewFallback.
 func (s *server) handleDSLFields(w http.ResponseWriter, r *http.Request) {
 	tool := r.URL.Query().Get("tool")
 	if !knownTool(tool) {
@@ -493,7 +636,7 @@ func (s *server) handleDSLFields(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
-	snap, _ := sampleSnapshot(defaultSampleForTool(tool), now)
+	snap, _ := sampleSnapshot(sampleFull, now)
 	overlayRealAccountUsage(&snap, now)
 	fields := dsl.Fields(tool)
 	out := make([]dslFieldEntry, 0, len(fields))

@@ -12,7 +12,7 @@ import (
 // task row, with every task-* field's backing data populated.
 func subagentSnapshot() schema.StatusSnapshot {
 	return schema.StatusSnapshot{
-		Tool: schema.ToolSnapshot{ID: schema.ToolClaudeCodeSubagent},
+		Tool: schema.ToolSnapshot{ID: schema.ToolClaudeCode},
 		Subagent: &schema.SubagentSnapshot{
 			ID:                "b1a2c3d4e5f60718",
 			Type:              "local_agent",
@@ -79,7 +79,7 @@ func TestRenderContent_TaskFieldsNilSubagent(t *testing.T) {
 		"task-tokens", "task-context-size", "task-context-percent",
 		"task-duration", "task-effort",
 	}
-	snap := schema.StatusSnapshot{Tool: schema.ToolSnapshot{ID: schema.ToolClaudeCodeSubagent}}
+	snap := schema.StatusSnapshot{Tool: schema.ToolSnapshot{ID: schema.ToolClaudeCode}}
 	for _, name := range fields {
 		t.Run(name, func(t *testing.T) {
 			got := renderContent(config.WidgetSpec{Type: name}, snap, config.ToolConfig{}, Options{Width: 120, Now: fixedNow}, false)

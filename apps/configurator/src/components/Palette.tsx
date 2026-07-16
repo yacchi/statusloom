@@ -19,10 +19,11 @@ interface Props {
     oauthUsageAvailable: boolean;
 }
 
-const CATEGORY_ORDER = ["common", "claude"];
+const CATEGORY_ORDER = ["common", "claude", "subagent"];
 const CATEGORY_LABEL: Record<string, string> = {
     common: "Common",
     claude: "Claude Code",
+    subagent: "Subagent",
 };
 
 function PaletteChip({

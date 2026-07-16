@@ -139,6 +139,24 @@ func layoutClean(l *LayoutNode, src string) bool {
 			return false
 		}
 	}
+	if l.Subagent != nil && !subagentClean(l.Subagent, src) {
+		return false
+	}
+	return true
+}
+
+func subagentClean(sa *SubagentNode, src string) bool {
+	if !metaReusable(sa.Meta, src) {
+		return false
+	}
+	if sa.Line != nil && !lineClean(sa.Line, src) {
+		return false
+	}
+	for _, c := range sa.Comments {
+		if !metaReusable(c.Meta, src) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -172,6 +190,9 @@ func variantClean(vr *VariantNode, src string) bool {
 		if !metaReusable(c.Meta, src) {
 			return false
 		}
+	}
+	if vr.Subagent != nil && !subagentClean(vr.Subagent, src) {
+		return false
 	}
 	return true
 }
@@ -276,8 +297,45 @@ func emitMinimalLayout(b *strings.Builder, depth int, n *LayoutNode, src string)
 	}
 	emitSorted(items)
 
+	if n.Subagent != nil {
+		emitMinimalSubagent(b, depth+1, n.Subagent, src)
+	}
+
 	b.WriteString(ind)
 	b.WriteString("</layout>\n")
+}
+
+// emitMinimalSubagent reuses a clean <subagent> verbatim, otherwise
+// reconstructs its open/close tags and processes its line (and interleaved
+// comments) by the minimal-diff rule.
+func emitMinimalSubagent(b *strings.Builder, depth int, n *SubagentNode, src string) {
+	if subagentClean(n, src) {
+		reuseSlice(b, depth, src, n.Meta.SourceRange)
+		return
+	}
+	ind := indentStr(depth)
+	b.WriteString(ind)
+	b.WriteString("<subagent>\n")
+
+	var items []serItem
+	if n.Line != nil {
+		ln := n.Line
+		items = append(items, serItem{sortKey(ln.Meta, src), func() { emitMinimalLine(b, depth+1, ln, src) }})
+	}
+	for _, c := range n.Comments {
+		c := c
+		items = append(items, serItem{sortKey(c.Meta, src), func() {
+			if metaReusable(c.Meta, src) {
+				reuseSlice(b, depth+1, src, c.Meta.SourceRange)
+			} else {
+				serializeComment(b, depth+1, c)
+			}
+		}})
+	}
+	emitSorted(items)
+
+	b.WriteString(ind)
+	b.WriteString("</subagent>\n")
 }
 
 // emitMinimalResponsive reuses a clean <responsive> verbatim, otherwise
@@ -341,6 +399,10 @@ func emitMinimalVariant(b *strings.Builder, depth int, n *VariantNode, src strin
 		}})
 	}
 	emitSorted(items)
+
+	if n.Subagent != nil {
+		emitMinimalSubagent(b, depth+1, n.Subagent, src)
+	}
 
 	b.WriteString(ind)
 	b.WriteString("</variant>\n")

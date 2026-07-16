@@ -220,17 +220,6 @@ func TestValidateSubagent_SelfAndNamedMetrics(t *testing.T) {
 	expectNoErrors(t, validate(t, width))
 }
 
-// TestValidateSubagent_LegacyToolUnaffected confirms the field-scope rule is
-// NOT enforced for the legacy subagent-only tool (all its fields are
-// Category="subagent" with no <subagent> wrapper), so task-* fields remain
-// valid at top level there.
-func TestValidateSubagent_LegacyToolUnaffected(t *testing.T) {
-	legacy := `<statusloom version="1" tool="claude-code-subagent"><layout name="a" active="true"><line>` +
-		`<field name="task-description"/><field name="task-tokens"/>` +
-		`</line></layout></statusloom>`
-	expectNoErrors(t, validate(t, legacy))
-}
-
 func TestSerializeSubagent_RoundTrip(t *testing.T) {
 	for _, tc := range []struct {
 		name string

@@ -135,8 +135,7 @@ func writeFileAtomic(path string, data []byte) error {
 // and the "5h:"/"7d:" usage labels expressed as optional spans so an empty
 // usage value hides the label.
 var defaultDocuments = map[string]string{
-	"claude-code":          claudeCodeDefaultDocument,
-	"claude-code-subagent": claudeCodeSubagentDefaultDocument,
+	"claude-code": claudeCodeDefaultDocument,
 }
 
 const claudeCodeDefaultDocument = `<statusloom version="1" tool="claude-code" color-level="ansi16" compact-threshold="60" context-percentage-mode="usable">
@@ -167,48 +166,23 @@ const claudeCodeDefaultDocument = `<statusloom version="1" tool="claude-code" co
       <text role="separator" padding="1">|</text>
       <field name="tool-version"/>
     </line>
-  </layout>
-</statusloom>
-`
-
-// claudeCodeSubagentDefaultDocument is the built-in DSL source rendered per
-// task by `statusloom claude-subagent` (Claude Code's subagentStatusLine
-// feature, one row per agent-panel task). A subagent row is
-// information-poor, so the default leads with the task description and
-// model (always shown), then right-aligns (via <flex/>) progressively more
-// usage stats as the terminal widens, using the tool-agnostic "width"
-// metric as breakpoints:
-//
-//	width >= 48: + task-duration
-//	width >= 64: + task-tokens        (↓, compact)
-//	width >= 80: + task-context-percent
-//
-// A subagent row can only occupy a single line, so these width breakpoints
-// keep the essentials visible on a narrow agent panel and reveal detail
-// only when there is room. task-tokens and task-context-percent also carry
-// optional="..." so they stay hidden before the model resolves / while the
-// context size is unknown, rather than rendering a bare "0"/"0%". Because an
-// unknown width resolves the "width" metric to an unbounded value, a
-// width-unaware host (Options.Width == 0) shows every stat.
-//
-// Each row renders independently (there is no shared column state across
-// rows/tasks), so the only way to keep the right-hand stats lined up down
-// the agent panel is to right-align each one to a fixed min-width
-// (markup.md "min-width"/"align"): task-duration to 7 columns (covers up to
-// "12h 34m"), task-tokens to 6 (covers up to "199.9k"), and
-// task-context-percent to 4 (covers up to "100%"). Padding lands on the
-// formatted value itself, outside each field's prefix, so " · ↓ "/" ("/")"
-// stay put and only the digits shift.
-const claudeCodeSubagentDefaultDocument = `<statusloom version="1" tool="claude-code-subagent" color-level="ansi16" compact-threshold="60">
-  <layout name="Default" active="true">
-    <line>
-      <field name="task-description"/>
-      <field name="task-model" prefix="  "/>
-      <flex/>
-      <field name="task-duration" format="duration" when="width ge 48" min-width="7" align="right"/>
-      <field name="task-tokens" prefix=" · ↓ " format="compact-number" optional="task-tokens" when="width ge 64" min-width="6" align="right"/>
-      <field name="task-context-percent" prefix=" (" suffix=")" format="percent" precision="0" optional="task-context-percent" when="width ge 80" min-width="4" align="right"/>
-    </line>
+    <subagent>
+      <!-- One row per running subagent task (statusloom claude-subagent).
+           Ignored by the main "claude" render pass. This layout has no
+           <responsive>/<variant> breakpoints, so this single <subagent>
+           region (directly under <layout>, below its lines) is the sole
+           fallback container for every terminal width. It uses progressive
+           width breakpoints (the tool-agnostic "width" metric) to reveal
+           more usage stats as the agent panel widens. -->
+      <line>
+        <field name="task-description"/>
+        <field name="task-model" prefix="  "/>
+        <flex/>
+        <field name="task-duration" format="duration" when="width ge 48" min-width="7" align="right"/>
+        <field name="task-tokens" prefix=" · ↓ " format="compact-number" optional="task-tokens" when="width ge 64" min-width="6" align="right"/>
+        <field name="task-context-percent" prefix=" (" suffix=")" format="percent" precision="0" optional="task-context-percent" when="width ge 80" min-width="4" align="right"/>
+      </line>
+    </subagent>
   </layout>
 </statusloom>
 `

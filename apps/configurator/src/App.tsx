@@ -36,16 +36,19 @@ import {
     addLayout,
     addLine,
     addResponsive,
+    addSubagent,
     addVariant,
     applyDropEdit,
     appendLayouts,
     deleteLayout,
     deleteLine,
+    deleteSubagent,
     deleteVariant,
     duplicateChild,
     duplicateLayout,
     duplicateLineNode,
     duplicateVariant,
+    fillSubagentDefault,
     getNode,
     insertChild,
     lineIndexOfContainerId,
@@ -66,11 +69,12 @@ import {
     VARIANT_CONTAINER_PREFIX,
     type ContainerView,
     type DragPayload,
+    type DropCategory,
     type DropTarget,
     type VariantListView,
 } from "./useDragEditing.ts";
 import { I18nContext, loadLang, saveLang, t, type Lang } from "./i18n.ts";
-import { STRUCTURAL_PRESETS, makeFieldNode, nodeLabel } from "./presets.ts";
+import { STRUCTURAL_PRESETS, makeDefaultSubagentLine, makeFieldNode, nodeLabel } from "./presets.ts";
 import {
     hasErrors,
     type Diagnostic,
@@ -105,29 +109,18 @@ const TerminalDrawer = lazy(() =>
 );
 import type { TerminalStatus } from "./components/TerminalDrawer.tsx";
 
-// The subagentStatusLine document's tool id (see markup.md / DSL_API.md).
-// This is a stable wire identifier the frontend must special-case for a few
-// tool-specific UI defaults (which sample kinds apply, whether captured
-// sessions are a valid preview source) — it is not a hardcoded "the only
-// tool" the way the old module-level TOOL_ID constant was. The set of tools
-// itself always comes from GET /api/tools, never from a client-side list.
-const SUBAGENT_TOOL_ID = "claude-code-subagent";
-
-function isSubagentTool(tool: string | null): boolean {
-    return tool === SUBAGENT_TOOL_ID;
-}
-
-// The preview data source a newly activated tool starts from: session-shaped
-// sample data for the session document, a running-task sample for the
-// subagent document (mirrors the backend's defaultSampleForTool).
-function defaultPreviewSourceFor(tool: string): PreviewSource {
-    return {
-        kind: "sample",
-        sample: isSubagentTool(tool) ? "subagent-running" : "full",
-    };
+// The preview data source a newly loaded document starts from. The main
+// status line always previews against the full session sample; the subagent
+// region has its own running/completed toggle (subagentSample) rendered in a
+// second preview pass, so it is not part of this source.
+function defaultPreviewSource(): PreviewSource {
+    return { kind: "sample", sample: "full" };
 }
 
 type ViewMode = "visual" | "split" | "dsl";
+
+// The subagent-region sample the second (section:"subagent") preview pass uses.
+type SubagentSample = "subagent-running" | "subagent-completed";
 
 interface PreviewState {
     lines: PreviewLine[] | null;
@@ -262,6 +255,15 @@ function Configurator({ token }: { token: string }) {
         kind: "sample",
         sample: "full",
     });
+    // Second (section:"subagent") preview pass: each width-adaptive container's
+    // <subagent> line rendered once per task of `subagentSample`, keyed by
+    // container node id. Rendered alongside the main preview so the canvas
+    // shows the status line and its subagent rows in one width context.
+    const [subagentPreview, setSubagentPreview] = useState<Record<
+        string,
+        PreviewLine[]
+    > | null>(null);
+    const [subagentSample, setSubagentSample] = useState<SubagentSample>("subagent-running");
     const [sessions, setSessions] = useState<SessionSummary[]>([]);
     const [theme, setTheme] = useState<Theme>("dark");
     const [pureOutput, setPureOutput] = useState(false);
@@ -419,7 +421,7 @@ function Configurator({ token }: { token: string }) {
                 selection: null,
                 activeLine: 0,
                 editLayoutIndex: 0,
-                previewSource: defaultPreviewSourceFor(tool),
+                previewSource: defaultPreviewSource(),
                 preview: {
                     lines: null,
                     fallback: null,
@@ -852,7 +854,14 @@ function Configurator({ token }: { token: string }) {
         [applyAstEdit],
     );
 
-    const { dragLabel, dropTarget, onDragStart, onDragOver, onDragEnd, onDragCancel } =
+    // The content family a field belongs to: task-* fields (catalog category
+    // "subagent") drop only inside <subagent>, every other field only outside.
+    const fieldCategory = useCallback((name: string): DropCategory => {
+        const cat = fieldsRef.current.find((f) => f.name === name)?.category;
+        return cat === "subagent" ? "subagent" : "main";
+    }, []);
+
+    const { dragLabel, dropTarget, dragCategory, onDragStart, onDragOver, onDragEnd, onDragCancel } =
         useDragEditing({
             getContainers: useCallback(() => {
                 if (!validRef.current) {
@@ -864,25 +873,43 @@ function Configurator({ token }: { token: string }) {
                     return null;
                 }
                 const out: ContainerView[] = [];
-                const addLineContainer = (line: LineNode, lineIndex?: number) => {
+                const addLineContainer = (
+                    line: LineNode,
+                    accepts: "subagent" | "main",
+                    lineIndex?: number,
+                ) => {
                     out.push({
                         id: line.id,
                         kind: "line" as const,
                         lineIndex,
+                        accepts,
                         childIds: line.children.map((c) => c.id),
                     });
-                    out.push(...spanContainersOf(line.children));
+                    out.push(...spanContainersOf(line.children, accepts));
+                };
+                // A <subagent> region's single line is a drop container that
+                // only accepts task-* content (mutual block in useDragEditing).
+                const addSubagentContainer = (line: LineNode | undefined) => {
+                    if (line) {
+                        addLineContainer(line, "subagent");
+                    }
                 };
                 layout.children.forEach((child, p) => {
                     if (child.kind === "line") {
-                        addLineContainer(child, p);
+                        addLineContainer(child, "main", p);
                         return;
                     }
                     // Every variant's lines are drop containers too, not
                     // just the width-selected one — a chip can be dragged
                     // into any variant while editing.
-                    child.variants.forEach((v) => v.lines.forEach((line) => addLineContainer(line)));
+                    child.variants.forEach((v) => {
+                        v.lines.forEach((line) => addLineContainer(line, "main"));
+                        addSubagentContainer(v.subagent?.line);
+                    });
                 });
+                // A responsive-free layout carries its subagent at the layout
+                // level; its line is a drop container too.
+                addSubagentContainer(layout.subagent?.line);
                 return out;
             }, []),
             getVariantLists: useCallback((): VariantListView[] | null => {
@@ -903,6 +930,21 @@ function Configurator({ token }: { token: string }) {
                 (key: string) => expandPaletteKey(key, fieldsRef.current),
                 [],
             ),
+            categoryForPalette: useCallback(
+                (key: string): DropCategory =>
+                    key.startsWith("field:") ? fieldCategory(key.slice("field:".length)) : "any",
+                [fieldCategory],
+            ),
+            categoryForNodeId: useCallback(
+                (id: string): DropCategory => {
+                    const root = astRef.current;
+                    const node = root ? getNode(root, id) : null;
+                    return node && node.kind === "field" && node.name
+                        ? fieldCategory(node.name)
+                        : "any";
+                },
+                [fieldCategory],
+            ),
             labelForNodeId: useCallback((id: string) => {
                 const root = astRef.current;
                 const node = root ? getNode(root, id) : null;
@@ -914,7 +956,11 @@ function Configurator({ token }: { token: string }) {
                     node.kind === "line" ||
                     node.kind === "color-rule" ||
                     node.kind === "responsive" ||
-                    node.kind === "variant"
+                    node.kind === "variant" ||
+                    // getNode resolves a subagent id to its inner <line>, never
+                    // the region wrapper, so this arm is unreachable in
+                    // practice; narrows the widened AstNode union for tsc.
+                    node.kind === "subagent"
                 ) {
                     return node.kind;
                 }
@@ -994,6 +1040,42 @@ function Configurator({ token }: { token: string }) {
             window.clearTimeout(handle);
         };
     }, [api, activeTool, lastValidSource, width, previewSource, layoutIndex]);
+
+    // ---- second preview pass: the subagent region (section:"subagent") ----
+    // Independent of the main preview source: the subagent rows always render
+    // against the running/completed task sample, one line per task, for every
+    // width-adaptive container (allVariants). The result feeds the canvas's
+    // SubagentBand rows so the status line and its subagent rows are shown in
+    // one width context.
+    useEffect(() => {
+        if (activeTool === null || lastValidSource === "") {
+            return;
+        }
+        let cancelled = false;
+        const handle = window.setTimeout(async () => {
+            try {
+                const res = await api.preview({
+                    tool: activeTool,
+                    source: lastValidSource,
+                    width,
+                    sample: subagentSample,
+                    layoutIndex,
+                    allVariants: true,
+                    section: "subagent",
+                });
+                if (!cancelled) {
+                    setSubagentPreview(res.subagentPreview ?? null);
+                }
+            } catch {
+                // The subagent preview is a best-effort overlay; keep the last
+                // one on a transient failure rather than surfacing an error.
+            }
+        }, 250);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(handle);
+        };
+    }, [api, activeTool, lastValidSource, width, subagentSample, layoutIndex]);
 
     // Keyboard: undo/redo, deselect, delete selected node.
     useEffect(() => {
@@ -1453,16 +1535,20 @@ function Configurator({ token }: { token: string }) {
                         {showVisual ? (
                             <Canvas
                                 children={curChildren}
+                                layoutId={`L${layoutIndex}`}
+                                layoutSubagent={curLayout?.subagent}
                                 previewLines={preview.lines}
                                 selectedVariants={preview.selectedVariants}
+                                subagentPreview={subagentPreview}
                                 fallback={preview.fallback}
                                 selection={selection}
                                 activeLine={activeLine}
                                 dropTarget={dropTarget}
+                                dragCategory={dragCategory}
                                 theme={theme}
                                 width={width}
                                 previewSource={previewSource}
-                                subagentMode={isSubagentTool(activeTool)}
+                                subagentSample={subagentSample}
                                 sessions={sessions}
                                 pureOutput={pureOutput}
                                 loading={preview.loading}
@@ -1520,8 +1606,38 @@ function Configurator({ token }: { token: string }) {
                                 onDuplicateVariant={(variantId) => {
                                     applyAstEdit((root) => duplicateVariant(root, variantId));
                                 }}
+                                onAddSubagent={(containerId) => {
+                                    // Add an empty region (an empty <line/>): the
+                                    // user drops task-* fields into it, or clicks
+                                    // "Reset to default" to seed the built-in
+                                    // default. Nothing to select in an empty row.
+                                    applyAstEdit((root) => addSubagent(root, containerId), {
+                                        select: null,
+                                    });
+                                }}
+                                onDeleteSubagent={(containerId) => {
+                                    applyAstEdit((root) => deleteSubagent(root, containerId), {
+                                        select: null,
+                                    });
+                                }}
+                                onFillSubagentDefault={(subagentLineId) => {
+                                    // "Use default fields" affordance for an
+                                    // emptied-out subagent row: fills it with
+                                    // the same built-in default as a freshly
+                                    // added region.
+                                    applyAstEdit(
+                                        (root) =>
+                                            fillSubagentDefault(
+                                                root,
+                                                subagentLineId,
+                                                makeDefaultSubagentLine(),
+                                            ),
+                                        { select: predictChildId(subagentLineId, 0) },
+                                    );
+                                }}
                                 onWidth={setWidth}
                                 onPreviewSourceChange={setPreviewSource}
+                                onSubagentSampleChange={setSubagentSample}
                                 onRefreshSessions={refreshSessions}
                                 onTheme={setTheme}
                                 onPureOutput={setPureOutput}

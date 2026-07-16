@@ -96,15 +96,15 @@ func TestRenderDocument_WidthWithOptional(t *testing.T) {
 }
 
 // TestRenderDocument_SubagentDefaultBreakpoints exercises the built-in
-// claude-code-subagent default document across widths, confirming its width
-// breakpoints reveal the duration (>=48), token count (>=64), and context
-// percent (>=80) stats progressively while always showing the description
-// and model.
+// claude-code default document's <subagent> region across widths, confirming
+// its width breakpoints reveal the duration (>=48), token count (>=64), and
+// context percent (>=80) stats progressively while always showing the
+// description and model.
 func TestRenderDocument_SubagentDefaultBreakpoints(t *testing.T) {
-	doc := parseDoc(t, config.DefaultDocument("claude-code-subagent"))
+	doc := parseDoc(t, config.DefaultDocument("claude-code"))
 	// A subagent task snapshot with every stat's data populated.
 	snap := schema.StatusSnapshot{
-		Tool: schema.ToolSnapshot{ID: schema.ToolClaudeCodeSubagent},
+		Tool: schema.ToolSnapshot{ID: schema.ToolClaudeCode},
 		Subagent: &schema.SubagentSnapshot{
 			Status:            "running",
 			Description:       "Review render pipeline changes",
@@ -130,7 +130,11 @@ func TestRenderDocument_SubagentDefaultBreakpoints(t *testing.T) {
 		{0, true, true, true, true, true}, // unknown width -> unbounded -> all stats
 	}
 	for _, c := range cases {
-		out := RenderDocumentString(snap, doc, Options{Width: c.width, Now: fixedNow})
+		lines := RenderSubagentLine(snap, doc, Options{Width: c.width, Now: fixedNow})
+		if len(lines) != 1 {
+			t.Fatalf("width %d: got %d subagent lines, want 1", c.width, len(lines))
+		}
+		out := lineText(lines[0])
 		checks := []struct {
 			name string
 			want bool

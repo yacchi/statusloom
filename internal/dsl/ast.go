@@ -90,6 +90,11 @@ type LayoutNode struct {
 	// document order (markup.md "layout" / "responsive"). Comments that
 	// appear directly under the layout are collected separately in Comments.
 	Children []LayoutChild
+	// Subagent is the optional <subagent> region rendered below this layout's
+	// lines when responsive is not used (markup.md "subagent"). It is a
+	// dedicated field rather than a LayoutChild so the "subagent is always
+	// below the lines" invariant is enforced by the type (nil = absent).
+	Subagent *SubagentNode
 	// Comments are XML comments directly under this layout (between
 	// <line>/<responsive> children); preserved for round-tripping.
 	Comments []*CommentNode
@@ -121,8 +126,30 @@ type ResponsiveNode struct {
 type VariantNode struct {
 	Meta  NodeMeta
 	Lines []*LineNode
+	// Subagent is the optional <subagent> region rendered below this variant's
+	// lines (markup.md "subagent"). Each width breakpoint may carry its own
+	// subagent design; nil = this variant has no subagent region.
+	Subagent *SubagentNode
 	// Comments are XML comments directly under this <variant> (between
 	// <line> children); preserved for round-tripping.
+	Comments []*CommentNode
+}
+
+// SubagentNode is a <subagent> region: the single <line> rendered once per
+// running subagent task, below the main status line (markup.md "subagent").
+// It is a child of a width-selecting container (a <layout> directly, or a
+// <variant>) and carries no attributes; its Line holds task-* fields. It is
+// deliberately not a Node/LayoutChild — it lives in a dedicated
+// LayoutNode.Subagent / VariantNode.Subagent field, not in a Children list, so
+// the "at most one, always below the lines" invariant is structural.
+type SubagentNode struct {
+	Meta NodeMeta
+	// Line is the region's single <line> (exactly one; a nil or extra line is
+	// a validation error). Its children are ordinary span/text/field/flex/
+	// color-rule nodes scoped to task-* fields.
+	Line *LineNode
+	// Comments are XML comments directly under this <subagent>; preserved for
+	// round-tripping.
 	Comments []*CommentNode
 }
 

@@ -237,9 +237,16 @@ func (p *parser) parseLayout(se xml.StartElement, start int) *LayoutNode {
 				n.Children = append(n.Children, p.parseLine(t, tstart))
 			case "responsive":
 				n.Children = append(n.Children, p.parseResponsive(t, tstart))
+			case "subagent":
+				sa := p.parseSubagent(t, tstart)
+				if n.Subagent != nil {
+					p.errf(sa.Meta.SourceRange, "at most one <subagent> is allowed in a <layout>")
+				} else {
+					n.Subagent = sa
+				}
 			default:
 				p.skipElement()
-				p.errf(SourceRange{Start: tstart, End: p.prevOffset}, "unknown element <%s> inside <layout>; expected <line> or <responsive>", t.Name.Local)
+				p.errf(SourceRange{Start: tstart, End: p.prevOffset}, "unknown element <%s> inside <layout>; expected <line>, <responsive>, or <subagent>", t.Name.Local)
 			}
 		case xml.Comment:
 			n.Comments = append(n.Comments, &CommentNode{
@@ -317,11 +324,67 @@ func (p *parser) parseVariant(se xml.StartElement, start int) *VariantNode {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			if t.Name.Local == "line" {
+			switch t.Name.Local {
+			case "line":
 				n.Lines = append(n.Lines, p.parseLine(t, tstart))
+			case "subagent":
+				sa := p.parseSubagent(t, tstart)
+				if n.Subagent != nil {
+					p.errf(sa.Meta.SourceRange, "at most one <subagent> is allowed in a <variant>")
+				} else {
+					n.Subagent = sa
+				}
+			default:
+				p.skipElement()
+				p.errf(SourceRange{Start: tstart, End: p.prevOffset}, "unknown element <%s> inside <variant>; expected <line> or <subagent>", t.Name.Local)
+			}
+		case xml.Comment:
+			n.Comments = append(n.Comments, &CommentNode{
+				Meta: NodeMeta{SourceRange: SourceRange{Start: tstart, End: p.prevOffset}},
+				Text: string(t),
+			})
+		case xml.CharData:
+			p.strayText(t, tstart)
+		case xml.EndElement:
+			n.Meta.SourceRange = SourceRange{Start: start, End: p.prevOffset}
+			return n
+		}
+	}
+	n.Meta.SourceRange = SourceRange{Start: start, End: p.prevOffset}
+	return n
+}
+
+// parseSubagent parses a <subagent> region: its children must be exactly one
+// <line> element (markup.md "subagent"). Comments directly under it are
+// preserved; any other element (including <responsive>/<variant> or a second
+// <line>) or non-whitespace text is reported as an invalid-nesting error but
+// consumed to keep the decoder balanced. <subagent> carries no attributes
+// (like <responsive>/<variant>). The exactly-one-line requirement is enforced
+// in Validate.
+func (p *parser) parseSubagent(se xml.StartElement, start int) *SubagentNode {
+	openEnd := p.prevOffset
+	tagRange := SourceRange{Start: start, End: openEnd}
+	n := &SubagentNode{}
+	for _, a := range se.Attr {
+		p.errf(tagRange, "unknown attribute %q on <subagent>", a.Name.Local)
+	}
+	for {
+		tok, tstart, ok := p.token()
+		if !ok {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "line" {
+				ln := p.parseLine(t, tstart)
+				if n.Line != nil {
+					p.errf(ln.Meta.SourceRange, "<subagent> allows at most one <line>")
+				} else {
+					n.Line = ln
+				}
 			} else {
 				p.skipElement()
-				p.errf(SourceRange{Start: tstart, End: p.prevOffset}, "unknown element <%s> inside <variant>; expected <line>", t.Name.Local)
+				p.errf(SourceRange{Start: tstart, End: p.prevOffset}, "unknown element <%s> inside <subagent>; expected <line>", t.Name.Local)
 			}
 		case xml.Comment:
 			n.Comments = append(n.Comments, &CommentNode{

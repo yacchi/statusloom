@@ -211,6 +211,17 @@ describe("api.getFields / api.getMetrics", () => {
         const api = createApi(TOKEN);
         expect(await api.getMetrics("claude-code")).toEqual([]);
     });
+
+    it("carries the percent flag through for percent-typed metrics", async () => {
+        const metrics = [
+            { name: "seven-day-percent", displayName: "7-day usage", descriptions: {}, percent: true },
+            { name: "cost-usd", displayName: "Cost", descriptions: {} },
+        ];
+        const fetchMock = vi.fn(async () => jsonResponse({ metrics }));
+        vi.stubGlobal("fetch", fetchMock);
+        const api = createApi(TOKEN);
+        expect(await api.getMetrics("claude-code")).toEqual(metrics);
+    });
 });
 
 describe("api.probeUsage", () => {

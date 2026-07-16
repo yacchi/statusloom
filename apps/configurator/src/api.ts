@@ -220,7 +220,7 @@ export function createApi(token: string): Api {
                 "GET",
                 `/api/dsl/metrics?tool=${encodeURIComponent(tool)}`,
             );
-            return res.metrics ?? [];
+            return (res.metrics ?? []).map((m) => ({ ...m, percent: m.percent }));
         },
         async probeUsage() {
             return request<UsageProbe>(token, "GET", "/api/usage/probe");

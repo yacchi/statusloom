@@ -532,10 +532,13 @@ func (e *docEval) flattenNodes(nodes []dsl.Node, inherited docStyle, out *[]flat
 	}
 }
 
-// emitSpan renders a <span>: its children inherit the span's base style,
-// while its own prefix/suffix/padding use that style with any color-rule
-// override applied (markup.md item 3 & 7). A span gated off contributes
-// nothing.
+// emitSpan renders a <span>: its color-rule (if any) resolves against the
+// span's base style, and that resolved style is what both its own
+// prefix/suffix/padding AND its children inherit (markup.md item 3 & 7,
+// "color-rule" cascade). A child that sets its own `color` attribute or its
+// own color-rule still wins over the inherited span color, since
+// mergeStyle/resolveColorRules apply nearest-wins on top of whatever is
+// inherited. A span gated off contributes nothing.
 func (e *docEval) emitSpan(s *dsl.SpanNode, inherited docStyle, out *[]flatPiece, segment int) {
 	base := mergeStyle(inherited, s.Common.Style)
 	if !e.gate(s.Common, "") {
@@ -545,7 +548,7 @@ func (e *docEval) emitSpan(s *dsl.SpanNode, inherited docStyle, out *[]flatPiece
 	own.color = e.resolveColorRules(s.Common.ColorRules, base.color, "")
 	e.appendDeco(out, s, spaces(s.Common.Box.PaddingLeft), own, segment)
 	e.appendDeco(out, s, s.Common.Prefix, own, segment)
-	e.flattenNodes(s.Children, base, out, segment)
+	e.flattenNodes(s.Children, own, out, segment)
 	e.appendDeco(out, s, s.Common.Suffix, own, segment)
 	e.appendDeco(out, s, spaces(s.Common.Box.PaddingRight), own, segment)
 }

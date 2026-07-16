@@ -680,6 +680,8 @@ Powerlineでは手動separatorを描画せず、line直下の可視field/text/sp
 * `when`はwhen式構文を再利用する（`when`属性は必須。省略はvalidation error）
 * `self`は、そのノードのselfメトリックを参照する
 * selfメトリックを持たないfieldや、`text`/`span`では`self`は使えない。名前付きメトリクスのみ参照可能
+* `self`以外は、カタログ上の任意の名前付きメトリクス（`five-hour-percent`等）を`when`/`color-rule`のsourceとして指定できる（fieldでも`self`ではなく名前付きメトリクスを参照して構わない）
+* `span`の`color-rule`で解決した色は、子孫ノードへ継承される（nearest-wins）。子field/text/spanが自前の`color`属性や自前`color-rule`を持てば、そちらが優先される
 
 ## formatter
 

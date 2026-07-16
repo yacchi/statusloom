@@ -9,7 +9,13 @@ import { useState } from "react";
 import type { Theme } from "../ansi.ts";
 import type { AttrPatch } from "../ast.ts";
 import { pickDescription, t, useLang, type Lang } from "../i18n.ts";
-import { type Band, buildColorRules, parseThresholdBands } from "../thresholds.ts";
+import {
+    type Band,
+    buildColorRules,
+    type ColorRuleHost,
+    detectThresholdSource,
+    parseThresholdBands,
+} from "../thresholds.ts";
 import type {
     AstNode,
     ColorRuleNode,
@@ -301,22 +307,23 @@ function VisibilitySection({
     );
 }
 
-// ---- color rules (fields only) ----
+// ---- color rules (fields and spans) ----
 
 function ColorRulesSection({
     node,
     theme,
     lang,
-    selfMetric,
+    metrics,
     isPercentSelf,
     onPatch,
 }: {
-    node: FieldNode;
+    node: ColorRuleHost;
     theme: Theme;
     lang: Lang;
-    selfMetric: string | undefined;
-    // True for a field whose self metric is percent-typed: only these get the
-    // 0..100 threshold bar. Everything else uses the Advanced raw editor.
+    metrics: Metric[];
+    // True for a field whose self metric is percent-typed: `self` is offered
+    // as a source and is the default when no source is otherwise detected.
+    // Always false for a span (spans have no self metric).
     isPercentSelf: boolean;
     onPatch: (patch: AttrPatch) => void;
 }) {
@@ -324,9 +331,20 @@ function ColorRulesSection({
     const setRules = (next: ColorRuleNode[]) =>
         onPatch({ colorRules: next.length > 0 ? next : undefined });
 
-    // The bar is available only when the field is percent-typed AND its
-    // current rules are a plain ascending-threshold pattern (parse succeeds).
-    const bands = isPercentSelf ? parseThresholdBands(node) : null;
+    const percentMetrics = metrics.filter((m) => m.percent);
+
+    // The metric the bar is driven by: "self" or a percent metric name.
+    // Detected from any existing rules; a percent-self field falls back to
+    // "self" (preserving the historical default) when there are none yet,
+    // everything else starts unselected until the user picks a source.
+    const [source, setSource] = useState<string | undefined>(
+        () => detectThresholdSource(node) ?? (isPercentSelf ? "self" : undefined),
+    );
+
+    // The bar is available only once a source is picked AND the node's
+    // current rules are a plain ascending-threshold pattern for it (parse
+    // succeeds).
+    const bands = source ? parseThresholdBands(node, source) : null;
     const canBar = bands !== null;
     // Let the user drop to the raw editor even when the bar is available.
     const [preferAdvanced, setPreferAdvanced] = useState(false);
@@ -335,14 +353,24 @@ function ColorRulesSection({
     // Bar edits set the base color (band 0 = node.color, shared with the
     // Decoration section) and regenerate the color-rules in one patch.
     const applyBands = (next: Band[]) => {
-        const built = buildColorRules(next);
+        const built = buildColorRules(next, source ?? "self");
         onPatch({
             color: built.color,
             colorRules: built.colorRules.length > 0 ? built.colorRules : undefined,
         });
     };
 
-    const defaultWhen = selfMetric ? "self ge 80" : "";
+    // Switching source rewrites any existing bands' `when` to the new metric
+    // in the same patch; with no bands yet it just records the choice.
+    const changeSource = (next: string | undefined) => {
+        setSource(next);
+        if (bands && next) {
+            const built = buildColorRules(bands, next);
+            onPatch({ colorRules: built.colorRules.length > 0 ? built.colorRules : undefined });
+        }
+    };
+
+    const defaultWhen = source ? `${source} ge 80` : "self ge 80";
     const addRule = () =>
         setRules([...rules, { id: "", kind: "color-rule", when: defaultWhen, color: "yellow" }]);
     const removeRule = (i: number) => setRules(rules.filter((_, j) => j !== i));
@@ -383,13 +411,34 @@ function ColorRulesSection({
                 ) : null}
             </div>
 
+            <div className="field">
+                <label>{t(lang, "colorRuleSource")}</label>
+                <select
+                    data-testid="colorrule-source"
+                    value={source ?? ""}
+                    onChange={(e) => changeSource(e.target.value === "" ? undefined : e.target.value)}
+                >
+                    {isPercentSelf ? (
+                        <option value="self">{t(lang, "colorRuleSourceSelf")}</option>
+                    ) : (
+                        <option value="">—</option>
+                    )}
+                    {percentMetrics.map((m) => (
+                        <option key={m.name} value={m.name}>
+                            {m.displayName}
+                        </option>
+                    ))}
+                </select>
+            </div>
+
             {showBar ? (
                 <ThresholdBar bands={bands} theme={theme} lang={lang} onChange={applyBands} />
             ) : (
                 <>
-                    {isPercentSelf && !canBar ? (
+                    {source && !canBar ? (
                         <p className="hint">{t(lang, "colorRulesComplex")}</p>
                     ) : null}
+                    {!source ? <p className="hint">{t(lang, "colorRuleSourcePick")}</p> : null}
                     <div className="field">
                         <button
                             className="link-button"
@@ -410,7 +459,7 @@ function ColorRulesSection({
                                             type="text"
                                             className="grow"
                                             data-testid={`colorrule-when-${i}`}
-                                            placeholder="self ge 80"
+                                            placeholder={defaultWhen}
                                             value={rule.when ?? ""}
                                             onChange={(e) => patchRule(i, { when: e.target.value })}
                                         />
@@ -719,6 +768,21 @@ export function PropertiesPanel({
                             theme={theme}
                             onPatch={onPatch}
                         />
+                        {node.kind === "field" || node.kind === "span" ? (
+                            <ColorRulesSection
+                                key={node.id}
+                                node={node}
+                                theme={theme}
+                                lang={lang}
+                                metrics={metrics}
+                                isPercentSelf={
+                                    node.kind === "field" &&
+                                    !!entry?.selfMetric &&
+                                    (entry?.formats?.includes("percent") ?? false)
+                                }
+                                onPatch={onPatch}
+                            />
+                        ) : null}
                         <BoxSection node={node as CommonAttrs} onPatch={onPatch} />
                         <VisibilitySection
                             node={node as CommonAttrs}
@@ -728,20 +792,6 @@ export function PropertiesPanel({
                             onPatch={onPatch}
                         />
                     </>
-                ) : null}
-
-                {node.kind === "field" ? (
-                    <ColorRulesSection
-                        key={node.id}
-                        node={node}
-                        theme={theme}
-                        lang={lang}
-                        selfMetric={entry?.selfMetric}
-                        isPercentSelf={
-                            !!entry?.selfMetric && (entry?.formats?.includes("percent") ?? false)
-                        }
-                        onPatch={onPatch}
-                    />
                 ) : null}
 
                 {removable ? (

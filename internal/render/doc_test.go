@@ -380,6 +380,38 @@ func TestRenderDocument_ColorRule(t *testing.T) {
 	}
 }
 
+func TestRenderDocument_ColorRuleCascadesToChildren(t *testing.T) {
+	opts := Options{Width: 120, Now: fixedNow}
+	// five-hour-percent = 27 in richSnapshot -> "five-hour-percent ge 20"
+	// matches, so the span resolves to yellow and the plain child field
+	// should inherit that color.
+	src := `<statusloom version="1" tool="claude-code" color-level="ansi16">
+  <layout name="a" active="true">
+    <line>
+      <span>
+        <color-rule when="five-hour-percent ge 20" color="yellow"/>
+        <field name="model"/>
+      </span>
+    </line>
+  </layout>
+</statusloom>`
+	got := RenderDocumentString(richSnapshot(), parseDoc(t, src), opts)
+	if !strings.Contains(got, "\x1b[33m") {
+		t.Errorf("child field should inherit span's resolved color-rule color: %q", got)
+	}
+
+	// A child with its own explicit color still wins over the inherited
+	// span color (nearest-wins).
+	srcOwn := strings.Replace(src, `<field name="model"/>`, `<field name="model" color="red"/>`, 1)
+	gotOwn := RenderDocumentString(richSnapshot(), parseDoc(t, srcOwn), opts)
+	if !strings.Contains(gotOwn, "\x1b[31m") {
+		t.Errorf("child's own color should win over inherited span color: %q", gotOwn)
+	}
+	if strings.Contains(gotOwn, "\x1b[33m") {
+		t.Errorf("child's own color should suppress inherited yellow: %q", gotOwn)
+	}
+}
+
 func TestRenderDocument_Hyperlink(t *testing.T) {
 	opts := Options{Width: 120, Now: fixedNow}
 	src := `<statusloom version="1" tool="claude-code" color-level="ansi16">

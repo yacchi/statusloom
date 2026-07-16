@@ -57,6 +57,9 @@ type MetricDef struct {
 	DisplayName string
 	// Descriptions is the localized one-line description shown in the UI.
 	Descriptions Descriptions
+	// Percent marks a 0..100-scale percentage metric. The configurator uses
+	// it as a candidate filter for threshold-bar-driven color-rule setup.
+	Percent bool
 }
 
 // claudeCodeFields is the tool="claude-code" content field catalog
@@ -281,7 +284,7 @@ var claudeCodeMetrics = []MetricDef{
 	{Name: "exceeds-200k", DisplayName: "Exceeds 200K", Descriptions: Descriptions{EN: "Whether context usage exceeds 200,000 tokens.", JA: "コンテキスト使用量が20万トークンを超えているかどうかです。"}},
 	{Name: "git-clean", DisplayName: "Git Clean", Descriptions: Descriptions{EN: "Whether the working tree is clean.", JA: "作業ツリーがクリーンかどうかです。"}},
 	{Name: "context-window-tokens", DisplayName: "Context Window Tokens", Descriptions: Descriptions{EN: "The context window size in tokens.", JA: "コンテキストウィンドウのトークン数です。"}},
-	{Name: "context-remaining-percent", DisplayName: "Context Remaining (%)", Descriptions: Descriptions{EN: "Percentage of context remaining.", JA: "コンテキストの残り割合です。"}},
+	{Name: "context-remaining-percent", DisplayName: "Context Remaining (%)", Descriptions: Descriptions{EN: "Percentage of context remaining.", JA: "コンテキストの残り割合です。"}, Percent: true},
 	{Name: "context-output-tokens", DisplayName: "Context Output Tokens", Descriptions: Descriptions{EN: "Total output tokens in context.", JA: "コンテキストの出力トークン総数です。"}},
 	{Name: "current-input-tokens", DisplayName: "Current Input Tokens", Descriptions: Descriptions{EN: "Input tokens in the latest API call.", JA: "直近API呼び出しの入力トークン数です。"}},
 	{Name: "current-output-tokens", DisplayName: "Current Output Tokens", Descriptions: Descriptions{EN: "Output tokens in the latest API call.", JA: "直近API呼び出しの出力トークン数です。"}},
@@ -299,10 +302,12 @@ var claudeCodeMetrics = []MetricDef{
 	{
 		Name: "cache-hit-percent", DisplayName: "Cache Hit Rate (%)",
 		Descriptions: Descriptions{EN: "Cache-read hit rate of the last API call, as a percentage.", JA: "直近API呼び出しのキャッシュ読み取りヒット率（％）です。"},
+		Percent:      true,
 	},
 	{
 		Name: "context-percent", DisplayName: "Context Used (%)",
 		Descriptions: Descriptions{EN: "Raw percentage of the context window used.", JA: "コンテキストウィンドウ全体に対する使用率（％）です。"},
+		Percent:      true,
 	},
 	{
 		Name: "context-tokens", DisplayName: "Context Tokens",
@@ -311,10 +316,12 @@ var claudeCodeMetrics = []MetricDef{
 	{
 		Name: "context-usable-percent", DisplayName: "Context Used, Usable (%)",
 		Descriptions: Descriptions{EN: "Percentage of the usable context window used, after reserving auto-compact headroom.", JA: "自動コンパクト用の予約分を除いた使用可能コンテキストに対する使用率（％）です。"},
+		Percent:      true,
 	},
 	{
 		Name: "five-hour-percent", DisplayName: "5-Hour Usage (%)",
 		Descriptions: Descriptions{EN: "Percentage of the rolling 5-hour rate limit window used.", JA: "5時間のレート制限ウィンドウの使用率（％）です。"},
+		Percent:      true,
 	},
 	{
 		Name: "five-hour-reset-minutes", DisplayName: "5-Hour Reset (min)",
@@ -347,6 +354,7 @@ var claudeCodeMetrics = []MetricDef{
 	{
 		Name: "seven-day-percent", DisplayName: "Weekly Usage (%)",
 		Descriptions: Descriptions{EN: "Percentage of the rolling 7-day rate limit window used.", JA: "7日間のレート制限ウィンドウの使用率（％）です。"},
+		Percent:      true,
 	},
 	{
 		Name: "seven-day-reset-minutes", DisplayName: "Weekly Reset (min)",
@@ -363,14 +371,17 @@ var claudeCodeMetrics = []MetricDef{
 	{
 		Name: "extra-usage-percent", DisplayName: "Extra Usage (%)",
 		Descriptions: Descriptions{EN: "Percentage of the extra-usage monthly limit consumed.", JA: "従量課金の月間上限に対する使用率です。"},
+		Percent:      true,
 	},
 	{
 		Name: "seven-day-opus-percent", DisplayName: "Weekly Usage Opus (%)",
 		Descriptions: Descriptions{EN: "Percentage of the rolling 7-day rate limit consumed by Opus models.", JA: "Opus系モデルの7日間レート制限の使用率です。"},
+		Percent:      true,
 	},
 	{
 		Name: "seven-day-sonnet-percent", DisplayName: "Weekly Usage Sonnet (%)",
 		Descriptions: Descriptions{EN: "Percentage of the rolling 7-day rate limit consumed by Sonnet models.", JA: "Sonnet系モデルの7日間レート制限の使用率です。"},
+		Percent:      true,
 	},
 	{
 		Name: "seven-day-opus-reset-minutes", DisplayName: "Weekly Reset Opus (minutes)",

@@ -295,14 +295,17 @@ for `"subagent-effort"` yet, so a `capability`-tagged field with no matching
 probe should be hidden unconditionally until one exists.
 
 ### `GET /api/dsl/metrics?tool=claude-code`
-→ `200 { "metrics": [ { "name", "displayName", "descriptions": {"en","ja"} } ] }`
+→ `200 { "metrics": [ { "name", "displayName", "descriptions": {"en","ja"}, "percent" } ] }`
 
 The named-metric catalog for `when` / `color-rule` editing, from the DSL
 registry: the session/account metrics plus the `task-*` self-metrics backing
 `task-tokens`/`task-context-size`/`task-context-percent`/`task-duration`, and
 the tool-agnostic `width` metric (terminal width in columns), which backs
 width breakpoints such as `when="width ge 80"`; an unknown width counts as
-unbounded so a width condition never hides content.
+unbounded so a width condition never hides content. `percent` (boolean,
+optional, omitted when `false`) marks a 0..100-scale percentage metric (e.g.
+`five-hour-percent`, `context-percent`); the configurator uses it to surface
+percentage metrics as threshold-bar-driven color-rule candidates.
 
 ### `GET /api/usage/probe`
 → `200 { "available": bool, "reason": "ok" | "no-token" | "unauthorized" | "rate-limited" | "error", "extraUsageEnabled": bool }`

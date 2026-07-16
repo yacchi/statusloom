@@ -3,12 +3,13 @@ import {
     addBreakpoint,
     type Band,
     buildColorRules,
+    detectThresholdSource,
     moveBreakpoint,
     parseThresholdBands,
     removeBreakpoint,
     setBandColor,
 } from "./thresholds.ts";
-import type { ColorRuleNode, FieldNode } from "./types.ts";
+import type { ColorRuleNode, FieldNode, SpanNode } from "./types.ts";
 
 function rule(when: string, color?: string): ColorRuleNode {
     return { id: "", kind: "color-rule", when, color };
@@ -16,6 +17,10 @@ function rule(when: string, color?: string): ColorRuleNode {
 
 function field(color: string | undefined, colorRules?: ColorRuleNode[]): FieldNode {
     return { id: "F", kind: "field", name: "context-percentage", color, colorRules };
+}
+
+function span(color: string | undefined, colorRules?: ColorRuleNode[]): SpanNode {
+    return { id: "S", kind: "span", children: [], color, colorRules };
 }
 
 describe("parseThresholdBands / buildColorRules round trip", () => {
@@ -67,6 +72,68 @@ describe("parseThresholdBands / buildColorRules round trip", () => {
             { from: 80, color: "red" },
         ]);
         expect(buildColorRules(bands!).colorRules[0].when).toBe("self ge 80");
+    });
+
+    it("drives the bar off a named percent metric instead of self, on a span", () => {
+        const node = span(undefined, [rule("seven-day-percent ge 80", "red")]);
+        const bands = parseThresholdBands(node, "seven-day-percent");
+        expect(bands).toEqual([
+            { from: 0, color: undefined },
+            { from: 80, color: "red" },
+        ]);
+        const built = buildColorRules(bands!, "seven-day-percent");
+        expect(built.colorRules).toEqual([
+            { id: "", kind: "color-rule", when: "seven-day-percent ge 80", color: "red" },
+        ]);
+        const back = parseThresholdBands(span(built.color, built.colorRules), "seven-day-percent");
+        expect(back).toEqual(bands);
+    });
+
+    it("does not parse a non-self source's rules under the default self source", () => {
+        const node = span(undefined, [rule("seven-day-percent ge 80", "red")]);
+        expect(parseThresholdBands(node)).toBeNull();
+    });
+});
+
+describe("detectThresholdSource", () => {
+    it("returns null when there are no color-rules", () => {
+        expect(detectThresholdSource(field("green"))).toBeNull();
+        expect(detectThresholdSource(span(undefined))).toBeNull();
+    });
+
+    it("detects self from a field's plain threshold pattern", () => {
+        const node = field("green", [rule("self ge 80", "red"), rule("self ge 60", "yellow")]);
+        expect(detectThresholdSource(node)).toBe("self");
+    });
+
+    it("detects a named percent metric from a span's threshold pattern", () => {
+        const node = span(undefined, [
+            rule("seven-day-percent ge 80", "red"),
+            rule("seven-day-percent ge 60", "yellow"),
+        ]);
+        expect(detectThresholdSource(node)).toBe("seven-day-percent");
+    });
+
+    it("returns null when rules mix metrics", () => {
+        const node = span(undefined, [
+            rule("seven-day-percent ge 80", "red"),
+            rule("five-hour-percent ge 60", "yellow"),
+        ]);
+        expect(detectThresholdSource(node)).toBeNull();
+    });
+
+    it("returns null when the pattern isn't a valid descending bar", () => {
+        const node = span(undefined, [
+            rule("seven-day-percent ge 60", "yellow"),
+            rule("seven-day-percent ge 80", "red"),
+        ]);
+        expect(detectThresholdSource(node)).toBeNull();
+    });
+
+    it("returns null for compound conditions", () => {
+        expect(
+            detectThresholdSource(span(undefined, [rule("seven-day-percent ge 80 and git-dirty", "red")])),
+        ).toBeNull();
     });
 });
 

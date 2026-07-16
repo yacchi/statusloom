@@ -358,6 +358,9 @@ export interface Metric {
     name: string;
     displayName: string;
     descriptions: Record<string, string>;
+    // True for a 0..100 percent-typed metric (e.g. seven-day-percent). Used to
+    // filter the color-rule threshold bar's source-metric selector.
+    percent?: boolean;
 }
 
 // GET /api/tools entry: one document (tool) the configurator can edit. The

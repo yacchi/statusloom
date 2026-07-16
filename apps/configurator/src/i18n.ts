@@ -118,6 +118,9 @@ const EN = {
     thresholdBarHint:
         "Click the bar to add a breakpoint. Drag a handle to move it, or drag it out of the bar to remove it. The lowest band uses the field's base Color.",
     thresholdBaseBand: "Base color (lowest band)",
+    colorRuleSource: "Driven by",
+    colorRuleSourceSelf: "self (own value)",
+    colorRuleSourcePick: "Pick a percent metric to edit with the bar.",
     helpWidth: "Simulated terminal width (COLUMNS) used for the preview.",
     helpSample:
         "Samples are fake data used only for the preview. Full data = every field has data; Session start = a brand-new session where usage and cost data have not arrived yet.",
@@ -232,6 +235,9 @@ const JA: Record<MessageKey, string> = {
     thresholdBarHint:
         "バーをクリックするとしきい値を追加します。ハンドルをドラッグして移動、バーの外へドラッグすると削除します。一番下の帯はフィールドの基本カラーを使います。",
     thresholdBaseBand: "基本カラー（最下段の帯）",
+    colorRuleSource: "連動元",
+    colorRuleSourceSelf: "self（自身の値）",
+    colorRuleSourcePick: "連動元のpercentメトリクスを選ぶとバーで編集できます。",
     helpWidth: "プレビューで再現する端末幅（COLUMNS）です。",
     helpSample:
         "サンプルはプレビュー専用の擬似データです。全データあり = すべてのフィールドにデータがある状態、セッション開始直後 = 使用量やコストのデータがまだ届いていない状態。",

@@ -11,7 +11,26 @@
 // is produced by a color-rule `self ge t_i`, emitted in DESCENDING order so
 // first-match-wins picks the right band.
 
-import type { ColorRuleNode, FieldNode } from "./types.ts";
+import type { ColorRuleNode } from "./types.ts";
+
+// Shape common to field/span nodes as far as the threshold bar is concerned:
+// a base color plus the color-rule list it drives / is driven by. Both
+// FieldNode and SpanNode structurally satisfy this.
+export interface ColorRuleHost {
+    color?: string;
+    colorRules?: ColorRuleNode[];
+}
+
+// Default source metric when the caller doesn't pick one: a field's own
+// value (the historical, and still most common, `self ge N` pattern).
+const DEFAULT_SOURCE = "self";
+
+// Escapes a string for verbatim use inside a RegExp. Metric names are
+// `[a-z0-9-]+` in practice, so this is defense-in-depth rather than a fix for
+// an observed problem.
+function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 export interface Band {
     // Lower bound (inclusive) of the band on the 0..100 scale. The base band
@@ -27,17 +46,21 @@ export interface Band {
 // monotonic.
 export const MIN_GAP = 1;
 
-// Try to read a field's base color + color-rules as a threshold bar. Returns
-// null when the rules are anything the bar cannot faithfully represent
-// (compound / negated conditions, named metrics, operators other than ge/gt,
-// non-descending or duplicate thresholds, values outside 0..100). The caller
-// then keeps the raw "Advanced" editor. Empty color-rules parse to a single
-// base band, so every percent field starts with an (empty) bar.
-export function parseThresholdBands(node: FieldNode): Band[] | null {
+// Try to read a node's base color + color-rules as a threshold bar driven by
+// `source` (a metric name, or "self" for the node's own value). Returns null
+// when the rules are anything the bar cannot faithfully represent (compound /
+// negated conditions, a different or mixed metric, operators other than
+// ge/gt, non-descending or duplicate thresholds, values outside 0..100). The
+// caller then keeps the raw "Advanced" editor. Empty color-rules parse to a
+// single base band, so every eligible node starts with an (empty) bar.
+export function parseThresholdBands(
+    node: ColorRuleHost,
+    source: string = DEFAULT_SOURCE,
+): Band[] | null {
     const rules = node.colorRules ?? [];
     const parsed: { n: number; color: string | undefined }[] = [];
     for (const r of rules) {
-        const t = parseThresholdRule(r);
+        const t = parseThresholdRule(r, source);
         if (!t) {
             return null;
         }
@@ -58,14 +81,17 @@ export function parseThresholdBands(node: FieldNode): Band[] | null {
     return bands;
 }
 
-// A rule qualifies only if its `when` is exactly `self <ge|gt> <number>` with
-// the number strictly inside (0, 100). `gt` is accepted on the way in but the
-// bar normalizes everything to `ge` on the way out (see buildColorRules).
+// A rule qualifies only if its `when` is exactly `<source> <ge|gt> <number>`
+// with the number strictly inside (0, 100). `gt` is accepted on the way in
+// but the bar normalizes everything to `ge` on the way out (see
+// buildColorRules).
 function parseThresholdRule(
     rule: ColorRuleNode,
+    source: string = DEFAULT_SOURCE,
 ): { n: number; color: string | undefined } | null {
     const when = (rule.when ?? "").trim();
-    const m = /^self\s+(?:ge|gt)\s+(\d+(?:\.\d+)?)$/.exec(when);
+    const re = new RegExp(`^${escapeRegExp(source)}\\s+(?:ge|gt)\\s+(\\d+(?:\\.\\d+)?)$`);
+    const m = re.exec(when);
     if (!m) {
         return null;
     }
@@ -76,9 +102,14 @@ function parseThresholdRule(
     return { n, color: rule.color };
 }
 
-// Build the base color + color-rule list from bar bands (band 0 = base color).
-// Higher bands emit `self ge <from>` in descending order (first match wins).
-export function buildColorRules(bands: Band[]): {
+// Build the base color + color-rule list from bar bands (band 0 = base color)
+// driven by `source` (a metric name, or "self" for the node's own value).
+// Higher bands emit `<source> ge <from>` in descending order (first match
+// wins).
+export function buildColorRules(
+    bands: Band[],
+    source: string = DEFAULT_SOURCE,
+): {
     color: string | undefined;
     colorRules: ColorRuleNode[];
 } {
@@ -87,11 +118,30 @@ export function buildColorRules(bands: Band[]): {
         rules.push({
             id: "",
             kind: "color-rule",
-            when: `self ge ${bands[i].from}`,
+            when: `${source} ge ${bands[i].from}`,
             color: bands[i].color,
         });
     }
     return { color: bands[0]?.color, colorRules: rules };
+}
+
+// Infer the source metric a node's existing color-rules are driven by, by
+// reading it off the first rule (`<metric> <ge|gt> <number>`) and then
+// confirming the whole rule list is a valid strictly-descending threshold
+// bar for that same metric. Returns null when there are no rules yet, or the
+// rules are not a bar the source selector can represent (mixed metrics,
+// compound conditions, non-descending thresholds, etc).
+export function detectThresholdSource(node: ColorRuleHost): string | null {
+    const rules = node.colorRules ?? [];
+    if (rules.length === 0) {
+        return null;
+    }
+    const first = /^([a-z0-9-]+)\s+(?:ge|gt)\s+\d+(?:\.\d+)?$/.exec((rules[0].when ?? "").trim());
+    if (!first) {
+        return null;
+    }
+    const source = first[1];
+    return parseThresholdBands(node, source) !== null ? source : null;
 }
 
 // Insert a breakpoint at `value`, splitting the band it lands in; the new upper

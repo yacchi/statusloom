@@ -441,3 +441,68 @@ func readUntil(t *testing.T, ctx context.Context, c *websocket.Conn, want string
 		}
 	}
 }
+
+func TestPrependExecDirToPath(t *testing.T) {
+	sep := string(os.PathListSeparator)
+
+	// PATH present: dir is prepended, existing value preserved after it.
+	got := prependExecDirToPath([]string{"HOME=/h", "PATH=/usr/bin" + sep + "/bin"}, "/opt/sl")
+	wantPath := "PATH=/opt/sl" + sep + "/usr/bin" + sep + "/bin"
+	if !contains(got, wantPath) {
+		t.Fatalf("PATH not prepended: got %v, want entry %q", got, wantPath)
+	}
+	if !contains(got, "HOME=/h") {
+		t.Fatalf("unrelated env dropped: %v", got)
+	}
+
+	// PATH absent: an entry is added.
+	got = prependExecDirToPath([]string{"HOME=/h"}, "/opt/sl")
+	if !contains(got, "PATH=/opt/sl") {
+		t.Fatalf("PATH not added: %v", got)
+	}
+
+	// Case-insensitive key (Windows "Path").
+	got = prependExecDirToPath([]string{"Path=/usr/bin"}, "/opt/sl")
+	if !contains(got, "Path=/opt/sl"+sep+"/usr/bin") {
+		t.Fatalf("case-insensitive PATH not prepended: %v", got)
+	}
+
+	// Blank dir is a no-op.
+	in := []string{"PATH=/usr/bin"}
+	if got = prependExecDirToPath(in, ""); len(got) != 1 || got[0] != "PATH=/usr/bin" {
+		t.Fatalf("blank dir should be a no-op: %v", got)
+	}
+}
+
+// TestSpawnTerminalCmd_PrependsExecDir verifies the real spawnTerminalCmd puts
+// the running binary's own directory at the front of the embedded terminal's
+// PATH, so `statusloom` inside it resolves to this same build.
+func TestSpawnTerminalCmd_PrependsExecDir(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skipf("os.Executable unavailable: %v", err)
+	}
+	cmd := spawnTerminalCmd(t.TempDir())
+	var pathVal string
+	for _, kv := range cmd.Env {
+		if eq := strings.IndexByte(kv, '='); eq > 0 && strings.EqualFold(kv[:eq], "PATH") {
+			pathVal = kv[eq+1:]
+		}
+	}
+	if pathVal == "" {
+		t.Fatalf("no PATH in spawned env: %v", cmd.Env)
+	}
+	wantPrefix := filepath.Dir(exe) + string(os.PathListSeparator)
+	if !strings.HasPrefix(pathVal, wantPrefix) && pathVal != filepath.Dir(exe) {
+		t.Fatalf("PATH does not start with exec dir %q: %q", filepath.Dir(exe), pathVal)
+	}
+}
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}

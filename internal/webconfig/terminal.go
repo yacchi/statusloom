@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -189,8 +190,44 @@ func (s *server) acquireWorkspaceLock(dir string) (bool, error) {
 var spawnTerminalCmd = func(dir string) *exec.Cmd {
 	cmd := exec.Command("claude")
 	cmd.Dir = dir
-	cmd.Env = os.Environ() // inherit PATH and auth
+	// Prepend the running config-server binary's own directory to PATH so that
+	// `statusloom` invoked inside the embedded terminal — the statusLine
+	// (`statusloom monitor --draft`), the subagentStatusLine, and any
+	// `statusloom draft push` / `statusloom claude` the session runs — resolves
+	// to the SAME build that is driving this UI, not a different (possibly
+	// stale) statusloom found earlier on PATH. This keeps the embedded session's
+	// DSL support in lockstep with the config UI (e.g. <responsive> is accepted
+	// by both or neither), which matters for debugging.
+	env := os.Environ() // inherit PATH and auth
+	if exe, err := os.Executable(); err == nil {
+		env = prependExecDirToPath(env, filepath.Dir(exe))
+	}
+	cmd.Env = env
 	return cmd
+}
+
+// prependExecDirToPath returns `env` with `dir` prepended to its PATH entry, so
+// a lookup of a same-named binary finds `dir`'s copy first. The PATH key is
+// matched case-insensitively (Windows uses "Path"); when no PATH entry exists
+// one is added. A blank `dir` is a no-op.
+func prependExecDirToPath(env []string, dir string) []string {
+	if dir == "" {
+		return env
+	}
+	out := make([]string, 0, len(env)+1)
+	found := false
+	for _, kv := range env {
+		if eq := strings.IndexByte(kv, '='); eq > 0 && strings.EqualFold(kv[:eq], "PATH") {
+			out = append(out, kv[:eq]+"="+dir+string(os.PathListSeparator)+kv[eq+1:])
+			found = true
+			continue
+		}
+		out = append(out, kv)
+	}
+	if !found {
+		out = append(out, "PATH="+dir)
+	}
+	return out
 }
 
 // terminalSession is one live embedded terminal: the child process, its PTY

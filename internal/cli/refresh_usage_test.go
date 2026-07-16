@@ -192,6 +192,81 @@ func TestRunRefresh_UsageFailure(t *testing.T) {
 	}
 }
 
+// TestRunRefresh_UsageExtraCarriedForward: a poll that fetched extra_usage is
+// followed by a later poll whose report omits it (Extra: nil). The second
+// poll must NOT drop the previously observed ExtraUsage - it is carried
+// forward unchanged (value and ObservedAt), proving extra-usage survives a
+// poll that simply didn't get it back from the API.
+func TestRunRefresh_UsageExtraCarriedForward(t *testing.T) {
+	setupEnv(t)
+
+	// First poll: report includes Extra.
+	report1 := &usage.Report{
+		FiveHour: &usage.Window{Utilization: 10, ResetsAt: time.Now().Add(1 * time.Hour)},
+		Extra:    &usage.Extra{IsEnabled: true, MonthlyLimit: floatPtr(100), UsedCredits: floatPtr(5), Utilization: floatPtr(5)},
+	}
+	swapUsageSeams(t,
+		func(func(string) string) (string, error) { return "tok-abc", nil },
+		func(context.Context, string, string) (*usage.Report, int, error) { return report1, 200, nil },
+	)
+	if code := runRefresh([]string{"--once", "--cc-version", "1.0.0"}, io.Discard, io.Discard); code != 0 {
+		t.Fatalf("runRefresh() (poll 1) code = %d, want 0", code)
+	}
+
+	first, ok := cache.LoadAccountUsageRaw(accountCacheKey)
+	if !ok || first == nil || first.ExtraUsage == nil {
+		t.Fatalf("expected ExtraUsage stored after poll 1: %+v", first)
+	}
+	firstObservedAt := first.ExtraUsage.ObservedAt
+	if firstObservedAt.IsZero() {
+		t.Fatal("expected ExtraUsage.ObservedAt to be set after poll 1")
+	}
+
+	// runRefresh gates the account-usage poll on cache.AccountUsageDue, and
+	// the successful poll above pushed NextDueAt out by
+	// cache.UsageRefreshInterval (5m). Force the schedule due again so the
+	// second runRefresh call actually reaches refreshAccountUsage instead of
+	// silently no-oping.
+	m := cache.LoadRefreshManifest()
+	m.AccountUsage.NextDueAt = time.Now().Add(-1 * time.Minute)
+	if err := cache.StoreRefreshManifest(m); err != nil {
+		t.Fatalf("StoreRefreshManifest() error = %v", err)
+	}
+
+	report2 := &usage.Report{
+		FiveHour: &usage.Window{Utilization: 15, ResetsAt: time.Now().Add(1 * time.Hour)},
+		// Extra omitted this time.
+	}
+	swapUsageSeams(t,
+		func(func(string) string) (string, error) { return "tok-abc", nil },
+		func(context.Context, string, string) (*usage.Report, int, error) { return report2, 200, nil },
+	)
+	if code := runRefresh([]string{"--once", "--cc-version", "1.0.0"}, io.Discard, io.Discard); code != 0 {
+		t.Fatalf("runRefresh() (poll 2) code = %d, want 0", code)
+	}
+
+	second, ok := cache.LoadAccountUsageRaw(accountCacheKey)
+	if !ok || second == nil {
+		t.Fatalf("expected envelope still present after poll 2")
+	}
+	if second.ExtraUsage == nil {
+		t.Fatal("ExtraUsage must be carried forward, not dropped, when poll 2 omits it")
+	}
+	if second.ExtraUsage.UsedCredits == nil || *second.ExtraUsage.UsedCredits != 5 {
+		t.Errorf("UsedCredits = %v, want 5 (carried forward from poll 1)", second.ExtraUsage.UsedCredits)
+	}
+	if second.ExtraUsage.Utilization == nil || *second.ExtraUsage.Utilization != 5 {
+		t.Errorf("Utilization = %v, want 5 (carried forward from poll 1)", second.ExtraUsage.Utilization)
+	}
+	if !second.ExtraUsage.ObservedAt.Equal(firstObservedAt) {
+		t.Errorf("ExtraUsage.ObservedAt = %v, want unchanged from poll 1 (%v)", second.ExtraUsage.ObservedAt, firstObservedAt)
+	}
+	// The FiveHour window, in contrast, must reflect poll 2's fresh value.
+	if second.FiveHour == nil || second.FiveHour.UsedPercentage != 15 {
+		t.Errorf("FiveHour = %v, want UsedPercentage 15 (poll 2's fresh value)", second.FiveHour)
+	}
+}
+
 // TestRunRefresh_UsageNoToken: no OAuth token -> reschedule at normal cadence
 // without a failure, and fetchUsage must NOT be called.
 func TestRunRefresh_UsageNoToken(t *testing.T) {

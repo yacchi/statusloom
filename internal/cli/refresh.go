@@ -181,6 +181,16 @@ func refreshAccountUsage(now time.Time, ccVersion string) {
 	}
 
 	env := usageReportToEnvelope(report, now)
+	if env.ExtraUsage == nil {
+		// This poll's response omitted extra_usage (the API frequently does).
+		// Carry the last-observed value (and its own ObservedAt) forward
+		// unchanged so a merely-missing field in one poll never drops a
+		// value that is otherwise still fresh under its own long-lived
+		// retention window (cache.LoadExtraUsage).
+		if prev, ok := cache.LoadAccountUsageRaw(accountCacheKey); ok && prev != nil && prev.ExtraUsage != nil {
+			env.ExtraUsage = prev.ExtraUsage
+		}
+	}
 	_ = cache.StoreAccountUsage(accountCacheKey, env)
 	m.AccountUsage = cache.AccountUsageSchedule{
 		NextDueAt:   cache.NextUsageDue(now, 0),
@@ -212,6 +222,7 @@ func usageReportToEnvelope(r *usage.Report, now time.Time) cache.AccountUsageEnv
 			MonthlyLimit: r.Extra.MonthlyLimit,
 			UsedCredits:  r.Extra.UsedCredits,
 			Utilization:  r.Extra.Utilization,
+			ObservedAt:   now,
 		}
 	}
 	return env

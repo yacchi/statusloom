@@ -282,27 +282,33 @@ func applyAccountCache(snap *schema.StatusSnapshot, now time.Time) {
 // the fields Claude Code's stdin never carries: extra-usage billing state
 // and the model-scoped (Opus/Sonnet) seven-day windows.
 //
-// It is best-effort: a missing/corrupt/expired cache leaves the snapshot
-// untouched, and it never errors or panics.
+// ExtraUsage and the seven-day windows are deliberately loaded from two
+// independent sources with different lifetimes: the windows follow
+// cache.LoadAccountUsage's 6h staleness (usageStaleTTL), while ExtraUsage
+// follows cache.LoadExtraUsage's own long-lived retention window
+// (extraUsageRetentionTTL) - extra-usage credits are monotonic within a
+// billing month and the API frequently omits extra_usage from a poll
+// response, so a once-observed value must survive well past any single
+// windows-envelope expiry. Each source is best-effort and independent: a
+// missing/corrupt/expired value from one never blocks the other, and neither
+// ever errors or panics.
 func applyExtraUsageCache(snap *schema.StatusSnapshot, now time.Time) {
-	env, stale, ok := cache.LoadAccountUsage(accountCacheKey, now)
-	if !ok || env == nil {
-		return
-	}
-	if env.ExtraUsage != nil {
+	if eu, stale, ok := cache.LoadExtraUsage(accountCacheKey, now); ok && eu != nil {
 		snap.Account.ExtraUsage = &schema.ExtraUsage{
-			Enabled:         env.ExtraUsage.Enabled,
-			MonthlyLimitUSD: env.ExtraUsage.MonthlyLimit,
-			UsedCreditsUSD:  env.ExtraUsage.UsedCredits,
-			Utilization:     env.ExtraUsage.Utilization,
+			Enabled:         eu.Enabled,
+			MonthlyLimitUSD: eu.MonthlyLimit,
+			UsedCreditsUSD:  eu.UsedCredits,
+			Utilization:     eu.Utilization,
 			Stale:           stale,
 		}
 	}
-	if env.SevenDayOpus != nil {
-		snap.Account.SevenDayOpus = toSchemaRateWindow(env.SevenDayOpus)
-	}
-	if env.SevenDaySonnet != nil {
-		snap.Account.SevenDaySonnet = toSchemaRateWindow(env.SevenDaySonnet)
+	if env, _, ok := cache.LoadAccountUsage(accountCacheKey, now); ok && env != nil {
+		if env.SevenDayOpus != nil {
+			snap.Account.SevenDayOpus = toSchemaRateWindow(env.SevenDayOpus)
+		}
+		if env.SevenDaySonnet != nil {
+			snap.Account.SevenDaySonnet = toSchemaRateWindow(env.SevenDaySonnet)
+		}
 	}
 }
 

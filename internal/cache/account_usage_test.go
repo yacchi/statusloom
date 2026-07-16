@@ -203,6 +203,180 @@ func TestNextUsageDue(t *testing.T) {
 	}
 }
 
+// TestLoadExtraUsage_Fresh: an ExtraUsage record observed just now is
+// reported fresh (stale=false) and ok=true.
+func TestLoadExtraUsage_Fresh(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("STATUSLOOM_CACHE_DIR", dir)
+
+	now := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
+	env := NewAccountUsageEnvelope(now)
+	env.ExtraUsage = &ExtraUsageState{Enabled: true, UsedCredits: ptrFloat64(5), ObservedAt: now}
+	if err := StoreAccountUsage("default", env); err != nil {
+		t.Fatalf("StoreAccountUsage() error = %v", err)
+	}
+
+	eu, stale, ok := LoadExtraUsage("default", now.Add(1*time.Minute))
+	if !ok {
+		t.Fatalf("LoadExtraUsage() ok = false, want true")
+	}
+	if stale {
+		t.Fatalf("LoadExtraUsage() stale = true, want false (within fresh TTL)")
+	}
+	if eu == nil || eu.UsedCredits == nil || *eu.UsedCredits != 5 {
+		t.Fatalf("LoadExtraUsage() eu = %+v, want UsedCredits 5", eu)
+	}
+}
+
+// TestLoadExtraUsage_StaleButRetained: past the 15m fresh TTL but within the
+// 30-day retention window, the value is still returned (ok=true) marked
+// stale.
+func TestLoadExtraUsage_StaleButRetained(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("STATUSLOOM_CACHE_DIR", dir)
+
+	now := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
+	observed := now.Add(-20 * time.Minute)
+	env := NewAccountUsageEnvelope(observed)
+	env.ExtraUsage = &ExtraUsageState{Enabled: true, UsedCredits: ptrFloat64(7), ObservedAt: observed}
+	if err := StoreAccountUsage("default", env); err != nil {
+		t.Fatalf("StoreAccountUsage() error = %v", err)
+	}
+
+	eu, stale, ok := LoadExtraUsage("default", now)
+	if !ok {
+		t.Fatalf("LoadExtraUsage() ok = false, want true (within retention)")
+	}
+	if !stale {
+		t.Fatalf("LoadExtraUsage() stale = false, want true (past fresh TTL)")
+	}
+	if eu == nil || eu.UsedCredits == nil || *eu.UsedCredits != 7 {
+		t.Fatalf("LoadExtraUsage() eu = %+v, want UsedCredits 7", eu)
+	}
+}
+
+// TestLoadExtraUsage_SurvivesWindowsStaleUntil proves ExtraUsage is fully
+// decoupled from the rate-window envelope's 6h StaleUntil: LoadAccountUsage
+// reports the envelope absent (ok=false) once StaleUntil has passed, but
+// LoadExtraUsage still returns the ExtraUsage value (ok=true).
+func TestLoadExtraUsage_SurvivesWindowsStaleUntil(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("STATUSLOOM_CACHE_DIR", dir)
+
+	now := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
+	observed := now.Add(-7 * time.Hour) // past usageStaleTTL (6h)
+	env := AccountUsageEnvelope{
+		Source:     "oauth-usage-api",
+		ObservedAt: observed,
+		ExpiresAt:  observed.Add(usageFreshTTL),
+		StaleUntil: observed.Add(usageStaleTTL),
+		ExtraUsage: &ExtraUsageState{Enabled: true, UsedCredits: ptrFloat64(9), ObservedAt: observed},
+	}
+	if err := StoreAccountUsage("default", env); err != nil {
+		t.Fatalf("StoreAccountUsage() error = %v", err)
+	}
+
+	// The windows envelope itself must be reported absent past StaleUntil.
+	if _, _, ok := LoadAccountUsage("default", now); ok {
+		t.Fatalf("LoadAccountUsage() ok = true, want false (past StaleUntil)")
+	}
+
+	// But ExtraUsage must still be available: it has its own retention TTL
+	// (30 days), independent of the windows' 6h StaleUntil.
+	eu, stale, ok := LoadExtraUsage("default", now)
+	if !ok {
+		t.Fatalf("LoadExtraUsage() ok = false, want true (independent of windows StaleUntil)")
+	}
+	if !stale {
+		t.Fatalf("LoadExtraUsage() stale = false, want true (well past fresh TTL)")
+	}
+	if eu == nil || eu.UsedCredits == nil || *eu.UsedCredits != 9 {
+		t.Fatalf("LoadExtraUsage() eu = %+v, want UsedCredits 9", eu)
+	}
+
+	// And the raw envelope must still be readable via LoadAccountUsageRaw,
+	// ignoring TTLs entirely.
+	raw, ok := LoadAccountUsageRaw("default")
+	if !ok || raw == nil {
+		t.Fatalf("LoadAccountUsageRaw() ok = %v, raw = %+v, want ok=true", ok, raw)
+	}
+}
+
+// TestLoadExtraUsage_RetentionExpired: past extraUsageRetentionTTL (30 days)
+// the value is dropped entirely (ok=false).
+func TestLoadExtraUsage_RetentionExpired(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("STATUSLOOM_CACHE_DIR", dir)
+
+	now := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
+	observed := now.Add(-31 * 24 * time.Hour) // past 30-day retention
+	env := AccountUsageEnvelope{
+		Source:     "oauth-usage-api",
+		ObservedAt: observed,
+		ExpiresAt:  observed.Add(usageFreshTTL),
+		StaleUntil: observed.Add(usageStaleTTL),
+		ExtraUsage: &ExtraUsageState{Enabled: true, UsedCredits: ptrFloat64(11), ObservedAt: observed},
+	}
+	if err := StoreAccountUsage("default", env); err != nil {
+		t.Fatalf("StoreAccountUsage() error = %v", err)
+	}
+
+	eu, stale, ok := LoadExtraUsage("default", now)
+	if ok || stale || eu != nil {
+		t.Fatalf("LoadExtraUsage() = (%+v, %v, %v), want (nil, false, false) past retention", eu, stale, ok)
+	}
+}
+
+// TestLoadExtraUsage_LegacyFallback: an ExtraUsage record with a zero
+// ObservedAt (written before the field existed) falls back to the enclosing
+// envelope's ObservedAt for freshness/retention purposes.
+func TestLoadExtraUsage_LegacyFallback(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("STATUSLOOM_CACHE_DIR", dir)
+
+	now := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
+	observed := now.Add(-20 * time.Minute)
+	env := NewAccountUsageEnvelope(observed)
+	env.ExtraUsage = &ExtraUsageState{Enabled: true, UsedCredits: ptrFloat64(13)} // ObservedAt left zero
+
+	if err := StoreAccountUsage("default", env); err != nil {
+		t.Fatalf("StoreAccountUsage() error = %v", err)
+	}
+
+	eu, stale, ok := LoadExtraUsage("default", now)
+	if !ok {
+		t.Fatalf("LoadExtraUsage() ok = false, want true (legacy fallback to envelope ObservedAt)")
+	}
+	if !stale {
+		t.Fatalf("LoadExtraUsage() stale = false, want true (envelope observed 20m ago > fresh TTL)")
+	}
+	if eu == nil || eu.UsedCredits == nil || *eu.UsedCredits != 13 {
+		t.Fatalf("LoadExtraUsage() eu = %+v, want UsedCredits 13", eu)
+	}
+}
+
+// TestLoadExtraUsage_NoEnvelope: a missing envelope reports ok=false.
+func TestLoadExtraUsage_NoEnvelope(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("STATUSLOOM_CACHE_DIR", dir)
+
+	eu, stale, ok := LoadExtraUsage("default", time.Now())
+	if ok || stale || eu != nil {
+		t.Fatalf("LoadExtraUsage() = (%+v, %v, %v), want (nil, false, false)", eu, stale, ok)
+	}
+}
+
+// TestLoadAccountUsageRaw_Missing: a missing envelope reports ok=false.
+func TestLoadAccountUsageRaw_Missing(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("STATUSLOOM_CACHE_DIR", dir)
+
+	env, ok := LoadAccountUsageRaw("default")
+	if ok || env != nil {
+		t.Fatalf("LoadAccountUsageRaw() = (%+v, %v), want (nil, false)", env, ok)
+	}
+}
+
 func TestAccountUsageDue(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("STATUSLOOM_CACHE_DIR", dir)

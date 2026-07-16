@@ -362,23 +362,32 @@ export function resolveGeometricTarget(
         if (!r) {
             return undefined;
         }
-        // A margin on each edge of the span lets the user drop BESIDE it
-        // (before/after within the parent line) rather than always into it.
-        const margin = Math.min(14, r.width * 0.3);
-        if (pointerX <= r.left + margin || pointerX >= r.left + r.width - margin) {
-            const parent = containers.find((c) => c.childIds.includes(S.id));
-            if (!parent) {
-                return undefined;
-            }
-            const idx = parent.childIds.indexOf(S.id);
-            const after = pointerX >= r.left + r.width - margin;
-            target = { containerId: parent.id, index: after ? idx + 1 : idx };
+        // An empty span has no chips to land between, so its ghost label is
+        // tiny (~40px) — any beside margin would eat the whole thing and make
+        // it effectively undroppable-into. Resolve unconditionally to "into".
+        if (S.childIds.length === 0) {
+            target = { containerId: S.id, index: 0 };
         } else {
-            const gap = nearestGap(S.childIds, rects, pointerX);
-            if (gap === null) {
-                return undefined;
+            // A margin on each edge of the span lets the user drop BESIDE it
+            // (before/after within the parent line) rather than always into
+            // it. Kept small (<= 20% per side, so "into" keeps >= 60% of the
+            // span) so a narrow span is still targetable for its own content.
+            const margin = Math.min(14, r.width * 0.2);
+            if (pointerX <= r.left + margin || pointerX >= r.left + r.width - margin) {
+                const parent = containers.find((c) => c.childIds.includes(S.id));
+                if (!parent) {
+                    return undefined;
+                }
+                const idx = parent.childIds.indexOf(S.id);
+                const after = pointerX >= r.left + r.width - margin;
+                target = { containerId: parent.id, index: after ? idx + 1 : idx };
+            } else {
+                const gap = nearestGap(S.childIds, rects, pointerX);
+                if (gap === null) {
+                    return undefined;
+                }
+                target = { containerId: S.id, index: gap };
             }
-            target = { containerId: S.id, index: gap };
         }
     } else {
         const gap = nearestGap(line.childIds, rects, pointerX);

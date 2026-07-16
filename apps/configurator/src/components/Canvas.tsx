@@ -329,12 +329,16 @@ function InnerChip({
     displayName,
     onSelect,
 }: InnerChipProps) {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    const { attributes, listeners, setNodeRef, transition, isDragging } =
         useSortable({ id });
-    const style: CSSProperties = {
-        transform: CSS.Transform.toString(transform),
-        transition,
-    };
+    // Deliberately drop dnd-kit's sort transform. The DragOverlay renders the
+    // dragged chip following the cursor, so in-list chips never need to move.
+    // Applying the displacement transform would shift non-dragged siblings to
+    // open a gap, which pushes a tiny empty <span> entirely out from under the
+    // pointer (and desyncs it from its static droppable rect), making it
+    // impossible to drop into. Drop position is shown by the paint-only drop-*
+    // carets instead.
+    const style: CSSProperties = { transition };
     const { before, after } = dropFlags(dropTarget, parentId, childIndex, parentLen);
 
     let cls = "seg-chip inner";
@@ -533,12 +537,13 @@ function SortableChip({
     displayName,
     onSelect,
 }: SortableChipProps) {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    const { attributes, listeners, setNodeRef, transition, isDragging } =
         useSortable({ id });
-    const style: CSSProperties = {
-        transform: CSS.Transform.toString(transform),
-        transition,
-    };
+    // No sort transform (see InnerChip): the DragOverlay follows the cursor, so
+    // shifting in-list siblings only serves to push a tiny empty <span> out from
+    // under the pointer and desync it from its droppable rect. Drop position is
+    // shown by the paint-only drop-* carets instead.
+    const style: CSSProperties = { transition };
     const { before, after } = dropFlags(dropTarget, containerId, childIndex, containerLen);
 
     let cls = "seg-chip";

@@ -35,6 +35,11 @@ run = "go build -o statusloom ./cmd/statusloom"
 sources = ["**/*.go", "go.mod", "go.sum", "internal/webconfig/dist/**/*"]
 outputs = ["statusloom"]
 
+[tasks.install]
+description = "Build the embedded web UI and install the statusloom binary into $GOBIN (go install ./cmd/statusloom); the one-command developer install after cloning"
+depends = ["build-web"]
+run = "go install ./cmd/statusloom"
+
 [tasks.config]
 description = "Launch the configurator UI (go run ./cmd/statusloom config), auto-building the embedded web UI first"
 depends = ["build-web"]

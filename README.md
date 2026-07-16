@@ -21,8 +21,7 @@ space and compact mode never triggers.
 brew install yacchi/tap/statusloom
 ```
 
-Windows users should use the GitHub Releases archives or `go install`
-below.
+Windows users should use the GitHub Releases archives below.
 
 ### GitHub Releases (manual)
 
@@ -31,17 +30,31 @@ arm64). Download the archive for your platform from the
 [Releases page](https://github.com/yacchi/statusloom/releases), extract
 it, and place the `statusloom` binary somewhere on your `PATH`.
 
-### go install
+### From source (developers)
+
+Building from a clone embeds the web configurator UI (unlike
+`go install ...@latest`, which would only ship the placeholder page).
+The toolchain is pinned in `mise.toml` (Go, Node, pnpm), so install
+[mise](https://mise.jdx.dev/) first, then run a single command:
 
 ```sh
-go install github.com/yacchi/statusloom/cmd/statusloom@latest
+git clone https://github.com/yacchi/statusloom.git
+cd statusloom
+mise run install   # installs Go/Node/pnpm, builds the UI, and installs statusloom
 ```
 
-> **Note:** binaries built with `go install` do not embed the web
-> configurator UI, so `statusloom config` will only serve a placeholder
-> page. Status line rendering (`statusloom claude`) works fine. If you
-> want to use the visual configurator, install via Homebrew or a
-> GitHub Releases binary instead.
+`mise run install` auto-installs the pinned toolchain, builds and embeds
+the configurator UI, then runs `go install ./cmd/statusloom`. Because it
+builds from the local working tree, the freshly built UI in
+`internal/webconfig/dist` is embedded into the binary. (This is why
+cloning works but `go install ...@latest` does not: the embedded assets
+are never committed — see `scripts/clean-web.sh` and `CLAUDE.md`.) This
+works on Windows too, though running Claude Code itself on Windows is not
+yet well supported.
+
+To run directly from the checkout without installing, `mise run build`
+produces `./statusloom` in the repo root, and `mise run config` launches
+the configurator.
 
 ### After installing
 

@@ -157,3 +157,70 @@ func TestPreviewDSL_ResponsiveSelectsVariant(t *testing.T) {
 		}
 	}
 }
+
+// TestPreviewDSL_AllVariantsRendersEveryVariant asserts that with
+// allVariants:true the preview emits segments for EVERY variant's lines
+// (not just the width-selected one, unlike the default in
+// TestPreviewDSL_ResponsiveSelectsVariant above) and reports the
+// width-selected index per responsive id in selectedVariants.
+func TestPreviewDSL_AllVariantsRendersEveryVariant(t *testing.T) {
+	t.Setenv("STATUSLOOM_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	ts := startTestServer(t, time.Hour)
+
+	preview := func(width int) (map[string]bool, map[string]int) {
+		t.Helper()
+		resp := putPOST(t, ts, "/api/dsl/preview", map[string]any{
+			"tool": "claude-code", "source": respSource, "width": width, "sample": "full",
+			"allVariants": true,
+		})
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("preview status = %d, want 200", resp.StatusCode)
+		}
+		var pv struct {
+			Lines []struct {
+				Segments []struct {
+					NodeID string `json:"nodeId"`
+				} `json:"segments"`
+			} `json:"lines"`
+			SelectedVariants map[string]int `json:"selectedVariants"`
+		}
+		if err := decodeJSON(resp.Body, &pv); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		ids := map[string]bool{}
+		for _, ln := range pv.Lines {
+			for _, seg := range ln.Segments {
+				if seg.NodeID != "" {
+					ids[seg.NodeID] = true
+				}
+			}
+		}
+		return ids, pv.SelectedVariants
+	}
+
+	// Wide: variant 0 fits, but BOTH variants' segments are now present.
+	wide, wideSelected := preview(400)
+	if !wide["L0.1.v0.0.0"] {
+		t.Errorf("wide preview missing variant-0 segment L0.1.v0.0.0: %v", sortedKeysOf(wide))
+	}
+	if !wide["L0.1.v1.0.0"] {
+		t.Errorf("wide preview missing variant-1 segment L0.1.v1.0.0 (allVariants should include it): %v", sortedKeysOf(wide))
+	}
+	if wideSelected["L0.1"] != 0 {
+		t.Errorf("wide selectedVariants[L0.1] = %d, want 0: %v", wideSelected["L0.1"], wideSelected)
+	}
+
+	// Narrow: variant 0 overflows and variant 1 is selected, but both still
+	// contribute segments.
+	narrow, narrowSelected := preview(20)
+	if !narrow["L0.1.v0.0.0"] {
+		t.Errorf("narrow preview missing variant-0 segment L0.1.v0.0.0 (allVariants should include it): %v", sortedKeysOf(narrow))
+	}
+	if !narrow["L0.1.v1.0.0"] {
+		t.Errorf("narrow preview missing variant-1 segment L0.1.v1.0.0: %v", sortedKeysOf(narrow))
+	}
+	if narrowSelected["L0.1"] != 1 {
+		t.Errorf("narrow selectedVariants[L0.1] = %d, want 1: %v", narrowSelected["L0.1"], narrowSelected)
+	}
+}

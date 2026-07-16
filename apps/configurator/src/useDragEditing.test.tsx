@@ -7,6 +7,7 @@ import {
     VARIANT_CONTAINER_PREFIX,
     VARIANT_ID_PREFIX,
     computeDropTarget,
+    resolveGeometricTarget,
     useDragEditing,
     type ContainerView,
     type DragPayload,
@@ -25,32 +26,35 @@ function lines(): ContainerView[] {
 
 // ---- fabricated dnd-kit events (only the fields the hook reads) ----
 
-function activeObj(id: string, centerLeft: number | null) {
+function activeObj(id: string, centerLeft: number | null, centerTop: number | null = null) {
+    const hasRect = centerLeft !== null || centerTop !== null;
     return {
         id,
         rect: {
             current: {
                 initial: null,
-                translated:
-                    centerLeft === null
-                        ? null
-                        : {
-                              left: centerLeft - 5,
-                              width: 10,
-                              top: 0,
-                              right: centerLeft + 5,
-                              bottom: 10,
-                              height: 10,
-                          },
+                translated: hasRect
+                    ? {
+                          left: (centerLeft ?? 0) - 5,
+                          width: 10,
+                          right: (centerLeft ?? 0) + 5,
+                          // Vertical center parameterized independently so
+                          // variant tests can drive the Y axis; defaults keep
+                          // the original top:0/height:10 for X-only chip tests.
+                          top: centerTop === null ? 0 : centerTop - 5,
+                          bottom: centerTop === null ? 10 : centerTop + 5,
+                          height: 10,
+                      }
+                    : null,
             },
         },
     };
 }
 
-function overObj(id: string, left: number, width: number) {
+function overObj(id: string, left: number, width: number, top = 0, height = 10) {
     return {
         id,
-        rect: { left, width, top: 0, right: left + width, bottom: 10, height: 10 },
+        rect: { left, width, top, right: left + width, bottom: top + height, height },
     };
 }
 
@@ -67,6 +71,13 @@ interface EventOpts {
     // pointer X — not the dragged rect center — for before/after resolution.
     pointerClientX?: number;
     delta?: number;
+    // Y-axis counterparts, used by variant-card reorder tests (a vertical
+    // drag). Chip tests pass only the X opts, so their geometry is unchanged.
+    activeCenterY?: number;
+    overTop?: number;
+    overHeight?: number;
+    pointerClientY?: number;
+    deltaY?: number;
 }
 
 function overEvent(
@@ -75,12 +86,21 @@ function overEvent(
     opts: EventOpts = {},
 ): DragOverEvent {
     const ev: Record<string, unknown> = {
-        active: activeObj(activeId, opts.activeCenter ?? null),
-        over: overId === null ? null : overObj(overId, opts.overLeft ?? 0, opts.overWidth ?? 10),
+        active: activeObj(activeId, opts.activeCenter ?? null, opts.activeCenterY ?? null),
+        over:
+            overId === null
+                ? null
+                : overObj(
+                      overId,
+                      opts.overLeft ?? 0,
+                      opts.overWidth ?? 10,
+                      opts.overTop ?? 0,
+                      opts.overHeight ?? 10,
+                  ),
     };
-    if (opts.pointerClientX !== undefined) {
-        ev.activatorEvent = { clientX: opts.pointerClientX };
-        ev.delta = { x: opts.delta ?? 0, y: 0 };
+    if (opts.pointerClientX !== undefined || opts.pointerClientY !== undefined) {
+        ev.activatorEvent = { clientX: opts.pointerClientX, clientY: opts.pointerClientY };
+        ev.delta = { x: opts.delta ?? 0, y: opts.deltaY ?? 0 };
     }
     return ev as unknown as DragOverEvent;
 }
@@ -247,6 +267,134 @@ describe("computeDropTarget: span containers", () => {
         expect(
             computeDropTarget(spanContainers(), `${LINE_ID_PREFIX}0`, inner, null, null),
         ).toEqual({ containerId: "L0.0", index: 3 });
+    });
+});
+
+// Geometry-based nearest-gap resolver. All numbers are hand-built: rects are
+// {left,width} in viewport px, pointerX is a viewport px too, and the layout
+// is a single row L0.0 = [chipA, span, chipB] with the span nesting two chips:
+//
+//   px:   0    20        30            70   90        110
+//         [ A  ]          [ S: S0 S1     ]  [   B   ]
+//   centers: A=10             S=50            B=100
+//   span S rect [30,70] (w=40 -> edge margin = min(14, 12) = 12):
+//     left margin [30,42], right margin [58,70], mid-body (42,58)
+//     S0 rect [33,41] center 37, S1 rect [48,64] center 56
+describe("resolveGeometricTarget", () => {
+    const text = { kind: "palette", node: { id: "", kind: "text", value: "x" } } as const;
+    const flex = { kind: "palette", node: { id: "", kind: "flex" } } as const;
+
+    function geo(): ContainerView[] {
+        return [
+            { id: "L0.0", kind: "line", lineIndex: 0, childIds: ["L0.0.0", "L0.0.1", "L0.0.2"] },
+            { id: "L0.0.1", kind: "span", childIds: ["L0.0.1.0", "L0.0.1.1"] },
+        ];
+    }
+    function rects(): Map<string, { left: number; width: number }> {
+        return new Map([
+            ["L0.0.0", { left: 0, width: 20 }],
+            ["L0.0.1", { left: 30, width: 40 }],
+            ["L0.0.2", { left: 90, width: 20 }],
+            ["L0.0.1.0", { left: 33, width: 8 }],
+            ["L0.0.1.1", { left: 48, width: 16 }],
+        ]);
+    }
+
+    it("line nearest-gap: no snap-to-end for an interior gap", () => {
+        // pointer 5: left of A's center -> index 0.
+        expect(resolveGeometricTarget(geo(), `${LINE_ID_PREFIX}0`, text, 5, rects())).toEqual({
+            containerId: "L0.0",
+            index: 0,
+        });
+        // pointer 25: in the A|S gap (outside the span rect [30,70]) -> index 1,
+        // NOT the row's end (which would be 3). This is the finicky-drop fix.
+        expect(resolveGeometricTarget(geo(), `${LINE_ID_PREFIX}0`, text, 25, rects())).toEqual({
+            containerId: "L0.0",
+            index: 1,
+        });
+        // pointer 150: right of every center -> append (index 3).
+        expect(resolveGeometricTarget(geo(), `${LINE_ID_PREFIX}0`, text, 150, rects())).toEqual({
+            containerId: "L0.0",
+            index: 3,
+        });
+    });
+
+    it("beside a span via line-level nearest-gap", () => {
+        // pointer 75: right of the span's center (50) and OUTSIDE its rect
+        // ([30,70]) -> after the span within the LINE (index 2, before B).
+        expect(resolveGeometricTarget(geo(), `${LINE_ID_PREFIX}0`, text, 75, rects())).toEqual({
+            containerId: "L0.0",
+            index: 2,
+        });
+    });
+
+    it("into a span at the nearest child gap", () => {
+        // pointer 50: inside the span, mid-body -> into S; only S0's center (37)
+        // is left of 50, so the caret is the S0|S1 gap (index 1).
+        expect(resolveGeometricTarget(geo(), `${LINE_ID_PREFIX}0`, text, 50, rects())).toEqual({
+            containerId: "L0.0.1",
+            index: 1,
+        });
+    });
+
+    it("into an empty span resolves to index 0", () => {
+        const containers: ContainerView[] = [
+            { id: "E0", kind: "line", lineIndex: 0, childIds: ["E0.0"] },
+            { id: "E0.0", kind: "span", childIds: [] },
+        ];
+        const map = new Map([["E0.0", { left: 0, width: 100 }]]);
+        // pointer 50: inside the empty span, mid-body -> {span, 0}.
+        expect(resolveGeometricTarget(containers, `${LINE_ID_PREFIX}0`, text, 50, map)).toEqual({
+            containerId: "E0.0",
+            index: 0,
+        });
+    });
+
+    it("span edge margin drops beside the span in the parent line", () => {
+        // pointer 35: within the span's left margin [30,42] -> before S (index 1).
+        expect(resolveGeometricTarget(geo(), `${LINE_ID_PREFIX}0`, text, 35, rects())).toEqual({
+            containerId: "L0.0",
+            index: 1,
+        });
+        // pointer 65: within the span's right margin [58,70] -> after S (index 2).
+        expect(resolveGeometricTarget(geo(), `${LINE_ID_PREFIX}0`, text, 65, rects())).toEqual({
+            containerId: "L0.0",
+            index: 2,
+        });
+    });
+
+    it("flex never lands in a span (neither into nor via its edge)", () => {
+        // pointer 50 (span mid-body) and 35 (span left margin) both resolve at
+        // the LINE level for a flex payload -> containerId is the row.
+        expect(resolveGeometricTarget(geo(), `${LINE_ID_PREFIX}0`, flex, 50, rects())).toEqual({
+            containerId: "L0.0",
+            index: 1,
+        });
+        expect(resolveGeometricTarget(geo(), `${LINE_ID_PREFIX}0`, flex, 35, rects())?.containerId).toBe(
+            "L0.0",
+        );
+    });
+
+    it("node dragged into its own subtree resolves to null", () => {
+        // Node "A" owns the whole row "A.0" (its subtree), so every candidate
+        // caret — including the line-level fallback — is inside itself: null.
+        const containers: ContainerView[] = [
+            { id: "A.0", kind: "line", lineIndex: 0, childIds: ["A.0.0"] },
+        ];
+        const map = new Map([["A.0.0", { left: 0, width: 20 }]]);
+        const payload = { kind: "node", id: "A", nodeKind: "span" } as const;
+        expect(resolveGeometricTarget(containers, `${LINE_ID_PREFIX}0`, payload, 10, map)).toBeNull();
+    });
+
+    it("returns undefined on incomplete rects so the caller falls back to legacy", () => {
+        const map = rects();
+        map.delete("L0.0.2"); // a line child's rect is missing
+        // pointer 25 -> line-level nearest-gap, which walks into the missing rect.
+        expect(resolveGeometricTarget(geo(), `${LINE_ID_PREFIX}0`, text, 25, map)).toBeUndefined();
+    });
+
+    it("returns undefined when the id addresses no line (legacy fallback)", () => {
+        expect(resolveGeometricTarget(geo(), "nope", text, 25, rects())).toBeUndefined();
     });
 });
 
@@ -472,7 +620,7 @@ describe("useDragEditing: variant reorder", () => {
         return { view, onDrop };
     }
 
-    it("drags a variant card and reports a reorder target on drop", () => {
+    it("drags a variant card and reports a reorder target on drop (Y axis)", () => {
         const { view, onDrop } = variantSetup();
 
         act(() =>
@@ -480,14 +628,20 @@ describe("useDragEditing: variant reorder", () => {
         );
         expect(view.result.current.dragLabel).toBe("node L0.1.v0");
 
-        // Dragged center (18) is right of the hovered card's center (15):
-        // an after-caret, landing past the last variant (index 3).
+        // Cards stack vertically: the hovered card sits at top 10 / height 10
+        // (vertical midpoint 15). A dragged center BELOW the midpoint (18) is
+        // an after-caret, landing past the last variant (index 3). The X
+        // geometry is deliberately reversed (dragged far LEFT of the card) to
+        // prove resolution is driven by Y, not X.
         act(() =>
             view.result.current.onDragOver(
                 overEvent(`${VARIANT_ID_PREFIX}L0.1.v0`, "L0.1.v2", {
-                    activeCenter: 18,
-                    overLeft: 10,
+                    activeCenter: 0,
+                    activeCenterY: 18,
+                    overLeft: 100,
                     overWidth: 10,
+                    overTop: 10,
+                    overHeight: 10,
                 }),
             ),
         );
@@ -496,12 +650,27 @@ describe("useDragEditing: variant reorder", () => {
             index: 3,
         });
 
+        // A dragged center ABOVE the midpoint (12) flips it to a before-caret.
+        act(() =>
+            view.result.current.onDragOver(
+                overEvent(`${VARIANT_ID_PREFIX}L0.1.v0`, "L0.1.v2", {
+                    activeCenterY: 12,
+                    overTop: 10,
+                    overHeight: 10,
+                }),
+            ),
+        );
+        expect(view.result.current.dropTarget).toEqual({
+            containerId: `${VARIANT_CONTAINER_PREFIX}L0.1`,
+            index: 2,
+        });
+
         act(() =>
             view.result.current.onDragEnd(
                 endEvent(`${VARIANT_ID_PREFIX}L0.1.v0`, "L0.1.v2", {
-                    activeCenter: 18,
-                    overLeft: 10,
-                    overWidth: 10,
+                    activeCenterY: 18,
+                    overTop: 10,
+                    overHeight: 10,
                 }),
             ),
         );

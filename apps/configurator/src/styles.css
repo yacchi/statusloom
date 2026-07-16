@@ -770,6 +770,19 @@ input[type="number"] {
     white-space: nowrap;
 }
 
+.row-duplicate {
+    padding: 0 6px;
+    font-size: 11px;
+    line-height: 1.6;
+    opacity: 0.5;
+    background: transparent;
+}
+
+.row-duplicate:hover {
+    opacity: 1;
+    color: var(--accent);
+}
+
 .row-delete {
     padding: 0 6px;
     font-size: 11px;
@@ -798,16 +811,19 @@ input[type="number"] {
 
 .responsive-block {
     display: flex;
+    flex-direction: column;
     align-items: flex-start;
     gap: 8px;
     flex: 1;
-    flex-wrap: wrap;
 }
 
+/* Variants stack VERTICALLY and are reordered along the Y axis — they never
+   move horizontally (see the variant-reorder path in useDragEditing.ts). */
 .variant-track {
     display: flex;
+    flex-direction: column;
+    align-items: flex-start;
     gap: 8px;
-    flex-wrap: wrap;
 }
 
 .variant-card {
@@ -838,20 +854,20 @@ input[type="number"] {
 .variant-card.drop-after::before {
     content: "";
     position: absolute;
-    top: -2px;
-    bottom: -2px;
-    width: 3px;
+    left: -2px;
+    right: -2px;
+    height: 3px;
     background: var(--accent);
     border-radius: 2px;
     pointer-events: none;
 }
 
 .variant-card.drop-before::before {
-    left: -6px;
+    top: -6px;
 }
 
 .variant-card.drop-after::before {
-    right: -6px;
+    bottom: -6px;
 }
 
 .variant-header {
@@ -888,6 +904,18 @@ input[type="number"] {
     font-size: 10px;
 }
 
+.variant-duplicate {
+    padding: 0 4px;
+    font-size: 11px;
+    opacity: 0.5;
+    background: transparent;
+}
+
+.variant-duplicate:hover {
+    opacity: 1;
+    color: var(--accent);
+}
+
 .variant-delete {
     padding: 0 4px;
     font-size: 11px;
@@ -900,10 +928,20 @@ input[type="number"] {
     color: var(--danger);
 }
 
+/* Contains a variant's own residual overflow (an allVariants preview renders
+   every variant at the simulated width, so a wide non-selected variant's
+   chips can overflow its card) without letting it blow out the canvas's
+   horizontal scroll. The vertical padding keeps the chips' own drop
+   indicators (.seg-chip.drop-before/after::before, at +-2px) from being
+   clipped by the resulting overflow box; .variant-card's OWN drop indicator
+   lives on .variant-card itself (a sibling of this element, not inside it —
+   see VariantCard's JSX), so it is unaffected by this overflow. */
 .variant-lines {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    overflow-x: auto;
+    padding: 2px 0;
 }
 
 .variant-add-line,

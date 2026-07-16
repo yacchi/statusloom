@@ -31,6 +31,7 @@ interface Props {
     theme: Theme;
     readOnly: boolean;
     onPatch: (patch: AttrPatch) => void;
+    onDuplicate: () => void;
     onRemove: () => void;
 }
 
@@ -653,6 +654,7 @@ export function PropertiesPanel({
     theme,
     readOnly,
     onPatch,
+    onDuplicate,
     onRemove,
 }: Props) {
     const lang = useLang();
@@ -744,6 +746,9 @@ export function PropertiesPanel({
 
                 {removable ? (
                     <div className="panel-actions">
+                        <button className="secondary" data-testid="props-duplicate" onClick={onDuplicate}>
+                            Duplicate
+                        </button>
                         <button className="danger" data-testid="props-remove" onClick={onRemove}>
                             Remove
                         </button>

@@ -255,6 +255,12 @@ type dslPreviewRequest struct {
 	Sample      string `json:"sample"`
 	SessionID   string `json:"sessionId"`
 	LayoutIndex int    `json:"layoutIndex"`
+	// AllVariants renders every <responsive>'s variant (not just the
+	// width-selected one) for the config editor's canvas, which needs every
+	// candidate's real values rather than falling back to placeholder chips
+	// for the non-selected ones. The default (false) keeps the original
+	// selected-only behavior for the real statusline preview.
+	AllVariants bool `json:"allVariants"`
 }
 
 // dslPreviewSegment is one leaf node's rendered result within a preview line,
@@ -307,9 +313,31 @@ func (s *server) handlePreviewDSL(w http.ResponseWriter, r *http.Request) {
 	_, ids := buildAST(doc)
 
 	var docLines []render.DocLine
-	withActiveLayout(doc, req.LayoutIndex, func() {
-		docLines = render.RenderDocument(snap, doc, opts)
-	})
+	var selectedVariants map[string]int
+	if req.AllVariants {
+		// Every variant's real values, plus which one this width would
+		// actually select — the config editor's canvas shows every
+		// candidate instead of falling back to placeholder chips for the
+		// non-selected variants (they'd otherwise have no preview data at
+		// all, since RenderDocument only emits the selected one).
+		var selected map[*dsl.ResponsiveNode]int
+		withActiveLayout(doc, req.LayoutIndex, func() {
+			docLines, selected = render.RenderDocumentPreview(snap, doc, opts)
+		})
+		if len(selected) > 0 {
+			rids := responsiveIDs(doc.Root)
+			selectedVariants = make(map[string]int, len(selected))
+			for rn, idx := range selected {
+				if id, ok := rids[rn]; ok {
+					selectedVariants[id] = idx
+				}
+			}
+		}
+	} else {
+		withActiveLayout(doc, req.LayoutIndex, func() {
+			docLines = render.RenderDocument(snap, doc, opts)
+		})
+	}
 
 	lines := make([]dslPreviewLine, 0, len(docLines))
 	allOmitted := true
@@ -341,11 +369,18 @@ func (s *server) handlePreviewDSL(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"lines":       lines,
 		"diagnostics": toDiagsJSON(diags),
 		"fallback":    map[string]any{"ansi": fallbackANSI, "active": allOmitted},
-	})
+	}
+	if req.AllVariants {
+		if selectedVariants == nil {
+			selectedVariants = map[string]int{}
+		}
+		resp["selectedVariants"] = selectedVariants
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // previewSnapshot resolves the snapshot a preview renders against: a real

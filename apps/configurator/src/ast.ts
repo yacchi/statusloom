@@ -497,6 +497,25 @@ export function adjustIdAfterRemoval(id: string, removedId: string): string {
     return prefix + String(k - 1) + rest.slice(tok.length);
 }
 
+// Duplicate the mixed-content child (chip) at `id`, inserting the id-reset
+// copy immediately after the source in its owning line/span. Returns the
+// unchanged root (and a null `select`) when `id` does not address a
+// mixed-content child. `select` is the ID the copy will have after the next
+// serialize -> parse round trip (see predictChildId).
+export function duplicateChild(
+    root: StatusloomNode,
+    id: string,
+): { next: StatusloomNode; select: string | null } {
+    const at = parentChildId(id);
+    const node = getNode(root, id);
+    if (!at || !node) {
+        return { next: root, select: null };
+    }
+    const copy = { ...structuredClone(node), id: "" } as LineChild;
+    const next = insertChild(root, at.parentId, at.index + 1, copy);
+    return { next, select: predictChildId(at.parentId, at.index + 1) };
+}
+
 // ---- line operations (within a layout or a responsive's variant) ----
 
 function newEmptyLine(): LineNode {
@@ -522,6 +541,51 @@ export function addLine(root: StatusloomNode, containerId: string): StatusloomNo
 // readability at call sites that are specifically deleting a whole line.
 export function deleteLine(root: StatusloomNode, lineId: string): StatusloomNode {
     return removeNode(root, lineId);
+}
+
+// Duplicate the whole line `lineId`, inserting the id-reset copy immediately
+// after the source — either among a layout's children ("L{i}.{p}", a plain
+// line, not a <responsive>) or a variant's lines ("L{i}.{p}.v{v}.{j}").
+// Returns `root` unchanged when `lineId` does not resolve to a duplicable
+// line.
+export function duplicateLineNode(root: StatusloomNode, lineId: string): StatusloomNode {
+    const steps = parseNodeId(lineId);
+    const last = steps?.[steps.length - 1];
+    const line = getNode(root, lineId);
+    const parentId = parentIdOf(lineId);
+    if (!last || !line || line.kind !== "line" || parentId === null) {
+        return root;
+    }
+    const copy: LineNode = { ...structuredClone(line), id: "" };
+    if (last.t === "layoutChild") {
+        const index = last.p;
+        return transformNode(root, parentId, (node) => {
+            if (node.kind !== "layout") {
+                return node;
+            }
+            return markDirty({
+                ...node,
+                children: [
+                    ...node.children.slice(0, index + 1),
+                    copy,
+                    ...node.children.slice(index + 1),
+                ],
+            });
+        });
+    }
+    if (last.t === "variantLine") {
+        const index = last.j;
+        return transformNode(root, parentId, (node) => {
+            if (node.kind !== "variant") {
+                return node;
+            }
+            return markDirty({
+                ...node,
+                lines: [...node.lines.slice(0, index + 1), copy, ...node.lines.slice(index + 1)],
+            });
+        });
+    }
+    return root;
 }
 
 // ---- responsive / variant operations ----
@@ -561,11 +625,34 @@ export function insertVariant(
             return node;
         }
         const at = Math.max(0, Math.min(index, node.variants.length));
-        return {
+        // Stamp the responsive dirty (like insertChild does for line/span): its
+        // variant list changed, so the serializer must reconstruct it. Without
+        // this, a duplicated variant — which retains the source clone's range —
+        // is dropped on the serialize -> parse round trip (the responsive's own
+        // range would be reused verbatim, omitting the insert).
+        return markDirty({
             ...node,
             variants: [...node.variants.slice(0, at), variant, ...node.variants.slice(at)],
-        };
+        });
     });
+}
+
+// Duplicates the variant `variantId`, inserting the id-reset copy
+// immediately after the source in its <responsive>'s variants. Returns
+// `root` unchanged when `variantId` does not address a variant.
+export function duplicateVariant(root: StatusloomNode, variantId: string): StatusloomNode {
+    const steps = parseNodeId(variantId);
+    const last = steps?.[steps.length - 1];
+    if (!last || last.t !== "variant") {
+        return root;
+    }
+    const responsiveId = parentIdOf(variantId);
+    const variant = getNode(root, variantId);
+    if (responsiveId === null || !variant || variant.kind !== "variant") {
+        return root;
+    }
+    const copy: VariantNode = { ...structuredClone(variant), id: "" };
+    return insertVariant(root, responsiveId, last.v + 1, copy);
 }
 
 // Removes `variantId`, keeping at least one variant (validation requires

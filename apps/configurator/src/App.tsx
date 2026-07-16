@@ -42,7 +42,10 @@ import {
     deleteLayout,
     deleteLine,
     deleteVariant,
+    duplicateChild,
     duplicateLayout,
+    duplicateLineNode,
+    duplicateVariant,
     getNode,
     insertChild,
     lineIndexOfContainerId,
@@ -129,6 +132,10 @@ type ViewMode = "visual" | "split" | "dsl";
 interface PreviewState {
     lines: PreviewLine[] | null;
     fallback: PreviewResponse["fallback"] | null;
+    // Responsive AST id -> the variant index the preview response selected
+    // at the current width (from the `allVariants` request's
+    // `selectedVariants`). Null alongside `lines: null` or on error.
+    selectedVariants: Record<string, number> | null;
     error: string | null;
     loading: boolean;
 }
@@ -183,15 +190,6 @@ function expandPaletteKey(
     }
     return null;
 }
-
-// Pointer-following collision detection: prefer the droppable actually under
-// the cursor so palette chips (whose dragged-overlay rect is offset from the
-// pointer) land where the user points. Falls back to closest-corners for
-// gaps — row spacing, padding — where the pointer sits over no droppable.
-const collisionDetection: CollisionDetection = (args) => {
-    const hits = pointerWithin(args);
-    return hits.length > 0 ? hits : closestCorners(args);
-};
 
 export function App() {
     const token = useMemo(() => readToken(window.location.hash), []);
@@ -255,6 +253,7 @@ function Configurator({ token }: { token: string }) {
     const [preview, setPreview] = useState<PreviewState>({
         lines: null,
         fallback: null,
+        selectedVariants: null,
         error: null,
         loading: false,
     });
@@ -294,6 +293,30 @@ function Configurator({ token }: { token: string }) {
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     );
+
+    // Snapshot of the current drag's droppable rects (viewport px), refreshed
+    // on every collision pass. The geometry-based drop resolver reads it via
+    // getRects; collisionDetection is the only place with droppableRects.
+    const dragRectsRef = useRef<Map<string, { left: number; width: number }> | null>(null);
+
+    // Pointer-following collision detection: prefer the droppable actually
+    // under the cursor so palette chips (whose dragged-overlay rect is offset
+    // from the pointer) land where the user points. Falls back to
+    // closest-corners for gaps — row spacing, padding — where the pointer sits
+    // over no droppable. As a side effect it snapshots every droppable's
+    // rect (left/width) into dragRectsRef for the nearest-gap resolver; the
+    // returned collision set is unchanged from the previous behavior.
+    const collisionDetection = useCallback<CollisionDetection>((args) => {
+        const snapshot = new Map<string, { left: number; width: number }>();
+        for (const [id, rect] of args.droppableRects) {
+            if (rect) {
+                snapshot.set(String(id), { left: rect.left, width: rect.width });
+            }
+        }
+        dragRectsRef.current = snapshot;
+        const hits = pointerWithin(args);
+        return hits.length > 0 ? hits : closestCorners(args);
+    }, []);
 
     const present = history?.present ?? null;
 
@@ -397,7 +420,13 @@ function Configurator({ token }: { token: string }) {
                 activeLine: 0,
                 editLayoutIndex: 0,
                 previewSource: defaultPreviewSourceFor(tool),
-                preview: { lines: null, fallback: null, error: null, loading: false },
+                preview: {
+                    lines: null,
+                    fallback: null,
+                    selectedVariants: null,
+                    error: null,
+                    loading: false,
+                },
                 draftVersion: draft ? draft.version : null,
                 draftContent: draft ? draft.source : null,
                 draftEnabled: draft !== null,
@@ -774,6 +803,17 @@ function Configurator({ token }: { token: string }) {
         applyAstEdit((root) => removeNode(root, sel), { select: null });
     }, [applyAstEdit]);
 
+    const duplicateSelected = useCallback(() => {
+        const sel = selectionRef.current;
+        const root = astRef.current;
+        // Only chips (line/span children) are duplicable from the panel.
+        if (!sel || !root || !parentChildId(sel)) {
+            return;
+        }
+        const result = duplicateChild(root, sel);
+        void applyAstEdit(() => result.next, { select: result.select });
+    }, [applyAstEdit]);
+
     const toggleLang = useCallback(() => {
         setLang((cur) => {
             const next: Lang = cur === "en" ? "ja" : "en";
@@ -858,6 +898,7 @@ function Configurator({ token }: { token: string }) {
                     .filter((c): c is ResponsiveNode => c.kind === "responsive")
                     .map((r) => ({ responsiveId: r.id, variantIds: r.variants.map((v) => v.id) }));
             }, []),
+            getRects: useCallback(() => dragRectsRef.current, []),
             makePaletteNode: useCallback(
                 (key: string) => expandPaletteKey(key, fieldsRef.current),
                 [],
@@ -904,6 +945,7 @@ function Configurator({ token }: { token: string }) {
                               sample: "full",
                               sessionId: previewSource.id,
                               layoutIndex,
+                              allVariants: true,
                           }
                         : {
                               tool: activeTool,
@@ -911,12 +953,14 @@ function Configurator({ token }: { token: string }) {
                               width,
                               sample: previewSource.sample,
                               layoutIndex,
+                              allVariants: true,
                           },
                 );
                 if (!cancelled) {
                     setPreview({
                         lines: res.lines,
                         fallback: res.fallback ?? null,
+                        selectedVariants: res.selectedVariants ?? null,
                         error: null,
                         loading: false,
                     });
@@ -939,6 +983,7 @@ function Configurator({ token }: { token: string }) {
                 setPreview({
                     lines: null,
                     fallback: null,
+                    selectedVariants: null,
                     error: (err as Error).message,
                     loading: false,
                 });
@@ -1409,6 +1454,7 @@ function Configurator({ token }: { token: string }) {
                             <Canvas
                                 children={curChildren}
                                 previewLines={preview.lines}
+                                selectedVariants={preview.selectedVariants}
                                 fallback={preview.fallback}
                                 selection={selection}
                                 activeLine={activeLine}
@@ -1457,6 +1503,9 @@ function Configurator({ token }: { token: string }) {
                                         );
                                     }
                                 }}
+                                onDuplicateLine={(lineId) => {
+                                    applyAstEdit((root) => duplicateLineNode(root, lineId));
+                                }}
                                 onAddLineToVariant={(variantId) => {
                                     applyAstEdit((root) => addLine(root, variantId));
                                 }}
@@ -1467,6 +1516,9 @@ function Configurator({ token }: { token: string }) {
                                     applyAstEdit((root) => deleteVariant(root, variantId), {
                                         select: null,
                                     });
+                                }}
+                                onDuplicateVariant={(variantId) => {
+                                    applyAstEdit((root) => duplicateVariant(root, variantId));
                                 }}
                                 onWidth={setWidth}
                                 onPreviewSourceChange={setPreviewSource}
@@ -1499,6 +1551,7 @@ function Configurator({ token }: { token: string }) {
                                     }
                                     applyAstEdit((root) => updateAttrs(root, sel, patch));
                                 }}
+                                onDuplicate={duplicateSelected}
                                 onRemove={removeSelected}
                             />
                         ) : null}

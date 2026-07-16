@@ -64,6 +64,39 @@ func RenderDocument(snap schema.StatusSnapshot, doc *dsl.Document, opts Options)
 	return out
 }
 
+// RenderDocumentPreview renders EVERY variant of each <responsive> (each line
+// at opts.Width, as if selected) for the config editor, and reports which
+// variant index each responsive would actually select at that width. Unlike
+// RenderDocument — which emits only the selected variant's lines for the real
+// statusline — this lets the UI show every candidate's real output with the
+// active one marked. NEVER used for the CLI's rendered output.
+func RenderDocumentPreview(snap schema.StatusSnapshot, doc *dsl.Document, opts Options) ([]DocLine, map[*dsl.ResponsiveNode]int) {
+	if doc == nil || doc.Root == nil {
+		return nil, nil
+	}
+	layout := activeDocLayout(doc.Root)
+	if layout == nil {
+		return nil, nil
+	}
+	e := newDocEval(snap, doc, opts)
+	out := make([]DocLine, 0, len(layout.Children))
+	selected := make(map[*dsl.ResponsiveNode]int)
+	for _, ch := range layout.Children {
+		switch c := ch.(type) {
+		case *dsl.LineNode:
+			out = append(out, e.renderLineDoc(c))
+		case *dsl.ResponsiveNode:
+			selected[c] = e.selectedVariantIndex(c)
+			for _, vr := range c.Variants {
+				for _, ln := range vr.Lines {
+					out = append(out, e.renderLineDoc(ln))
+				}
+			}
+		}
+	}
+	return out, selected
+}
+
 // selectVariant chooses a <responsive> container's rendering variant by
 // automatic first-fit (markup.md "responsive"): the first variant all of whose
 // lines fit the terminal width. When the width is unknown (opts.Width <= 0) the
@@ -75,15 +108,27 @@ func (e *docEval) selectVariant(r *dsl.ResponsiveNode) []*dsl.LineNode {
 	if len(r.Variants) == 0 {
 		return nil
 	}
-	if e.opts.Width <= 0 {
-		return r.Variants[0].Lines
+	return r.Variants[e.selectedVariantIndex(r)].Lines
+}
+
+// selectedVariantIndex computes the index selectVariant would choose,
+// without indexing r.Variants itself — this is the shared decision both
+// RenderDocument (selectVariant) and RenderDocumentPreview (which needs the
+// index even though it renders every variant's lines) rely on. Callers with
+// an empty r.Variants must guard themselves; this returns 0 in that case.
+func (e *docEval) selectedVariantIndex(r *dsl.ResponsiveNode) int {
+	if len(r.Variants) == 0 {
+		return 0
 	}
-	for _, vr := range r.Variants {
+	if e.opts.Width <= 0 {
+		return 0
+	}
+	for i, vr := range r.Variants {
 		if e.variantFits(vr) {
-			return vr.Lines
+			return i
 		}
 	}
-	return r.Variants[len(r.Variants)-1].Lines
+	return len(r.Variants) - 1
 }
 
 // variantFits reports whether every line of a variant fits the terminal width,

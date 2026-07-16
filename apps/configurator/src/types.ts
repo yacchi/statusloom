@@ -247,6 +247,13 @@ export interface PreviewRequest {
     // Index of the layout being edited (clamped); the backend renders this
     // layout rather than the document's active one.
     layoutIndex?: number;
+    // When true, every <responsive>'s variant is rendered (each with its
+    // real values, as if selected) instead of only the width-selected one,
+    // and the response's selectedVariants map identifies the active index
+    // per responsive. The canvas needs this so every variant card shows
+    // real output rather than falling back to placeholder widget names for
+    // the non-selected variants.
+    allVariants?: boolean;
 }
 
 export interface PreviewSegment {
@@ -277,6 +284,11 @@ export interface PreviewResponse {
         ansi: string;
         active: boolean;
     };
+    // Present (possibly {}) when the request had `allVariants: true`: maps
+    // each <responsive>'s AST node ID ("L{i}.{p}") to the variant index that
+    // `width` would actually select. Absent when `allVariants` was omitted
+    // or false.
+    selectedVariants?: Record<string, number>;
 }
 
 // GET /api/dsl/fields entry: the palette catalog, from the Go DSL registry.

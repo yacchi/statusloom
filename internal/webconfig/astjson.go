@@ -76,6 +76,25 @@ func buildAST(doc *dsl.Document) (map[string]any, map[dsl.Node]string) {
 	return b.statusloom(doc.Root), b.ids
 }
 
+// responsiveIDs maps every <responsive> in doc to its AST node ID
+// ("L{i}.{p}", DSL_API.md "Node IDs"). A responsive can only occur as a
+// direct child of a <layout> (never nested in mixed content), so this walks
+// layouts.children the same way astBuilder.layout computes childID, without
+// needing a full buildAST pass. Used by handlePreviewDSL's allVariants mode
+// to turn RenderDocumentPreview's map[*dsl.ResponsiveNode]int selection into
+// the id-keyed response the client expects.
+func responsiveIDs(root *dsl.StatusloomNode) map[*dsl.ResponsiveNode]string {
+	out := map[*dsl.ResponsiveNode]string{}
+	for i, l := range root.Layouts {
+		for p, ch := range l.Children {
+			if r, ok := ch.(*dsl.ResponsiveNode); ok {
+				out[r] = fmt.Sprintf("L%d.%d", i, p)
+			}
+		}
+	}
+	return out
+}
+
 func (b *astBuilder) statusloom(n *dsl.StatusloomNode) map[string]any {
 	m := map[string]any{"id": "root", "kind": "statusloom", "range": rangeJSON(n.Meta.SourceRange)}
 	if n.Version != "" {
@@ -165,7 +184,12 @@ func (b *astBuilder) layout(l *dsl.LayoutNode, i int) map[string]any {
 }
 
 // responsive emits a <responsive> container node: kind "responsive" with a
-// "variants" array (and optional interleaved "comments").
+// "variants" array (and optional interleaved "comments"). Unlike b.node,
+// this cannot register itself in b.ids (map[dsl.Node]string): *ResponsiveNode
+// does not implement dsl.Node (only line/span mixed-content children do —
+// see markup.md's node kinds), since a responsive can only ever be a direct
+// layout child, never mixed-content. responsiveIDs below recovers the same
+// id for handlePreviewDSL's allVariants mode.
 func (b *astBuilder) responsive(r *dsl.ResponsiveNode, id string) map[string]any {
 	m := map[string]any{"id": id, "kind": "responsive", "range": rangeJSON(r.Meta.SourceRange)}
 	variants := make([]any, 0, len(r.Variants))

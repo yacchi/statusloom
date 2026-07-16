@@ -1,6 +1,11 @@
 package render
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/yacchi/statusloom/internal/dsl"
+)
 
 // respFitDoc has one <responsive> with three single-line variants of natural
 // widths 10 / 5 / 1 (fixed <text> content), so first-fit selection is exact.
@@ -112,5 +117,66 @@ func TestRenderResponsive_FixedLineOrdering(t *testing.T) {
 </statusloom>`
 	if got, want := renderDocStr(t, src, fullSnapshot(), Options{Width: 2, Now: fixedNow}), "HEAD\nN"; got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestRenderDocumentPreview_AllVariantsWithSelection: unlike RenderDocument
+// (which emits only the width-selected variant's lines), RenderDocumentPreview
+// renders every variant's lines and separately reports which index the same
+// width would select — the config editor renders every candidate with the
+// real one marked, instead of falling back to ghost/placeholder chips for the
+// non-selected variants.
+func TestRenderDocumentPreview_AllVariantsWithSelection(t *testing.T) {
+	src := `<statusloom version="1" tool="claude-code" color-level="none">
+  <layout name="a" active="true">
+    <responsive>
+      <variant><line><text>AAAAAAAAAA</text></line></variant>
+      <variant><line><text>BBBBB</text></line></variant>
+      <variant><line><text>C</text></line></variant>
+    </responsive>
+  </layout>
+</statusloom>`
+	doc := parseDoc(t, src)
+	opts := Options{Width: 7, Now: fixedNow}
+	lines, selected := RenderDocumentPreview(fullSnapshot(), doc, opts)
+
+	// (a) every variant's lines are present, not just the selected one.
+	var got []string
+	for _, ln := range lines {
+		var b strings.Builder
+		for _, seg := range ln.Segments {
+			b.WriteString(seg.Text)
+		}
+		got = append(got, b.String())
+	}
+	want := []string{"AAAAAAAAAA", "BBBBB", "C"}
+	if len(got) != len(want) {
+		t.Fatalf("lines = %v, want %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("line %d = %q, want %q", i, got[i], w)
+		}
+	}
+
+	// (b) the selection map reports the same index RenderDocument (via
+	// selectVariant/selectedVariantIndex) would actually pick at width=7:
+	// variant 0 (10 chars) overflows, variant 1 (5 chars) fits -> index 1.
+	if len(selected) != 1 {
+		t.Fatalf("selected = %v, want exactly one responsive entry", selected)
+	}
+	responsive := doc.Root.Layouts[0].Children[0].(*dsl.ResponsiveNode)
+	idx, ok := selected[responsive]
+	if !ok {
+		t.Fatalf("selected map missing the responsive node: %v", selected)
+	}
+	if idx != 1 {
+		t.Errorf("selected index = %d, want 1", idx)
+	}
+
+	// Cross-check against RenderDocument's own choice for the same width.
+	renderWant := renderDocStr(t, src, fullSnapshot(), opts)
+	if renderWant != want[idx] {
+		t.Fatalf("sanity: RenderDocument picked %q, preview map points at %q", renderWant, want[idx])
 	}
 }

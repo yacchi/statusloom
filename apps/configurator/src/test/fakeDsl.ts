@@ -380,15 +380,23 @@ export function selectVariant(
     return responsive.variants.length - 1;
 }
 
+// fakePreview mirrors handlePreviewDSL (internal/webconfig/dsl.go): by
+// default a <responsive> contributes only its width-selected variant's
+// lines (matching the real statusline); with allVariants every variant's
+// lines are rendered (each with its real sample values, as if selected) and
+// selectedVariants reports the index each responsive would actually pick —
+// see DSL_API.md "allVariants".
 export function fakePreview(
     source: string,
     sample: string,
     layoutIndex: number,
     width: number,
+    allVariants = false,
 ): {
     lines: PreviewLine[];
     diagnostics: Diagnostic[];
     fallback?: { ansi: string; active: boolean };
+    selectedVariants?: Record<string, number>;
 } {
     const { ast, diagnostics } = fakeParse(source);
     if (!ast) {
@@ -398,14 +406,19 @@ export function fakePreview(
     const li = Math.max(0, Math.min(layoutIndex, ast.layouts.length - 1));
     const layout = ast.layouts[li];
     const lines: PreviewLine[] = [];
+    const selectedVariants: Record<string, number> = {};
     for (const child of layout?.children ?? []) {
         if (child.kind === "line") {
             lines.push(renderLine(child, data));
             continue;
         }
         const v = selectVariant(child, data, width);
-        for (const line of child.variants[v]?.lines ?? []) {
-            lines.push(renderLine(line, data));
+        selectedVariants[child.id] = v;
+        const variants = allVariants ? child.variants : [child.variants[v]];
+        for (const variant of variants) {
+            for (const line of variant?.lines ?? []) {
+                lines.push(renderLine(line, data));
+            }
         }
     }
     const allOmitted = lines.every((l) => l.omitted);
@@ -413,6 +426,7 @@ export function fakePreview(
         lines,
         diagnostics,
         fallback: { ansi: allOmitted ? "Opus 4.8 | v1.0" : "", active: allOmitted },
+        ...(allVariants ? { selectedVariants } : {}),
     };
 }
 
@@ -593,6 +607,7 @@ export function installFakeDslServer(initial: StatusloomNode): FakeServer {
                         body.sample ?? "full",
                         body.layoutIndex ?? 0,
                         body.width ?? 120,
+                        body.allVariants ?? false,
                     ),
                 );
             }

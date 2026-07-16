@@ -37,9 +37,13 @@ A `layout` node's `children` is an ordered mix of `line` and `responsive`
 nodes (the layout's rendered rows and its width-adaptive containers). A
 `responsive` node has a `variants` array (widest first); each `variant` has a
 `lines` array. The renderer picks the first variant all of whose lines fit the
-terminal width (unknown width → first/widest variant, none fit → last variant);
-a `/api/dsl/preview` therefore emits segments only for the width-selected
-variant's lines.
+terminal width (unknown width → first/widest variant, none fit → last variant).
+By default `/api/dsl/preview` emits segments only for this width-selected
+variant's lines, matching what the real statusline renders. With
+`allVariants: true` it instead emits every variant's lines (each rendered as
+if it were the selected one) and reports which index was actually selected
+per responsive in the response's `selectedVariants` map — see
+`POST /api/dsl/preview` below.
 
 - Attribute keys are the DSL attribute names verbatim (`color`, `bold`,
   `padding`, `padding-left`, `prefix`, `role`, `name`, `format`, `precision`,
@@ -164,8 +168,8 @@ Saves `source` to the shared draft **unconditionally** (last-writer-wins). The
 draft is a text-sharing channel that tolerates in-progress, invalid input;
 diagnostics are returned for the editor but never block the write.
 
-### `POST /api/dsl/preview` `{ "tool", "source", "width", "sample", "sessionId"?, "layoutIndex"? }`
-→ `200 { "lines": [...], "diagnostics": [...], "fallback": { "ansi", "active" } }`
+### `POST /api/dsl/preview` `{ "tool", "source", "width", "sample", "sessionId"?, "layoutIndex"?, "allVariants"? }`
+→ `200 { "lines": [...], "diagnostics": [...], "fallback": { "ansi", "active" }, "selectedVariants"? }`
 
 ```jsonc
 "lines": [
@@ -186,6 +190,18 @@ diagnostics are returned for the editor but never block the write.
   line). Span prefix/suffix/padding segments carry the span's node ID.
 - `layoutIndex` (default 0, clamped) previews a layout other than the
   document's active one.
+- `allVariants` (default `false`) changes how `<responsive>` containers are
+  previewed. By default `lines` carries only the width-selected variant's
+  lines — what the real statusline renders — so a non-selected variant's
+  chips have no preview data. With `allVariants: true`, `lines` instead
+  carries **every** variant's lines, each rendered with its real values at
+  `width` as if it were selected, and the response additionally includes
+  `selectedVariants`: a map from each `<responsive>`'s AST node ID
+  (`"L{i}.{p}"`) to the variant index that width would actually select
+  (e.g. `{ "L0.1": 0 }`). This is what the config editor's canvas uses so
+  every variant card shows real values with the active one marked, instead
+  of falling back to placeholder text for the others; the field is present
+  (possibly `{}`) whenever `allVariants` was requested, and absent otherwise.
 - `sessionId` renders against a real cached session (see `GET /api/sessions`);
   otherwise `sample` selects a synthetic snapshot. Sample names are
   independent of `tool` — the same synthetic snapshot names are accepted no

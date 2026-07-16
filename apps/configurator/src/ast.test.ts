@@ -11,7 +11,10 @@ import {
     deleteLayout,
     deleteLine,
     deleteVariant,
+    duplicateChild,
     duplicateLayout,
+    duplicateLineNode,
+    duplicateVariant,
     getNode,
     insertChild,
     insertVariant,
@@ -435,6 +438,98 @@ describe("responsive / variant operations", () => {
         const root = responsiveFixture();
         const removed = deleteVariant(root, "L0.1.v0");
         expect(isDirty(removed, "L0.1")).toBe(true);
+    });
+});
+
+// duplicateChild/duplicateLineNode/duplicateVariant mirror duplicateLayout:
+// an id-reset structuredClone spliced in immediately after the source. Their
+// truth is the serialize -> parse round trip (App.tsx), so these unit tests
+// only assert structure/order/content, not the copy's post-round-trip id.
+describe("duplicate operations", () => {
+    it("duplicateChild inserts a copy of a top-level chip right after the source", () => {
+        const root = fixture();
+        const { next, select } = duplicateChild(root, "L0.0.0");
+        expect(childNames(next, 0, 0)).toEqual(["model", "model", "span", "|"]);
+        expect(select).toBe(predictChildId("L0.0", 1));
+        const src = getNode(root, "L0.0.0") as FieldNode;
+        const copy = getNode(next, "L0.0.1") as FieldNode;
+        expect(copy.name).toBe(src.name);
+        expect(copy.id).toBe("");
+    });
+
+    it("duplicateChild duplicates a span (with its children) in place", () => {
+        const root = fixture();
+        const { next, select } = duplicateChild(root, "L0.0.1");
+        const line = next.layouts[0].children[0] as LineNode;
+        expect(line.children.map((c) => c.kind)).toEqual(["field", "span", "span", "text"]);
+        expect(select).toBe(predictChildId("L0.0", 2));
+        const copy = line.children[2] as SpanNode;
+        expect(copy.children.map((c) => (c as FieldNode).name)).toEqual(["thinking-effort"]);
+        expect(copy.id).toBe("");
+    });
+
+    it("duplicateChild is a no-op for a non-child id", () => {
+        const root = fixture();
+        expect(duplicateChild(root, "L0.0")).toEqual({ next: root, select: null });
+        expect(duplicateChild(root, "root")).toEqual({ next: root, select: null });
+    });
+
+    it("duplicateLineNode duplicates a top-level line right after the source", () => {
+        const root = fixture();
+        const next = duplicateLineNode(root, "L0.0");
+        expect(next.layouts[0].children).toHaveLength(3);
+        expect(childNames(next, 0, 0)).toEqual(["model", "span", "|"]);
+        expect(childNames(next, 0, 1)).toEqual(["model", "span", "|"]);
+        expect(childNames(next, 0, 2)).toEqual(["git-branch"]);
+        const copy = next.layouts[0].children[1] as LineNode;
+        expect(copy.id).toBe("");
+        expect(copy).not.toBe(next.layouts[0].children[0]);
+    });
+
+    it("duplicateLineNode duplicates a variant-nested line right after the source", () => {
+        const root = responsiveFixture();
+        const next = duplicateLineNode(root, "L0.1.v0.0");
+        const responsive = next.layouts[0].children[1] as ResponsiveNode;
+        expect(responsive.variants[0].lines).toHaveLength(2);
+        expect(responsive.variants[1].lines).toHaveLength(1); // untouched sibling variant
+        const [first, second] = responsive.variants[0].lines;
+        expect((first.children[0] as FieldNode).name).toBe("git-branch");
+        expect((second.children[0] as FieldNode).name).toBe("git-branch");
+        expect(second.id).toBe("");
+        expect(second).not.toBe(first);
+    });
+
+    it("duplicateLineNode is a no-op for a responsive (not a plain line)", () => {
+        const root = responsiveFixture();
+        expect(duplicateLineNode(root, "L0.1")).toBe(root);
+    });
+
+    it("duplicateVariant inserts a copy right after the source variant", () => {
+        const root = responsiveFixture();
+        const next = duplicateVariant(root, "L0.1.v0");
+        const responsive = next.layouts[0].children[1] as ResponsiveNode;
+        expect(responsive.variants).toHaveLength(3);
+        expect((responsive.variants[0].lines[0].children[0] as FieldNode).name).toBe(
+            "git-branch",
+        );
+        expect((responsive.variants[1].lines[0].children[0] as FieldNode).name).toBe(
+            "git-branch",
+        );
+        expect((responsive.variants[2].lines[0].children[0] as FieldNode).name).toBe(
+            "session-cost",
+        );
+        expect(responsive.variants[1].id).toBe("");
+        expect(responsive.variants[1]).not.toBe(responsive.variants[0]);
+        // Regression guard: insertVariant must mark the <responsive> dirty so
+        // the serializer reconstructs its variant list. Without the flag, the
+        // duplicated variant (which retains the source clone's range) is
+        // dropped on the serialize -> parse round trip.
+        expect(getNode(next, "L0.1")?.dirty).toBe(true);
+    });
+
+    it("duplicateVariant is a no-op for a non-variant id", () => {
+        const root = responsiveFixture();
+        expect(duplicateVariant(root, "L0.1")).toBe(root);
     });
 });
 

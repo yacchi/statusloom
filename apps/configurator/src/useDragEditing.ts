@@ -91,6 +91,15 @@ interface Rect {
     width: number;
 }
 
+// The vertical counterpart of Rect, used ONLY by variant-card reordering,
+// which is a Y-axis drag (cards stack vertically and never move horizontally).
+// Kept separate so the chip resolvers (computeDropTarget / resolveGeometricTarget
+// / getRects) stay purely horizontal and are not forced to carry top/height.
+interface VRect {
+    top: number;
+    height: number;
+}
+
 // Flatten the span containers (nested included, in document order) out of a
 // mixed-content child list. Used by App.tsx to build the container list.
 export function spanContainersOf(children: readonly LineChild[]): ContainerView[] {
@@ -149,6 +158,195 @@ export function computeDropTarget(
     return raw;
 }
 
+// Resolve the LINE ("row") container that owns `overId`: a row droppable id
+// maps to its line directly; a chip or span id climbs its owners (spans nest,
+// so a span-nested chip walks span -> ... -> line, because a span id appears
+// in its parent's childIds). Returns null when the id addresses no line in
+// `containers` (the caller treats that as "fall back to legacy").
+function lineContainerOf(
+    containers: readonly ContainerView[],
+    overId: string,
+): ContainerView | null {
+    if (overId.startsWith(LINE_ID_PREFIX)) {
+        const n = Number(overId.slice(LINE_ID_PREFIX.length));
+        return containers.find((c) => c.kind === "line" && c.lineIndex === n) ?? null;
+    }
+    if (overId.startsWith(VARIANT_LINE_ID_PREFIX)) {
+        const lineId = overId.slice(VARIANT_LINE_ID_PREFIX.length);
+        return containers.find((c) => c.kind === "line" && c.id === lineId) ?? null;
+    }
+    // overId is a chip or span id: climb owners until a line is reached.
+    let cur = overId;
+    // Bound the climb by the container count so a malformed tree can't loop.
+    for (let guard = 0; guard <= containers.length; guard += 1) {
+        const owner = containers.find((c) => c.childIds.includes(cur));
+        if (!owner) {
+            return null;
+        }
+        if (owner.kind === "line") {
+            return owner;
+        }
+        cur = owner.id;
+    }
+    return null;
+}
+
+function rectContains(r: Rect, x: number): boolean {
+    return x >= r.left && x <= r.left + r.width;
+}
+
+// The insertion index within `childIds` nearest `pointerX`: the count of
+// children whose horizontal center sits left of the pointer, yielding 0
+// (before all) .. n (after all) with no snap-to-end for an interior gap.
+// Children render left-to-right in document order, so counting centers is a
+// stable ordering. An empty container is index 0. Returns null when any child
+// rect is missing (incomplete geometry) so the caller can fall back to the
+// legacy resolver rather than guess a caret.
+function nearestGap(
+    childIds: readonly string[],
+    rects: ReadonlyMap<string, Rect>,
+    pointerX: number,
+): number | null {
+    let index = 0;
+    for (const id of childIds) {
+        const r = rects.get(id);
+        if (!r) {
+            return null;
+        }
+        if (r.left + r.width / 2 < pointerX) {
+            index += 1;
+        }
+    }
+    return index;
+}
+
+// Re-validate a candidate target with the SAME rules as computeDropTarget:
+// <flex> is line-only (never a span), and a node never drops into itself or
+// its own subtree. Returns the target unchanged when valid, else null.
+function validateGeometric(
+    containers: readonly ContainerView[],
+    target: DropTarget,
+    payload: ChipDragPayload,
+    kind: string,
+): DropTarget | null {
+    const container = containers.find((c) => c.id === target.containerId);
+    if (container && kind === "flex" && container.kind === "span") {
+        return null;
+    }
+    if (
+        payload.kind === "node" &&
+        (target.containerId === payload.id ||
+            target.containerId.startsWith(payload.id + "."))
+    ) {
+        return null;
+    }
+    return target;
+}
+
+// Pure, geometry-based nearest-gap resolver. Unlike computeDropTarget (which
+// keys off the single hovered droppable and its left/right half), this looks
+// at EVERY chip's measured rectangle in the hovered row at once, so a chip can
+// land in any gap between chips — including BESIDE a span — instead of always
+// snapping to the row's end or INTO a hovered span.
+//
+// Return semantics let the caller stay backwards-compatible:
+//   DropTarget -> resolved caret;
+//   null       -> resolved but INVALID for this payload (paint nothing);
+//   undefined  -> geometry unavailable/incomplete -> fall back to legacy.
+//
+// `rects` are viewport/client coords (dnd-kit droppableRects), consistent with
+// `pointerX` (activator clientX + delta). Reading them is pure: droppables are
+// stationary and the AST is frozen for the whole drag (see the #185 note).
+export function resolveGeometricTarget(
+    containers: readonly ContainerView[],
+    overId: string,
+    payload: ChipDragPayload,
+    pointerX: number,
+    rects: ReadonlyMap<string, { left: number; width: number }>,
+): DropTarget | null | undefined {
+    const line = lineContainerOf(containers, overId);
+    if (!line) {
+        return undefined; // addresses no line -> legacy fallback
+    }
+    const kind = draggedNodeKind(payload);
+    // Find the DEEPEST span within the row whose rect contains the pointer and
+    // that is a legal drop target for this payload. flex is line-only, so it
+    // considers no spans at all; a node ignores its own subtree so it can be
+    // dragged out of the span it lives in. "Deepest" = the id with the most
+    // dot-separated segments (a nested span's id startsWith its outer span's).
+    let span: ContainerView | null = null;
+    if (kind !== "flex") {
+        const prefix = line.id + ".";
+        let bestDepth = -1;
+        for (const c of containers) {
+            if (c.kind !== "span" || !c.id.startsWith(prefix)) {
+                continue;
+            }
+            const r = rects.get(c.id);
+            if (!r || !rectContains(r, pointerX)) {
+                continue;
+            }
+            if (
+                payload.kind === "node" &&
+                (c.id === payload.id || c.id.startsWith(payload.id + "."))
+            ) {
+                continue; // never resolve into the dragged node's own subtree
+            }
+            const depth = c.id.split(".").length;
+            if (depth > bestDepth) {
+                bestDepth = depth;
+                span = c;
+            }
+        }
+    }
+
+    let target: DropTarget;
+    if (span) {
+        const S = span;
+        const r = rects.get(S.id);
+        if (!r) {
+            return undefined;
+        }
+        // A margin on each edge of the span lets the user drop BESIDE it
+        // (before/after within the parent line) rather than always into it.
+        const margin = Math.min(14, r.width * 0.3);
+        if (pointerX <= r.left + margin || pointerX >= r.left + r.width - margin) {
+            const parent = containers.find((c) => c.childIds.includes(S.id));
+            if (!parent) {
+                return undefined;
+            }
+            const idx = parent.childIds.indexOf(S.id);
+            const after = pointerX >= r.left + r.width - margin;
+            target = { containerId: parent.id, index: after ? idx + 1 : idx };
+        } else {
+            const gap = nearestGap(S.childIds, rects, pointerX);
+            if (gap === null) {
+                return undefined;
+            }
+            target = { containerId: S.id, index: gap };
+        }
+    } else {
+        const gap = nearestGap(line.childIds, rects, pointerX);
+        if (gap === null) {
+            return undefined;
+        }
+        target = { containerId: line.id, index: gap };
+    }
+
+    const validated = validateGeometric(containers, target, payload, kind);
+    if (validated) {
+        return validated;
+    }
+    // Retry once at the line level (valid for flex and any non-self node), then
+    // give up. This is the graceful degradation for e.g. dropping onto a span
+    // that turned out to be the dragged node's own subtree.
+    const fallbackGap = nearestGap(line.childIds, rects, pointerX);
+    if (fallbackGap === null) {
+        return undefined;
+    }
+    return validateGeometric(containers, { containerId: line.id, index: fallbackGap }, payload, kind);
+}
+
 function resolveRawTarget(
     containers: readonly ContainerView[],
     overId: string,
@@ -188,23 +386,24 @@ function resolveRawTarget(
 
 // Pure: resolve a droppable/sortable id to a variant-reorder caret within
 // `lists`, or null when it addresses no variant list. Mirrors the chip
-// caret math (before/after the hovered card by pointer position) but over a
-// flat variant-id list rather than a container tree — a <variant> never
-// nests into anything else, so there is no span-like "append into" case.
+// caret math but along the Y axis (before/after the hovered card by pointer
+// height) — variant cards stack VERTICALLY and are only ever reordered up or
+// down — over a flat variant-id list rather than a container tree; a <variant>
+// never nests into anything else, so there is no span-like "append into" case.
 function resolveVariantDropTarget(
     lists: readonly VariantListView[],
     overId: string,
-    pointerX: number | null,
-    overRect: Rect | null,
+    pointerY: number | null,
+    vRect: VRect | null,
 ): DropTarget | null {
     for (const list of lists) {
         const containerId = VARIANT_CONTAINER_PREFIX + list.responsiveId;
         const j = list.variantIds.indexOf(overId);
         if (j >= 0) {
             const after =
-                pointerX !== null &&
-                overRect !== null &&
-                pointerX > overRect.left + overRect.width / 2;
+                pointerY !== null &&
+                vRect !== null &&
+                pointerY > vRect.top + vRect.height / 2;
             return { containerId, index: after ? j + 1 : j };
         }
     }
@@ -235,6 +434,27 @@ function overRectOf(e: DragOverEvent | DragEndEvent): Rect | null {
     return r ? { left: r.left, width: r.width } : null;
 }
 
+// Y-axis counterparts of the pointer/rect helpers above, used only for
+// variant-card reordering (a vertical drag). Kept separate from the X helpers
+// so chip/span drops remain horizontal.
+function activeCenterYOf(e: DragOverEvent | DragEndEvent): number | null {
+    const r = e.active.rect.current.translated;
+    return r ? r.top + r.height / 2 : null;
+}
+
+function pointerYOf(e: DragOverEvent | DragEndEvent): number | null {
+    const clientY = (e.activatorEvent as { clientY?: unknown } | null)?.clientY;
+    if (typeof clientY === "number") {
+        return clientY + (e.delta?.y ?? 0);
+    }
+    return activeCenterYOf(e);
+}
+
+function overVRectOf(e: DragOverEvent | DragEndEvent): VRect | null {
+    const r = e.over?.rect;
+    return r ? { top: r.top, height: r.height } : null;
+}
+
 function sameTarget(a: DropTarget | null, b: DropTarget | null): boolean {
     if (a === null || b === null) {
         return a === b;
@@ -261,6 +481,12 @@ interface Args {
     // variant-reorder drags; null while nothing is loaded / the DSL is
     // invalid. Omit when the caller has no responsive containers to manage.
     getVariantLists?: () => VariantListView[] | null;
+    // Snapshot of every droppable's measured rect (viewport px), captured by
+    // the collision detector during a drag, or null when unavailable (e.g. the
+    // hook's own tests, or before the first collision pass). Drives the
+    // geometry-based nearest-gap resolver; when absent the legacy hovered-chip
+    // resolver is used, so existing behavior is unchanged.
+    getRects?: () => Map<string, { left: number; width: number }> | null;
     // Build the AST node (and overlay label) for a palette key
     // ("field:<name>" / "preset:<id>"); null cancels the drag.
     makePaletteNode: (key: string) => { node: LineChild; label: string } | null;
@@ -275,6 +501,7 @@ interface Args {
 export function useDragEditing({
     getContainers,
     getVariantLists = () => null,
+    getRects = () => null,
     makePaletteNode,
     labelForNodeId,
     kindForNodeId,
@@ -317,17 +544,37 @@ export function useDragEditing({
     // dispatching to the variant-list resolver or the chip/container
     // resolver depending on what is being dragged.
     const resolveTarget = useCallback(
-        (payload: DragPayload, overId: string, pointerX: number | null, overRect: Rect | null) => {
+        (
+            payload: DragPayload,
+            overId: string,
+            pointerX: number | null,
+            overRect: Rect | null,
+            pointerY: number | null,
+            overVRect: VRect | null,
+        ) => {
             if (payload.kind === "variant") {
+                // Variant cards are a vertical stack: resolve on the Y axis.
                 const lists = getVariantLists();
-                return lists ? resolveVariantDropTarget(lists, overId, pointerX, overRect) : null;
+                return lists ? resolveVariantDropTarget(lists, overId, pointerY, overVRect) : null;
             }
             const containers = getContainers();
-            return containers
-                ? computeDropTarget(containers, overId, payload, pointerX, overRect)
-                : null;
+            if (!containers) {
+                return null;
+            }
+            // Prefer the geometry resolver (nearest-gap over all chips) when
+            // rects and a real pointer are available; it returns undefined to
+            // defer to the legacy hovered-chip resolver when geometry is
+            // incomplete, and null/DropTarget when it resolved on its own.
+            const rects = getRects();
+            if (rects && pointerX !== null) {
+                const geo = resolveGeometricTarget(containers, overId, payload, pointerX, rects);
+                if (geo !== undefined) {
+                    return geo;
+                }
+            }
+            return computeDropTarget(containers, overId, payload, pointerX, overRect);
         },
-        [getContainers, getVariantLists],
+        [getContainers, getRects, getVariantLists],
     );
 
     const onDragOver = useCallback(
@@ -337,7 +584,14 @@ export function useDragEditing({
                 return;
             }
             const next = e.over
-                ? resolveTarget(payload, String(e.over.id), pointerXOf(e), overRectOf(e))
+                ? resolveTarget(
+                      payload,
+                      String(e.over.id),
+                      pointerXOf(e),
+                      overRectOf(e),
+                      pointerYOf(e),
+                      overVRectOf(e),
+                  )
                 : null;
             // Bail out (same object) when unchanged so repeated identical
             // drag-over events cause zero re-renders.
@@ -350,7 +604,14 @@ export function useDragEditing({
         (e: DragEndEvent) => {
             const payload = payloadRef.current;
             if (payload && e.over) {
-                const target = resolveTarget(payload, String(e.over.id), pointerXOf(e), overRectOf(e));
+                const target = resolveTarget(
+                    payload,
+                    String(e.over.id),
+                    pointerXOf(e),
+                    overRectOf(e),
+                    pointerYOf(e),
+                    overVRectOf(e),
+                );
                 if (target) {
                     onDrop(payload, target);
                 }

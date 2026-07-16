@@ -31,12 +31,13 @@ import {
     SortableContext,
     horizontalListSortingStrategy,
     useSortable,
+    verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { parseAnsiLine, type Theme } from "../ansi.ts";
 import { t, useLang } from "../i18n.ts";
 import { nodeLabel } from "../presets.ts";
-import { matchPreview, type PreviewMatch } from "../previewMatch.ts";
+import { effectiveLines, matchPreview, type PreviewMatch } from "../previewMatch.ts";
 import {
     LINE_ID_PREFIX,
     VARIANT_CONTAINER_PREFIX,
@@ -580,6 +581,7 @@ interface CanvasRowProps {
     onSelect: (id: string, topIndex: number) => void;
     onActivateLine: (topIndex: number) => void;
     onDeleteLine: (lineId: string) => void;
+    onDuplicateLine: (lineId: string) => void;
 }
 
 function CanvasRow({
@@ -598,6 +600,7 @@ function CanvasRow({
     onSelect,
     onActivateLine,
     onDeleteLine,
+    onDuplicateLine,
 }: CanvasRowProps) {
     const lang = useLang();
     const { setNodeRef, isOver } = useDroppable({ id: dropId });
@@ -655,6 +658,17 @@ function CanvasRow({
                 <span className="omit-badge">{t(lang, "omittedBadge")}</span>
             ) : null}
             <button
+                className="row-duplicate"
+                title="Duplicate line"
+                disabled={readOnly}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onDuplicateLine(line.id);
+                }}
+            >
+                ⧉
+            </button>
+            <button
                 className="row-delete"
                 title="Delete line"
                 disabled={readOnly || !canDelete}
@@ -690,8 +704,10 @@ interface VariantCardProps {
     onSelect: (id: string, topIndex: number) => void;
     onActivateLine: (topIndex: number) => void;
     onDeleteLine: (lineId: string) => void;
+    onDuplicateLine: (lineId: string) => void;
     onAddLine: () => void;
     onDeleteVariant: () => void;
+    onDuplicate: () => void;
 }
 
 // One <variant> candidate: a draggable, sortable card (reordering variants
@@ -716,8 +732,10 @@ function VariantCard({
     onSelect,
     onActivateLine,
     onDeleteLine,
+    onDuplicateLine,
     onAddLine,
     onDeleteVariant,
+    onDuplicate,
 }: VariantCardProps) {
     const lang = useLang();
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -763,6 +781,15 @@ function VariantCard({
                     ) : null}
                 </span>
                 <button
+                    className="variant-duplicate"
+                    data-testid={`variant-duplicate-${variant.id}`}
+                    title="Duplicate variant"
+                    disabled={readOnly}
+                    onClick={onDuplicate}
+                >
+                    ⧉
+                </button>
+                <button
                     className="variant-delete"
                     data-testid={`variant-delete-${variant.id}`}
                     title="Delete variant"
@@ -791,6 +818,7 @@ function VariantCard({
                         onSelect={onSelect}
                         onActivateLine={onActivateLine}
                         onDeleteLine={onDeleteLine}
+                        onDuplicateLine={onDuplicateLine}
                     />
                 ))}
             </div>
@@ -820,9 +848,11 @@ interface ResponsiveBlockProps {
     onSelect: (id: string, topIndex: number) => void;
     onActivateLine: (topIndex: number) => void;
     onDeleteLine: (lineId: string) => void;
+    onDuplicateLine: (lineId: string) => void;
     onAddLineToVariant: (variantId: string) => void;
     onAddVariant: (responsiveId: string) => void;
     onDeleteVariant: (variantId: string) => void;
+    onDuplicateVariant: (variantId: string) => void;
 }
 
 // A <responsive> row: a horizontal, reorderable track of <variant> cards
@@ -841,9 +871,11 @@ function ResponsiveBlock({
     onSelect,
     onActivateLine,
     onDeleteLine,
+    onDuplicateLine,
     onAddLineToVariant,
     onAddVariant,
     onDeleteVariant,
+    onDuplicateVariant,
 }: ResponsiveBlockProps) {
     const selectedVariant = match.selectedVariant.get(responsive.id) ?? null;
     const dragIds = responsive.variants.map((v, i) =>
@@ -857,7 +889,7 @@ function ResponsiveBlock({
         >
             <span className="row-label">{topIndex + 1}</span>
             <div className="responsive-block">
-                <SortableContext items={dragIds} strategy={horizontalListSortingStrategy}>
+                <SortableContext items={dragIds} strategy={verticalListSortingStrategy}>
                     <div className="variant-track">
                         {responsive.variants.map((variant, v) => (
                             <VariantCard
@@ -879,8 +911,10 @@ function ResponsiveBlock({
                                 onSelect={onSelect}
                                 onActivateLine={onActivateLine}
                                 onDeleteLine={onDeleteLine}
+                                onDuplicateLine={onDuplicateLine}
                                 onAddLine={() => onAddLineToVariant(variant.id)}
                                 onDeleteVariant={() => onDeleteVariant(variant.id)}
+                                onDuplicate={() => onDuplicateVariant(variant.id)}
                             />
                         ))}
                     </div>
@@ -905,6 +939,10 @@ function ResponsiveBlock({
 interface CanvasProps {
     children: LayoutChild[];
     previewLines: PreviewLine[] | null;
+    // Responsive AST id -> the variant index the preview response selected
+    // at the current width (see DSL_API.md "allVariants"). Null while no
+    // preview response with this data has arrived yet.
+    selectedVariants: Record<string, number> | null;
     fallback: PreviewResponse["fallback"] | null;
     selection: string | null;
     activeLine: number;
@@ -931,9 +969,11 @@ interface CanvasProps {
     onAddLine: () => void;
     onAddResponsive: () => void;
     onDeleteLine: (lineId: string) => void;
+    onDuplicateLine: (lineId: string) => void;
     onAddLineToVariant: (variantId: string) => void;
     onAddVariant: (responsiveId: string) => void;
     onDeleteVariant: (variantId: string) => void;
+    onDuplicateVariant: (variantId: string) => void;
     onWidth: (w: number) => void;
     onPreviewSourceChange: (source: PreviewSource) => void;
     onRefreshSessions: () => void;
@@ -944,6 +984,7 @@ interface CanvasProps {
 export function Canvas({
     children,
     previewLines,
+    selectedVariants,
     fallback,
     selection,
     activeLine,
@@ -964,9 +1005,11 @@ export function Canvas({
     onAddLine,
     onAddResponsive,
     onDeleteLine,
+    onDuplicateLine,
     onAddLineToVariant,
     onAddVariant,
     onDeleteVariant,
+    onDuplicateVariant,
     onWidth,
     onPreviewSourceChange,
     onRefreshSessions,
@@ -978,7 +1021,7 @@ export function Canvas({
     // responsive-free child's PreviewLine always matches by its own id, and
     // a responsive's variant-nested lines match only the ones its
     // width-selected variant actually rendered.
-    const match = matchPreview(previewLines);
+    const match = matchPreview(previewLines, selectedVariants);
     return (
         <div className="panel canvas-panel">
             <h2>
@@ -1082,7 +1125,7 @@ export function Canvas({
                     {pureOutput ? (
                         previewLines ? (
                             <pre className="pure-pre">
-                                {previewLines
+                                {effectiveLines(previewLines, selectedVariants)
                                     .filter((l) => !l.omitted)
                                     .map((l, i) => (
                                         <div key={i}>{ansiSpans(l.ansi, theme)}</div>
@@ -1111,6 +1154,7 @@ export function Canvas({
                                     onSelect={onSelect}
                                     onActivateLine={onActivateLine}
                                     onDeleteLine={onDeleteLine}
+                                    onDuplicateLine={onDuplicateLine}
                                 />
                             ) : (
                                 <ResponsiveBlock
@@ -1127,9 +1171,11 @@ export function Canvas({
                                     onSelect={onSelect}
                                     onActivateLine={onActivateLine}
                                     onDeleteLine={onDeleteLine}
+                                    onDuplicateLine={onDuplicateLine}
                                     onAddLineToVariant={onAddLineToVariant}
                                     onAddVariant={onAddVariant}
                                     onDeleteVariant={onDeleteVariant}
+                                    onDuplicateVariant={onDuplicateVariant}
                                 />
                             ),
                         )

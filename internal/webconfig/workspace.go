@@ -183,7 +183,12 @@ as themed segment transitions. Standard is the default.
 - Visibility: ` + "`optional=\"<field>\"`" + ` (hide when the field is empty),
       ` + "`when=\"<metric> ge 80\"`" + ` (word ops: lt le gt ge eq ne / and or not)
 - ` + "`<color-rule when=\"self ge 90\" color=\"red\"/>`" + ` child elements switch
-      color by condition (first match wins).
+      color by condition (first match wins; otherwise the node's own color).
+      ` + "`when`" + ` can drive off any named metric, not just ` + "`self`" + ` —
+      e.g. color a ` + "`session-cost`" + ` field by ` + "`seven-day-percent`" + `
+      so the cost tracks the usage %. On a ` + "`<span>`" + ` the resolved color
+      applies to the whole span (children inherit it unless they set their own
+      color), so you can color a labelled group by one metric.
 
 ### Content fields
 

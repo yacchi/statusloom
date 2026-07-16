@@ -184,13 +184,7 @@ func computeFlexWidths(pieces []piece, width int) []int {
 		return widths
 	}
 
-	base := 0
-	for _, p := range pieces {
-		if p.visible && (p.kind == pkContent || p.kind == pkSeparator) {
-			base += visibleWidth(p.plain)
-		}
-	}
-	remaining := target - base
+	remaining := target - baseWidth(pieces)
 	if remaining < n {
 		for i := range widths {
 			widths[i] = 1
@@ -206,6 +200,21 @@ func computeFlexWidths(pieces []piece, width int) []int {
 		}
 	}
 	return widths
+}
+
+// baseWidth is a line's natural (fixed) width: the sum of the display widths of
+// its visible content and separator pieces, treating flex pieces as width 0
+// (flex only fills residual space). It is the shared definition used both by
+// computeFlexWidths (to size flex separators) and by responsive variant fit
+// selection (doc.go's lineNaturalWidth), so the two never disagree.
+func baseWidth(pieces []piece) int {
+	base := 0
+	for _, p := range pieces {
+		if p.visible && (p.kind == pkContent || p.kind == pkSeparator) {
+			base += visibleWidth(p.plain)
+		}
+	}
+	return base
 }
 
 // resolveFlexTarget resolves one flex separator's size to a target line width.

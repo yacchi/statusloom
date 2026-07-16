@@ -10,6 +10,15 @@
 // spans; the span group itself is a drop container (hovering its area
 // appends to the span's end).
 //
+// A layout's children mix plain <line> rows with <responsive> containers
+// (markup.md / plans/responsive-container-design.md): a responsive renders
+// as a row of <variant> cards (widest first), each holding its own stack of
+// lines rendered exactly like a plain row. Preview segments are matched back
+// onto lines by AST id (previewMatch.ts) rather than by position, since the
+// width-selected variant determines how many PreviewLines a responsive
+// contributes; the selected variant is highlighted so changing the width
+// slider visibly shows which candidate is currently in effect.
+//
 // IMPORTANT: nothing in this component may restructure or resize during a
 // drag based on drag state — drop indicators are paint-only (::before
 // pseudo-elements / box-shadows), and every SortableContext items array is
@@ -27,17 +36,27 @@ import { CSS } from "@dnd-kit/utilities";
 import { parseAnsiLine, type Theme } from "../ansi.ts";
 import { t, useLang } from "../i18n.ts";
 import { nodeLabel } from "../presets.ts";
-import { LINE_ID_PREFIX, type DropTarget } from "../useDragEditing.ts";
+import { matchPreview, type PreviewMatch } from "../previewMatch.ts";
+import {
+    LINE_ID_PREFIX,
+    VARIANT_CONTAINER_PREFIX,
+    VARIANT_ID_PREFIX,
+    VARIANT_LINE_ID_PREFIX,
+    type DropTarget,
+} from "../useDragEditing.ts";
 import type {
+    LayoutChild,
     LineChild,
     LineNode,
     PreviewLine,
     PreviewResponse,
     PreviewSegment,
     PreviewSource,
+    ResponsiveNode,
     SampleKind,
     SessionSummary,
     SpanNode,
+    VariantNode,
 } from "../types.ts";
 import { HelpTip } from "./HelpTip.tsx";
 
@@ -446,6 +465,13 @@ interface SortableChipProps {
     id: string;
     lineIndex: number;
     childIndex: number;
+    // Disambiguates the `data-testid` when it would otherwise collide: a
+    // variant-nested row's chips share their owning responsive's topIndex
+    // with every other variant's (and any plain row's) chips at the same
+    // position, so those rows pass their own line id here instead. Absent
+    // for top-level rows, whose "seg-{topIndex}-{childIndex}" testid is
+    // unchanged from before <responsive> existed.
+    testRowKey?: string;
     node: LineChild;
     segs: PreviewSegment[] | null;
     theme: Theme;
@@ -462,6 +488,7 @@ function SortableChip({
     id,
     lineIndex,
     childIndex,
+    testRowKey,
     node,
     segs,
     theme,
@@ -502,7 +529,7 @@ function SortableChip({
             ref={setNodeRef}
             style={style}
             className={cls}
-            data-testid={`seg-${lineIndex}-${childIndex}`}
+            data-testid={`seg-${testRowKey ?? lineIndex}-${childIndex}`}
             data-nodeid={id}
             {...attributes}
             {...listeners}
@@ -527,7 +554,18 @@ function SortableChip({
 }
 
 interface CanvasRowProps {
-    lineIndex: number;
+    // The useDroppable id for this row's track: LINE_ID_PREFIX + the
+    // top-level position for a plain line, VARIANT_LINE_ID_PREFIX + the
+    // line's own AST id for a variant-nested line (see useDragEditing.ts).
+    dropId: string;
+    // The numeric badge text ("1", "2", …), or null to omit it (variant-
+    // nested lines aren't part of the top-level row count).
+    rowLabel: string | null;
+    // The layout-child position this row (or its owning responsive) lives
+    // at — what onSelect/onActivateLine report as the active row, so
+    // selecting or activating anything inside a responsive's variant marks
+    // the whole responsive block active, exactly like a plain line.
+    topIndex: number;
     line: LineNode;
     previewLine: PreviewLine | null;
     theme: Theme;
@@ -535,14 +573,19 @@ interface CanvasRowProps {
     active: boolean;
     dropTarget: DropTarget | null;
     readOnly: boolean;
+    // False disables the delete button without disabling the row (used to
+    // keep a variant's last line, which validation requires).
+    canDelete: boolean;
     displayName: (field: string) => string;
-    onSelect: (id: string, lineIndex: number) => void;
-    onActivateLine: (lineIndex: number) => void;
-    onDeleteLine: (lineIndex: number) => void;
+    onSelect: (id: string, topIndex: number) => void;
+    onActivateLine: (topIndex: number) => void;
+    onDeleteLine: (lineId: string) => void;
 }
 
 function CanvasRow({
-    lineIndex,
+    dropId,
+    rowLabel,
+    topIndex,
     line,
     previewLine,
     theme,
@@ -550,16 +593,17 @@ function CanvasRow({
     active,
     dropTarget,
     readOnly,
+    canDelete,
     displayName,
     onSelect,
     onActivateLine,
     onDeleteLine,
 }: CanvasRowProps) {
     const lang = useLang();
-    const { setNodeRef, isOver } = useDroppable({ id: LINE_ID_PREFIX + lineIndex });
+    const { setNodeRef, isOver } = useDroppable({ id: dropId });
     const children = line.children;
     const segments = previewLine ? previewLine.segments : null;
-    const ids = children.map((c, i) => (c.id !== "" ? c.id : `pending-${lineIndex}-${i}`));
+    const ids = children.map((c, i) => (c.id !== "" ? c.id : `pending-${line.id || topIndex}-${i}`));
     const isDropLine = dropTarget?.containerId === line.id;
     const isPowerline = previewLine?.ansi.includes("\ue0b0") === true;
 
@@ -570,9 +614,9 @@ function CanvasRow({
                 (active ? " active" : "") +
                 (previewLine?.omitted ? " omitted" : "")
             }
-            onClick={() => onActivateLine(lineIndex)}
+            onClick={() => onActivateLine(topIndex)}
         >
-            <span className="row-label">{lineIndex + 1}</span>
+            {rowLabel !== null ? <span className="row-label">{rowLabel}</span> : null}
             <SortableContext items={ids} strategy={horizontalListSortingStrategy}>
                 <div
                     ref={setNodeRef}
@@ -590,8 +634,9 @@ function CanvasRow({
                             <SortableChip
                                 key={ids[j]}
                                 id={ids[j]}
-                                lineIndex={lineIndex}
+                                lineIndex={topIndex}
                                 childIndex={j}
+                                testRowKey={rowLabel === null ? line.id : undefined}
                                 node={child}
                                 segs={segments ? segsFor(segments, child.id) : null}
                                 theme={theme}
@@ -612,10 +657,10 @@ function CanvasRow({
             <button
                 className="row-delete"
                 title="Delete line"
-                disabled={readOnly}
+                disabled={readOnly || !canDelete}
                 onClick={(e) => {
                     e.stopPropagation();
-                    onDeleteLine(lineIndex);
+                    onDeleteLine(line.id);
                 }}
             >
                 ✕
@@ -624,8 +669,241 @@ function CanvasRow({
     );
 }
 
+interface VariantCardProps {
+    // The draggable id (VARIANT_ID_PREFIX + variant.id).
+    dragId: string;
+    variant: VariantNode;
+    variantIndex: number;
+    variantCount: number;
+    responsiveId: string;
+    // Whether the preview response currently selected this variant at the
+    // simulated width — the feature's whole point made visible.
+    selected: boolean;
+    topIndex: number;
+    match: PreviewMatch;
+    theme: Theme;
+    selection: string | null;
+    dropTarget: DropTarget | null;
+    readOnly: boolean;
+    canDeleteVariant: boolean;
+    displayName: (field: string) => string;
+    onSelect: (id: string, topIndex: number) => void;
+    onActivateLine: (topIndex: number) => void;
+    onDeleteLine: (lineId: string) => void;
+    onAddLine: () => void;
+    onDeleteVariant: () => void;
+}
+
+// One <variant> candidate: a draggable, sortable card (reordering variants
+// changes their width priority — widest first) holding its own stack of
+// lines. `selected` mirrors the preview response's width-selected variant
+// for the enclosing <responsive>.
+function VariantCard({
+    dragId,
+    variant,
+    variantIndex,
+    variantCount,
+    responsiveId,
+    selected,
+    topIndex,
+    match,
+    theme,
+    selection,
+    dropTarget,
+    readOnly,
+    canDeleteVariant,
+    displayName,
+    onSelect,
+    onActivateLine,
+    onDeleteLine,
+    onAddLine,
+    onDeleteVariant,
+}: VariantCardProps) {
+    const lang = useLang();
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+        id: dragId,
+    });
+    const style: CSSProperties = { transform: CSS.Transform.toString(transform), transition };
+    const { before, after } = dropFlags(
+        dropTarget,
+        VARIANT_CONTAINER_PREFIX + responsiveId,
+        variantIndex,
+        variantCount,
+    );
+    let cls = "variant-card";
+    if (selected) {
+        cls += " variant-selected";
+    }
+    if (isDragging) {
+        cls += " dragging";
+    }
+    if (before) {
+        cls += " drop-before";
+    }
+    if (after) {
+        cls += " drop-after";
+    }
+    return (
+        <div ref={setNodeRef} style={style} className={cls} data-testid={`variant-${variant.id}`}>
+            <div className="variant-header">
+                <span
+                    className="variant-drag"
+                    data-testid={`variant-handle-${variant.id}`}
+                    {...attributes}
+                    {...listeners}
+                >
+                    ⋮
+                </span>
+                <span className="variant-title">
+                    {t(lang, "variantLabel")} {variantIndex + 1}
+                    {selected ? (
+                        <span className="variant-selected-badge">
+                            {t(lang, "variantSelectedBadge")}
+                        </span>
+                    ) : null}
+                </span>
+                <button
+                    className="variant-delete"
+                    data-testid={`variant-delete-${variant.id}`}
+                    title="Delete variant"
+                    disabled={readOnly || !canDeleteVariant}
+                    onClick={onDeleteVariant}
+                >
+                    ✕
+                </button>
+            </div>
+            <div className="variant-lines">
+                {variant.lines.map((line, j) => (
+                    <CanvasRow
+                        key={line.id !== "" ? line.id : `vline-${variant.id}-${j}`}
+                        dropId={VARIANT_LINE_ID_PREFIX + line.id}
+                        rowLabel={null}
+                        topIndex={topIndex}
+                        line={line}
+                        previewLine={match.byLineId.get(line.id) ?? null}
+                        theme={theme}
+                        selection={selection}
+                        active={false}
+                        dropTarget={dropTarget}
+                        readOnly={readOnly}
+                        canDelete={variant.lines.length > 1}
+                        displayName={displayName}
+                        onSelect={onSelect}
+                        onActivateLine={onActivateLine}
+                        onDeleteLine={onDeleteLine}
+                    />
+                ))}
+            </div>
+            <button
+                className="variant-add-line"
+                data-testid={`variant-add-line-${variant.id}`}
+                title="Add line to this variant"
+                disabled={readOnly}
+                onClick={onAddLine}
+            >
+                + Line
+            </button>
+        </div>
+    );
+}
+
+interface ResponsiveBlockProps {
+    responsive: ResponsiveNode;
+    topIndex: number;
+    match: PreviewMatch;
+    theme: Theme;
+    selection: string | null;
+    active: boolean;
+    dropTarget: DropTarget | null;
+    readOnly: boolean;
+    displayName: (field: string) => string;
+    onSelect: (id: string, topIndex: number) => void;
+    onActivateLine: (topIndex: number) => void;
+    onDeleteLine: (lineId: string) => void;
+    onAddLineToVariant: (variantId: string) => void;
+    onAddVariant: (responsiveId: string) => void;
+    onDeleteVariant: (variantId: string) => void;
+}
+
+// A <responsive> row: a horizontal, reorderable track of <variant> cards
+// (widest first). The variant the current width selected (per the preview
+// response) is highlighted — that visibility is the feature's whole point.
+function ResponsiveBlock({
+    responsive,
+    topIndex,
+    match,
+    theme,
+    selection,
+    active,
+    dropTarget,
+    readOnly,
+    displayName,
+    onSelect,
+    onActivateLine,
+    onDeleteLine,
+    onAddLineToVariant,
+    onAddVariant,
+    onDeleteVariant,
+}: ResponsiveBlockProps) {
+    const selectedVariant = match.selectedVariant.get(responsive.id) ?? null;
+    const dragIds = responsive.variants.map((v, i) =>
+        VARIANT_ID_PREFIX + (v.id !== "" ? v.id : `pending-variant-${topIndex}-${i}`),
+    );
+
+    return (
+        <div
+            className={"canvas-row responsive-row" + (active ? " active" : "")}
+            onClick={() => onActivateLine(topIndex)}
+        >
+            <span className="row-label">{topIndex + 1}</span>
+            <div className="responsive-block">
+                <SortableContext items={dragIds} strategy={horizontalListSortingStrategy}>
+                    <div className="variant-track">
+                        {responsive.variants.map((variant, v) => (
+                            <VariantCard
+                                key={dragIds[v]}
+                                dragId={dragIds[v]}
+                                variant={variant}
+                                variantIndex={v}
+                                variantCount={responsive.variants.length}
+                                responsiveId={responsive.id}
+                                selected={selectedVariant === v}
+                                topIndex={topIndex}
+                                match={match}
+                                theme={theme}
+                                selection={selection}
+                                dropTarget={dropTarget}
+                                readOnly={readOnly}
+                                canDeleteVariant={responsive.variants.length > 1}
+                                displayName={displayName}
+                                onSelect={onSelect}
+                                onActivateLine={onActivateLine}
+                                onDeleteLine={onDeleteLine}
+                                onAddLine={() => onAddLineToVariant(variant.id)}
+                                onDeleteVariant={() => onDeleteVariant(variant.id)}
+                            />
+                        ))}
+                    </div>
+                </SortableContext>
+                <button
+                    className="variant-add"
+                    data-testid={`responsive-add-variant-${responsive.id}`}
+                    title="Add variant"
+                    disabled={readOnly}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onAddVariant(responsive.id);
+                    }}
+                >
+                    + Variant
+                </button>
+            </div>
+        </div>
+    );
+}
+
 interface CanvasProps {
-    lines: LineNode[];
+    children: LayoutChild[];
     previewLines: PreviewLine[] | null;
     fallback: PreviewResponse["fallback"] | null;
     selection: string | null;
@@ -651,7 +929,11 @@ interface CanvasProps {
     onDeselect: () => void;
     onActivateLine: (lineIndex: number) => void;
     onAddLine: () => void;
-    onDeleteLine: (lineIndex: number) => void;
+    onAddResponsive: () => void;
+    onDeleteLine: (lineId: string) => void;
+    onAddLineToVariant: (variantId: string) => void;
+    onAddVariant: (responsiveId: string) => void;
+    onDeleteVariant: (variantId: string) => void;
     onWidth: (w: number) => void;
     onPreviewSourceChange: (source: PreviewSource) => void;
     onRefreshSessions: () => void;
@@ -660,7 +942,7 @@ interface CanvasProps {
 }
 
 export function Canvas({
-    lines,
+    children,
     previewLines,
     fallback,
     selection,
@@ -680,7 +962,11 @@ export function Canvas({
     onDeselect,
     onActivateLine,
     onAddLine,
+    onAddResponsive,
     onDeleteLine,
+    onAddLineToVariant,
+    onAddVariant,
+    onDeleteVariant,
     onWidth,
     onPreviewSourceChange,
     onRefreshSessions,
@@ -688,9 +974,11 @@ export function Canvas({
     onPureOutput,
 }: CanvasProps) {
     const lang = useLang();
-    // Segments are only trustworthy while the preview still matches the AST's
-    // line structure.
-    const previewUsable = previewLines !== null && previewLines.length === lines.length;
+    // Segments are matched onto lines by AST id (not position): a
+    // responsive-free child's PreviewLine always matches by its own id, and
+    // a responsive's variant-nested lines match only the ones its
+    // width-selected variant actually rendered.
+    const match = matchPreview(previewLines);
     return (
         <div className="panel canvas-panel">
             <h2>
@@ -705,6 +993,7 @@ export function Canvas({
                     </label>
                     <input
                         type="range"
+                        data-testid="width-slider"
                         min={40}
                         max={200}
                         value={width}
@@ -803,23 +1092,47 @@ export function Canvas({
                             <span className="hint">{t(lang, "noPreview")}</span>
                         )
                     ) : (
-                        lines.map((line, i) => (
-                            <CanvasRow
-                                key={line.id !== "" ? line.id : `line-${i}`}
-                                lineIndex={i}
-                                line={line}
-                                previewLine={previewUsable ? previewLines[i] : null}
-                                theme={theme}
-                                selection={selection}
-                                active={i === activeLine}
-                                dropTarget={dropTarget}
-                                readOnly={readOnly}
-                                displayName={displayName}
-                                onSelect={onSelect}
-                                onActivateLine={onActivateLine}
-                                onDeleteLine={onDeleteLine}
-                            />
-                        ))
+                        children.map((child, p) =>
+                            child.kind === "line" ? (
+                                <CanvasRow
+                                    key={child.id !== "" ? child.id : `line-${p}`}
+                                    dropId={LINE_ID_PREFIX + p}
+                                    rowLabel={String(p + 1)}
+                                    topIndex={p}
+                                    line={child}
+                                    previewLine={match.byLineId.get(child.id) ?? null}
+                                    theme={theme}
+                                    selection={selection}
+                                    active={p === activeLine}
+                                    dropTarget={dropTarget}
+                                    readOnly={readOnly}
+                                    canDelete
+                                    displayName={displayName}
+                                    onSelect={onSelect}
+                                    onActivateLine={onActivateLine}
+                                    onDeleteLine={onDeleteLine}
+                                />
+                            ) : (
+                                <ResponsiveBlock
+                                    key={child.id !== "" ? child.id : `responsive-${p}`}
+                                    responsive={child}
+                                    topIndex={p}
+                                    match={match}
+                                    theme={theme}
+                                    selection={selection}
+                                    active={p === activeLine}
+                                    dropTarget={dropTarget}
+                                    readOnly={readOnly}
+                                    displayName={displayName}
+                                    onSelect={onSelect}
+                                    onActivateLine={onActivateLine}
+                                    onDeleteLine={onDeleteLine}
+                                    onAddLineToVariant={onAddLineToVariant}
+                                    onAddVariant={onAddVariant}
+                                    onDeleteVariant={onDeleteVariant}
+                                />
+                            ),
+                        )
                     )}
                 </div>
             </div>
@@ -844,6 +1157,10 @@ export function Canvas({
                     <button onClick={onAddLine} disabled={readOnly}>
                         + Add line
                     </button>
+                    <button onClick={onAddResponsive} disabled={readOnly}>
+                        + Add responsive
+                    </button>
+                    <HelpTip k="helpResponsive" />
                     <span className="hint">{t(lang, "canvasFooterHint")}</span>
                 </div>
             )}

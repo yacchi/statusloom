@@ -38,10 +38,21 @@ func wrap(inner string) string {
 
 func onlyLine(t *testing.T, doc *Document) *LineNode {
 	t.Helper()
-	if doc.Root == nil || len(doc.Root.Layouts) != 1 || len(doc.Root.Layouts[0].Lines) != 1 {
+	if doc.Root == nil || len(doc.Root.Layouts) != 1 || len(doc.Root.Layouts[0].Children) != 1 {
 		t.Fatalf("expected exactly one layout with one line")
 	}
-	return doc.Root.Layouts[0].Lines[0]
+	return layoutLine(t, doc.Root.Layouts[0], 0)
+}
+
+// layoutLine returns the i-th child of a layout as a *LineNode, failing the
+// test if that child is not a line (used by tests over responsive-free docs).
+func layoutLine(t *testing.T, l *LayoutNode, i int) *LineNode {
+	t.Helper()
+	ln, ok := l.Children[i].(*LineNode)
+	if !ok {
+		t.Fatalf("layout child %d is %T, want *LineNode", i, l.Children[i])
+	}
+	return ln
 }
 
 func hasErrorContaining(diags []Diagnostic, substr string) bool {
@@ -269,7 +280,7 @@ func TestParseComments(t *testing.T) {
 	if len(layout.Comments) != 1 || layout.Comments[0].Text != " layout comment " {
 		t.Fatalf("layout comments = %#v", layout.Comments)
 	}
-	line := layout.Lines[0]
+	line := layoutLine(t, layout, 0)
 	if _, ok := line.Children[0].(*CommentNode); !ok {
 		t.Fatalf("line child 0 is %T, want *CommentNode", line.Children[0])
 	}

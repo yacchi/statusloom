@@ -15,13 +15,16 @@ import type {
     CommentNode,
     Diagnostic,
     FieldCatalogEntry,
+    LayoutChild,
     LayoutNode,
     LineChild,
     LineNode,
     PreviewLine,
     PreviewSegment,
+    ResponsiveNode,
     SpanNode,
     StatusloomNode,
+    VariantNode,
 } from "../types.ts";
 
 // ---- AST builders (ids are assigned by the fake's parse) ----
@@ -46,8 +49,19 @@ export function ln(children: LineChild[]): LineNode {
     return { id: "", kind: "line", children };
 }
 
-export function lay(name: string, lines: LineNode[], active?: boolean): LayoutNode {
-    const l: LayoutNode = { id: "", kind: "layout", name, lines };
+// One <variant> candidate inside a <responsive> (widest-first order is the
+// caller's responsibility, matching the DSL).
+export function variant(lines: LineNode[]): VariantNode {
+    return { id: "", kind: "variant", lines };
+}
+
+// A <responsive> width-adaptive container, widest variant first.
+export function resp(variants: VariantNode[]): ResponsiveNode {
+    return { id: "", kind: "responsive", variants };
+}
+
+export function lay(name: string, children: LayoutChild[], active?: boolean): LayoutNode {
+    const l: LayoutNode = { id: "", kind: "layout", name, children };
     if (active !== undefined) {
         l.active = active;
     }
@@ -121,6 +135,35 @@ function assignChildIds(children: LineChild[], parentId: string): void {
     });
 }
 
+// Assigns "L{i}.{p}" to a layout's line/responsive child, its comments the
+// "L{i}.{p}.c{k}" form, and recurses into a line's own children / a
+// responsive's variants ("L{i}.{p}.v{v}", lines "L{i}.{p}.v{v}.{j}",
+// variant comments "L{i}.{p}.v{v}.c{k}") — mirrors DSL_API.md "Node IDs".
+function assignLayoutChildIds(children: LayoutChild[], layoutId: string): void {
+    children.forEach((child, p) => {
+        const id = `${layoutId}.${p}`;
+        child.id = id;
+        if (child.kind === "line") {
+            assignChildIds(child.children, id);
+            return;
+        }
+        child.comments?.forEach((c, k) => {
+            c.id = `${id}.c${k}`;
+        });
+        child.variants.forEach((v, vi) => {
+            const variantId = `${id}.v${vi}`;
+            v.id = variantId;
+            v.comments?.forEach((c, k) => {
+                c.id = `${variantId}.c${k}`;
+            });
+            v.lines.forEach((line, j) => {
+                line.id = `${variantId}.${j}`;
+                assignChildIds(line.children, line.id);
+            });
+        });
+    });
+}
+
 export function assignIds(root: StatusloomNode): StatusloomNode {
     root.id = "root";
     if (root.git) {
@@ -135,10 +178,7 @@ export function assignIds(root: StatusloomNode): StatusloomNode {
         l.comments?.forEach((c, k) => {
             c.id = `L${i}.c${k}`;
         });
-        l.lines.forEach((line, j) => {
-            line.id = `L${i}.${j}`;
-            assignChildIds(line.children, line.id);
-        });
+        assignLayoutChildIds(l.children, l.id);
     });
     return root;
 }
@@ -159,9 +199,14 @@ function collectDiagnostics(root: StatusloomNode): Diagnostic[] {
             node.children.forEach(visit);
         }
     };
+    const visitLine = (line: LineNode) => line.children.forEach(visit);
     for (const l of root.layouts) {
-        for (const line of l.lines) {
-            line.children.forEach(visit);
+        for (const child of l.children) {
+            if (child.kind === "line") {
+                visitLine(child);
+            } else {
+                child.variants.forEach((v) => v.lines.forEach(visitLine));
+            }
         }
     }
     return diags;
@@ -269,10 +314,77 @@ function renderChildren(
     }
 }
 
+function renderLine(line: LineNode, sample: Record<string, string>): PreviewLine {
+    const segments: PreviewSegment[] = [];
+    renderChildren(line.children, sample, segments);
+    const visible = segments.filter((s) => s.visible);
+    return {
+        omitted: visible.length === 0,
+        ansi: visible.map((s) => s.ansi).join(""),
+        segments,
+    };
+}
+
+// A line's natural width: the visible-content length it would render at
+// (markup.md/plans/responsive-container-design.md §1 "flatten + gate ... の
+// 可視な content/separator piece の visibleWidth(plain) 合算"; a <flex>
+// contributes 0, since it only fills residual space). Simplified for the
+// fake (no ANSI/wide-char accounting) — good enough to exercise first-fit
+// variant selection in tests.
+function nodeNaturalWidth(node: LineChild, sample: Record<string, string>): number {
+    switch (node.kind) {
+        case "field": {
+            if (node.optional && !sample[node.optional]) {
+                return 0;
+            }
+            const value = node.name ? (sample[node.name] ?? "") : "";
+            return value === "" ? 0 : ((node.prefix ?? "") + value + (node.suffix ?? "")).length;
+        }
+        case "text":
+        case "raw-text":
+            return node.value.length;
+        case "flex":
+            return 0;
+        case "span": {
+            if (node.optional && !sample[node.optional]) {
+                return 0;
+            }
+            const inner = node.children.reduce((sum, c) => sum + nodeNaturalWidth(c, sample), 0);
+            return (node.prefix?.length ?? 0) + inner + (node.suffix?.length ?? 0);
+        }
+        case "comment":
+            return 0;
+    }
+}
+
+function lineNaturalWidth(line: LineNode, sample: Record<string, string>): number {
+    return line.children.reduce((sum, c) => sum + nodeNaturalWidth(c, sample), 0);
+}
+
+// First-fit variant selection (plans/responsive-container-design.md §1):
+// the first variant all of whose lines fit `width`, the last variant when
+// none fit, and the first/widest variant when the width is unknown (<= 0).
+export function selectVariant(
+    responsive: ResponsiveNode,
+    sample: Record<string, string>,
+    width: number,
+): number {
+    if (width <= 0) {
+        return 0;
+    }
+    for (let v = 0; v < responsive.variants.length; v += 1) {
+        if (responsive.variants[v].lines.every((line) => lineNaturalWidth(line, sample) <= width)) {
+            return v;
+        }
+    }
+    return responsive.variants.length - 1;
+}
+
 export function fakePreview(
     source: string,
     sample: string,
     layoutIndex: number,
+    width: number,
 ): {
     lines: PreviewLine[];
     diagnostics: Diagnostic[];
@@ -285,16 +397,17 @@ export function fakePreview(
     const data = sample === "early-session" ? EARLY_SAMPLE : FULL_SAMPLE;
     const li = Math.max(0, Math.min(layoutIndex, ast.layouts.length - 1));
     const layout = ast.layouts[li];
-    const lines: PreviewLine[] = (layout?.lines ?? []).map((line) => {
-        const segments: PreviewSegment[] = [];
-        renderChildren(line.children, data, segments);
-        const visible = segments.filter((s) => s.visible);
-        return {
-            omitted: visible.length === 0,
-            ansi: visible.map((s) => s.ansi).join(""),
-            segments,
-        };
-    });
+    const lines: PreviewLine[] = [];
+    for (const child of layout?.children ?? []) {
+        if (child.kind === "line") {
+            lines.push(renderLine(child, data));
+            continue;
+        }
+        const v = selectVariant(child, data, width);
+        for (const line of child.variants[v]?.lines ?? []) {
+            lines.push(renderLine(line, data));
+        }
+    }
     const allOmitted = lines.every((l) => l.omitted);
     return {
         lines,
@@ -475,7 +588,12 @@ export function installFakeDslServer(initial: StatusloomNode): FakeServer {
             }
             if (url.endsWith("/api/dsl/preview")) {
                 return jsonResponse(
-                    fakePreview(body.source, body.sample ?? "full", body.layoutIndex ?? 0),
+                    fakePreview(
+                        body.source,
+                        body.sample ?? "full",
+                        body.layoutIndex ?? 0,
+                        body.width ?? 120,
+                    ),
                 );
             }
             return jsonResponse({ error: "not found" }, 404);

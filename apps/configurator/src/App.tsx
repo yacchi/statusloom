@@ -35,14 +35,18 @@ import {
     activeLayoutIndex,
     addLayout,
     addLine,
+    addResponsive,
+    addVariant,
     applyDropEdit,
     appendLayouts,
     deleteLayout,
     deleteLine,
+    deleteVariant,
     duplicateLayout,
     getNode,
     insertChild,
     lineIndexOfContainerId,
+    moveVariant,
     parentChildId,
     predictChildId,
     removeNode,
@@ -56,8 +60,11 @@ import {
 import {
     spanContainersOf,
     useDragEditing,
+    VARIANT_CONTAINER_PREFIX,
+    type ContainerView,
     type DragPayload,
     type DropTarget,
+    type VariantListView,
 } from "./useDragEditing.ts";
 import { I18nContext, loadLang, saveLang, t, type Lang } from "./i18n.ts";
 import { STRUCTURAL_PRESETS, makeFieldNode, nodeLabel } from "./presets.ts";
@@ -66,10 +73,12 @@ import {
     type Diagnostic,
     type FieldCatalogEntry,
     type LineChild,
+    type LineNode,
     type Metric,
     type PreviewLine,
     type PreviewResponse,
     type PreviewSource,
+    type ResponsiveNode,
     type SessionSummary,
     type StatusloomNode,
     type ToolInfo,
@@ -736,7 +745,7 @@ function Configurator({ token }: { token: string }) {
         layoutCount > 0 ? Math.max(0, Math.min(editLayoutIndex, layoutCount - 1)) : 0;
     layoutIndexRef.current = layoutIndex;
     const curLayout = layouts[layoutIndex] ?? null;
-    const curLines = curLayout?.lines ?? [];
+    const curChildren = curLayout?.children ?? [];
     const activeIndex = ast ? activeLayoutIndex(ast) : 0;
 
     // Keep the derived (clamped) index in state so callbacks stay consistent.
@@ -775,11 +784,22 @@ function Configurator({ token }: { token: string }) {
 
     // ---- drag & drop ----
     // Dragging never mutates the document; the hook computes a paint-only
-    // drop target and calls onDrop exactly once, on drop.
+    // drop target and calls onDrop exactly once, on drop. A "variant"
+    // payload reorders a whole <variant> card within its <responsive> — a
+    // structurally different edit from a chip drop, so it is branched off
+    // before applyDropEdit (which only understands line/span content).
     const onDrop = useCallback(
         (payload: DragPayload, target: DropTarget) => {
             const root = astRef.current;
             if (!root) {
+                return;
+            }
+            if (payload.kind === "variant") {
+                if (!target.containerId.startsWith(VARIANT_CONTAINER_PREFIX)) {
+                    return;
+                }
+                const responsiveId = target.containerId.slice(VARIANT_CONTAINER_PREFIX.length);
+                void applyAstEdit((r) => moveVariant(r, payload.id, responsiveId, target.index));
                 return;
             }
             const result = applyDropEdit(root, payload, target);
@@ -799,17 +819,44 @@ function Configurator({ token }: { token: string }) {
                     return null; // read-only while the source is broken
                 }
                 const li = layoutIndexRef.current;
-                const lines = astRef.current?.layouts[li]?.lines ?? null;
-                if (!lines) {
+                const layout = astRef.current?.layouts[li] ?? null;
+                if (!layout) {
                     return null;
                 }
-                return lines.flatMap((line, j) => {
-                    const id = line.id !== "" ? line.id : `L${li}.${j}`;
-                    return [
-                        { id, kind: "line" as const, lineIndex: j, childIds: line.children.map((c) => c.id) },
-                        ...spanContainersOf(line.children),
-                    ];
+                const out: ContainerView[] = [];
+                const addLineContainer = (line: LineNode, lineIndex?: number) => {
+                    out.push({
+                        id: line.id,
+                        kind: "line" as const,
+                        lineIndex,
+                        childIds: line.children.map((c) => c.id),
+                    });
+                    out.push(...spanContainersOf(line.children));
+                };
+                layout.children.forEach((child, p) => {
+                    if (child.kind === "line") {
+                        addLineContainer(child, p);
+                        return;
+                    }
+                    // Every variant's lines are drop containers too, not
+                    // just the width-selected one — a chip can be dragged
+                    // into any variant while editing.
+                    child.variants.forEach((v) => v.lines.forEach((line) => addLineContainer(line)));
                 });
+                return out;
+            }, []),
+            getVariantLists: useCallback((): VariantListView[] | null => {
+                if (!validRef.current) {
+                    return null;
+                }
+                const li = layoutIndexRef.current;
+                const layout = astRef.current?.layouts[li] ?? null;
+                if (!layout) {
+                    return null;
+                }
+                return layout.children
+                    .filter((c): c is ResponsiveNode => c.kind === "responsive")
+                    .map((r) => ({ responsiveId: r.id, variantIds: r.variants.map((v) => v.id) }));
             }, []),
             makePaletteNode: useCallback(
                 (key: string) => expandPaletteKey(key, fieldsRef.current),
@@ -824,7 +871,9 @@ function Configurator({ token }: { token: string }) {
                 if (
                     node.kind === "layout" ||
                     node.kind === "line" ||
-                    node.kind === "color-rule"
+                    node.kind === "color-rule" ||
+                    node.kind === "responsive" ||
+                    node.kind === "variant"
                 ) {
                     return node.kind;
                 }
@@ -1017,15 +1066,20 @@ function Configurator({ token }: { token: string }) {
             return;
         }
         const li = layoutIndex;
-        const hasLines = curLines.length > 0;
-        const line = hasLines ? Math.max(0, Math.min(activeLine, curLines.length - 1)) : 0;
+        // Resolve a plain line to append into: the active row when it
+        // already is one, otherwise append a fresh line at the end of the
+        // layout (a responsive container isn't a valid palette-click
+        // target — dragging directly into one of its variant's lines is).
+        const activeChild = curChildren[activeLine];
+        const useActive = activeChild?.kind === "line";
+        const line = useActive ? activeLine : curChildren.length;
         const lineId = `L${li}.${line}`;
-        const endIndex = hasLines ? curLines[line].children.length : 0;
+        const endIndex = useActive ? (activeChild as LineNode).children.length : 0;
         applyAstEdit(
             (root) => {
                 let r = root;
-                if (!hasLines) {
-                    r = addLine(r, li);
+                if (!useActive) {
+                    r = addLine(r, `L${li}`);
                 }
                 return insertChild(r, lineId, endIndex, made.node);
             },
@@ -1353,7 +1407,7 @@ function Configurator({ token }: { token: string }) {
 
                         {showVisual ? (
                             <Canvas
-                                lines={curLines}
+                                children={curChildren}
                                 previewLines={preview.lines}
                                 fallback={preview.fallback}
                                 selection={selection}
@@ -1380,17 +1434,39 @@ function Configurator({ token }: { token: string }) {
                                 }}
                                 onAddLine={() => {
                                     const li = layoutIndex;
-                                    applyAstEdit((root) => addLine(root, li));
-                                    setActiveLine(curLines.length);
+                                    applyAstEdit((root) => addLine(root, `L${li}`));
+                                    setActiveLine(curChildren.length);
                                 }}
-                                onDeleteLine={(lineIndex) => {
+                                onAddResponsive={() => {
                                     const li = layoutIndex;
-                                    applyAstEdit((root) => deleteLine(root, li, lineIndex), {
+                                    applyAstEdit((root) => addResponsive(root, li));
+                                    setActiveLine(curChildren.length);
+                                }}
+                                onDeleteLine={(lineId) => {
+                                    // A top-level line's removal shrinks
+                                    // curChildren, so the active row may need
+                                    // clamping; a variant-nested line's does
+                                    // not (its owning responsive stays put).
+                                    const wasTopLevelLine = /^L\d+\.\d+$/.test(lineId);
+                                    applyAstEdit((root) => deleteLine(root, lineId), {
                                         select: null,
                                     });
-                                    setActiveLine((cur) =>
-                                        Math.max(0, Math.min(cur, curLines.length - 2)),
-                                    );
+                                    if (wasTopLevelLine) {
+                                        setActiveLine((cur) =>
+                                            Math.max(0, Math.min(cur, curChildren.length - 2)),
+                                        );
+                                    }
+                                }}
+                                onAddLineToVariant={(variantId) => {
+                                    applyAstEdit((root) => addLine(root, variantId));
+                                }}
+                                onAddVariant={(responsiveId) => {
+                                    applyAstEdit((root) => addVariant(root, responsiveId));
+                                }}
+                                onDeleteVariant={(variantId) => {
+                                    applyAstEdit((root) => deleteVariant(root, variantId), {
+                                        select: null,
+                                    });
                                 }}
                                 onWidth={setWidth}
                                 onPreviewSourceChange={setPreviewSource}

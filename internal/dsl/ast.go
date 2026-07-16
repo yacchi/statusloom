@@ -86,8 +86,42 @@ type LayoutNode struct {
 	Meta   NodeMeta
 	Name   string
 	Active *bool // nil = no active attribute present
-	Lines  []*LineNode
+	// Children are the layout's ordered <line> / <responsive> children in
+	// document order (markup.md "layout" / "responsive"). Comments that
+	// appear directly under the layout are collected separately in Comments.
+	Children []LayoutChild
 	// Comments are XML comments directly under this layout (between
+	// <line>/<responsive> children); preserved for round-tripping.
+	Comments []*CommentNode
+}
+
+// LayoutChild is a layout's ordered child: either a *LineNode (a single
+// status-line row) or a *ResponsiveNode (a width-adaptive container). Like
+// LineNode it is not a Node (it lives in LayoutNode.Children, not in a
+// mixed-content Children list of drawable Nodes).
+type LayoutChild interface{ isLayoutChild() }
+
+func (*LineNode) isLayoutChild()       {}
+func (*ResponsiveNode) isLayoutChild() {}
+
+// ResponsiveNode is a <responsive> width-adaptive container (a layout child
+// only; markup.md "responsive"). It holds an ordered list of rendering
+// candidates (<variant>), widest first; the renderer picks the first variant
+// whose every line fits the terminal width. It carries no attributes.
+type ResponsiveNode struct {
+	Meta     NodeMeta
+	Variants []*VariantNode
+	// Comments are XML comments directly under this <responsive> (between
+	// <variant> children); preserved for round-tripping.
+	Comments []*CommentNode
+}
+
+// VariantNode is one <variant> rendering candidate inside a <responsive>. It
+// holds one or more <line> children and carries no attributes.
+type VariantNode struct {
+	Meta  NodeMeta
+	Lines []*LineNode
+	// Comments are XML comments directly under this <variant> (between
 	// <line> children); preserved for round-tripping.
 	Comments []*CommentNode
 }

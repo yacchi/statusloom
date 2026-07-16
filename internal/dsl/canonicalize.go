@@ -37,11 +37,24 @@ func normalizeWhen(when string) string {
 
 func normalizeStatusloomWhen(n *StatusloomNode) {
 	for _, l := range n.Layouts {
-		for _, ln := range l.Lines {
-			normalizeCommonWhen(&ln.Common)
-			normalizeChildrenWhen(ln.Children)
+		for _, ch := range l.Children {
+			switch c := ch.(type) {
+			case *LineNode:
+				normalizeLineWhen(c)
+			case *ResponsiveNode:
+				for _, vr := range c.Variants {
+					for _, ln := range vr.Lines {
+						normalizeLineWhen(ln)
+					}
+				}
+			}
 		}
 	}
+}
+
+func normalizeLineWhen(ln *LineNode) {
+	normalizeCommonWhen(&ln.Common)
+	normalizeChildrenWhen(ln.Children)
 }
 
 func normalizeChildrenWhen(children []Node) {

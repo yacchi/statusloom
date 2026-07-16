@@ -12,20 +12,34 @@
 import type {
     AstNode,
     CommentNode,
+    LayoutChild,
     LayoutNode,
     LineChild,
     LineNode,
+    ResponsiveNode,
     StatusloomNode,
+    VariantNode,
 } from "./types.ts";
 
 // ---- ID paths ----
+//
+// See DSL_API.md "Node IDs". A layout child at position p ("L{i}.{p}") is
+// either a line (continues straight into "child"/"colorRule" steps, exactly
+// as before responsive containers existed) or a responsive (continues with
+// "v{v}" into its variants, then a plain line index, then the same
+// "child"/"colorRule" tail). A responsive-free layout's line ids are
+// therefore byte-identical to the pre-responsive scheme.
 
 export type IdStep =
     | { t: "git" }
     | { t: "rootComment"; k: number }
     | { t: "layout"; i: number }
     | { t: "layoutComment"; k: number }
-    | { t: "line"; j: number }
+    | { t: "layoutChild"; p: number }
+    | { t: "responsiveComment"; k: number }
+    | { t: "variant"; v: number }
+    | { t: "variantComment"; k: number }
+    | { t: "variantLine"; j: number }
     | { t: "child"; k: number }
     | { t: "colorRule"; c: number };
 
@@ -39,8 +53,6 @@ export function parseNodeId(id: string): IdStep[] | null {
         return [{ t: "git" }];
     }
     const parts = id.split(".");
-    const steps: IdStep[] = [];
-    let idx = 0;
 
     if (parts[0] === "root") {
         const m = /^c(\d+)$/.exec(parts[1] ?? "");
@@ -54,22 +66,62 @@ export function parseNodeId(id: string): IdStep[] | null {
     if (!lm) {
         return null;
     }
-    steps.push({ t: "layout", i: Number(lm[1]) });
-    idx = 1;
+    const steps: IdStep[] = [{ t: "layout", i: Number(lm[1]) }];
+    let idx = 1;
 
-    if (idx < parts.length) {
-        const cm = /^c(\d+)$/.exec(parts[idx]);
-        if (cm) {
+    if (idx >= parts.length) {
+        return steps; // "L{i}" — the layout itself
+    }
+
+    const lc = /^c(\d+)$/.exec(parts[idx]);
+    if (lc) {
+        if (parts.length !== idx + 1) {
+            return null;
+        }
+        steps.push({ t: "layoutComment", k: Number(lc[1]) });
+        return steps;
+    }
+    if (!/^\d+$/.test(parts[idx])) {
+        return null;
+    }
+    steps.push({ t: "layoutChild", p: Number(parts[idx]) });
+    idx += 1;
+
+    if (idx >= parts.length) {
+        return steps; // "L{i}.{p}" — the line or responsive itself
+    }
+
+    const rc = /^c(\d+)$/.exec(parts[idx]);
+    if (rc) {
+        if (parts.length !== idx + 1) {
+            return null;
+        }
+        steps.push({ t: "responsiveComment", k: Number(rc[1]) });
+        return steps;
+    }
+
+    const vm = /^v(\d+)$/.exec(parts[idx]);
+    if (vm) {
+        steps.push({ t: "variant", v: Number(vm[1]) });
+        idx += 1;
+
+        if (idx >= parts.length) {
+            return steps; // "L{i}.{p}.v{v}" — the variant itself
+        }
+
+        const vc = /^c(\d+)$/.exec(parts[idx]);
+        if (vc) {
             if (parts.length !== idx + 1) {
                 return null;
             }
-            steps.push({ t: "layoutComment", k: Number(cm[1]) });
+            steps.push({ t: "variantComment", k: Number(vc[1]) });
             return steps;
         }
+
         if (!/^\d+$/.test(parts[idx])) {
             return null;
         }
-        steps.push({ t: "line", j: Number(parts[idx]) });
+        steps.push({ t: "variantLine", j: Number(parts[idx]) });
         idx += 1;
     }
 
@@ -168,8 +220,16 @@ function childOf(node: AstNode, step: IdStep): AstNode | null {
             return node.kind === "statusloom" ? (node.layouts[step.i] ?? null) : null;
         case "layoutComment":
             return node.kind === "layout" ? (node.comments?.[step.k] ?? null) : null;
-        case "line":
-            return node.kind === "layout" ? (node.lines[step.j] ?? null) : null;
+        case "layoutChild":
+            return node.kind === "layout" ? (node.children[step.p] ?? null) : null;
+        case "responsiveComment":
+            return node.kind === "responsive" ? (node.comments?.[step.k] ?? null) : null;
+        case "variant":
+            return node.kind === "responsive" ? (node.variants[step.v] ?? null) : null;
+        case "variantComment":
+            return node.kind === "variant" ? (node.comments?.[step.k] ?? null) : null;
+        case "variantLine":
+            return node.kind === "variant" ? (node.lines[step.j] ?? null) : null;
         case "child":
             return node.kind === "line" || node.kind === "span"
                 ? (node.children[step.k] ?? null)
@@ -266,9 +326,25 @@ function replaceChild(node: AstNode, step: IdStep, next: AstNode | null): AstNod
             const l = node as LayoutNode;
             return { ...l, comments: spliceArr(l.comments ?? [], step.k, next as CommentNode | null) };
         }
-        case "line": {
+        case "layoutChild": {
             const l = node as LayoutNode;
-            return { ...l, lines: spliceArr(l.lines, step.j, next as LineNode | null) };
+            return { ...l, children: spliceArr(l.children, step.p, next as LayoutChild | null) };
+        }
+        case "responsiveComment": {
+            const r = node as ResponsiveNode;
+            return { ...r, comments: spliceArr(r.comments ?? [], step.k, next as CommentNode | null) };
+        }
+        case "variant": {
+            const r = node as ResponsiveNode;
+            return { ...r, variants: spliceArr(r.variants, step.v, next as VariantNode | null) };
+        }
+        case "variantComment": {
+            const v = node as VariantNode;
+            return { ...v, comments: spliceArr(v.comments ?? [], step.k, next as CommentNode | null) };
+        }
+        case "variantLine": {
+            const v = node as VariantNode;
+            return { ...v, lines: spliceArr(v.lines, step.j, next as LineNode | null) };
         }
         case "child": {
             const p = node as LineNode; // line or span; both have `children`
@@ -321,12 +397,6 @@ function applyPatch<T extends object>(node: T, patch: AttrPatch): T {
 }
 
 // ---- mixed-content child operations (line/span children) ----
-
-// A position within the current layout's lines grid.
-export interface ChildAddress {
-    line: number; // index into layout.lines
-    index: number; // index into line.children
-}
 
 // Insert `child` into the mixed-content children of `parentId` (a line or
 // span), clamping the index. A no-op for a non-container parent.
@@ -427,34 +497,140 @@ export function adjustIdAfterRemoval(id: string, removedId: string): string {
     return prefix + String(k - 1) + rest.slice(tok.length);
 }
 
-// ---- line operations (within a layout) ----
+// ---- line operations (within a layout or a responsive's variant) ----
 
-export function addLine(root: StatusloomNode, layoutIndex: number): StatusloomNode {
+function newEmptyLine(): LineNode {
+    return { id: "", kind: "line", children: [] };
+}
+
+// Appends an empty line to `containerId` — a layout ("L{i}") or a variant
+// ("L{i}.{p}.v{v}") — a no-op for any other container.
+export function addLine(root: StatusloomNode, containerId: string): StatusloomNode {
+    return transformNode(root, containerId, (node) => {
+        if (node.kind === "layout") {
+            return { ...node, children: [...node.children, newEmptyLine()] };
+        }
+        if (node.kind === "variant") {
+            return { ...node, lines: [...node.lines, newEmptyLine()] };
+        }
+        return node;
+    });
+}
+
+// Removes the line addressed by `lineId` (a layout-level "L{i}.{p}" or a
+// variant-nested "L{i}.{p}.v{v}.{j}"); a plain removeNode alias kept for
+// readability at call sites that are specifically deleting a whole line.
+export function deleteLine(root: StatusloomNode, lineId: string): StatusloomNode {
+    return removeNode(root, lineId);
+}
+
+// ---- responsive / variant operations ----
+
+function newVariant(): VariantNode {
+    return { id: "", kind: "variant", lines: [newEmptyLine()] };
+}
+
+// Appends a new <responsive> (two default variants, each one empty line) to
+// the given layout's children.
+export function addResponsive(root: StatusloomNode, layoutIndex: number): StatusloomNode {
     return transformNode(root, `L${layoutIndex}`, (node) => {
         if (node.kind !== "layout") {
             return node;
         }
-        const line: LineNode = { id: "", kind: "line", children: [] };
-        return { ...node, lines: [...node.lines, line] };
+        const responsive: ResponsiveNode = { id: "", kind: "responsive", variants: [newVariant(), newVariant()] };
+        return { ...node, children: [...node.children, responsive] };
     });
 }
 
-export function deleteLine(
+// Appends an empty-line variant to `responsiveId`.
+export function addVariant(root: StatusloomNode, responsiveId: string): StatusloomNode {
+    return transformNode(root, responsiveId, (node) =>
+        node.kind === "responsive" ? { ...node, variants: [...node.variants, newVariant()] } : node,
+    );
+}
+
+// Inserts `variant` into `responsiveId`'s variants at a clamped index.
+export function insertVariant(
     root: StatusloomNode,
-    layoutIndex: number,
-    lineIndex: number,
+    responsiveId: string,
+    index: number,
+    variant: VariantNode,
 ): StatusloomNode {
-    return removeNode(root, `L${layoutIndex}.${lineIndex}`);
+    return transformNode(root, responsiveId, (node) => {
+        if (node.kind !== "responsive") {
+            return node;
+        }
+        const at = Math.max(0, Math.min(index, node.variants.length));
+        return {
+            ...node,
+            variants: [...node.variants.slice(0, at), variant, ...node.variants.slice(at)],
+        };
+    });
+}
+
+// Removes `variantId`, keeping at least one variant (validation requires
+// every responsive to have >=1 variant); a no-op when it is the last one.
+export function deleteVariant(root: StatusloomNode, variantId: string): StatusloomNode {
+    const responsiveId = parentIdOf(variantId);
+    if (responsiveId === null) {
+        return root;
+    }
+    const responsive = getNode(root, responsiveId);
+    if (!responsive || responsive.kind !== "responsive" || responsive.variants.length <= 1) {
+        return root;
+    }
+    return removeNode(root, variantId);
+}
+
+// Moves the variant at `fromId` so it lands at position `toIndex` of
+// `toResponsiveId`'s variants (the UI only ever reorders within the same
+// responsive, but the caret math mirrors moveChild for any pair). Returns
+// `root` unchanged (same identity) for a no-op move.
+export function moveVariant(
+    root: StatusloomNode,
+    fromId: string,
+    toResponsiveId: string,
+    toIndex: number,
+): StatusloomNode {
+    const steps = parseNodeId(fromId);
+    const last = steps?.[steps.length - 1];
+    if (!last || last.t !== "variant") {
+        return root;
+    }
+    const fromResponsiveId = parentIdOf(fromId);
+    if (fromResponsiveId === null) {
+        return root;
+    }
+    const node = getNode(root, fromId);
+    if (!node || node.kind !== "variant") {
+        return root;
+    }
+    let index = toIndex;
+    if (fromResponsiveId === toResponsiveId) {
+        if (index > last.v) {
+            index -= 1;
+        }
+        if (index === last.v) {
+            return root;
+        }
+    }
+    const removed = removeNode(root, fromId);
+    if (removed === root) {
+        return root;
+    }
+    return insertVariant(removed, toResponsiveId, index, node);
 }
 
 // ---- drop application ----
 
-// The line index (within the edited layout) a drop container belongs to, or
-// null when the id addresses no line (e.g. "root").
+// The layout-child position (index into layout.children) a drop container
+// belongs to — the "row" a chip drop should mark active/selected, whether
+// the container is a plain line or nested inside one of a responsive's
+// variants. Null when the id addresses no layout child (e.g. "root").
 export function lineIndexOfContainerId(id: string): number | null {
     const steps = parseNodeId(id);
-    const line = steps?.find((s) => s.t === "line");
-    return line && line.t === "line" ? line.j : null;
+    const lc = steps?.find((s) => s.t === "layoutChild");
+    return lc && lc.t === "layoutChild" ? lc.p : null;
 }
 
 // Apply a drag & drop result to the tree: a palette payload inserts its node
@@ -562,7 +738,7 @@ export function addLayout(root: StatusloomNode, name?: string): StatusloomNode {
         id: "",
         kind: "layout",
         name: layoutName,
-        lines: [{ id: "", kind: "line", children: [] }],
+        children: [newEmptyLine()],
     };
     const active = activeLayoutIndex(root);
     // The layouts array changed: stamp the root so the serializer reconstructs

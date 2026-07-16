@@ -34,14 +34,35 @@ func normalizeForCompare(doc *Document) *Document {
 		for _, c := range l.Comments {
 			c.Meta = NodeMeta{}
 		}
-		for _, ln := range l.Lines {
-			ln.Meta = NodeMeta{}
-			normalizeCommon(&ln.Common)
-			normalizeChildren(ln.Children)
+		for _, ch := range l.Children {
+			switch c := ch.(type) {
+			case *LineNode:
+				normalizeLineForCompare(c)
+			case *ResponsiveNode:
+				c.Meta = NodeMeta{}
+				for _, cm := range c.Comments {
+					cm.Meta = NodeMeta{}
+				}
+				for _, vr := range c.Variants {
+					vr.Meta = NodeMeta{}
+					for _, cm := range vr.Comments {
+						cm.Meta = NodeMeta{}
+					}
+					for _, ln := range vr.Lines {
+						normalizeLineForCompare(ln)
+					}
+				}
+			}
 		}
 	}
 	// Keep Source out of the comparison; it necessarily differs.
 	return &Document{Root: r}
+}
+
+func normalizeLineForCompare(ln *LineNode) {
+	ln.Meta = NodeMeta{}
+	normalizeCommon(&ln.Common)
+	normalizeChildren(ln.Children)
 }
 
 func normalizeCommon(c *CommonAttributes) {

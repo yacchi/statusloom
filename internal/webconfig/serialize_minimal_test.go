@@ -38,7 +38,7 @@ func modelFieldMap(t *testing.T, ast map[string]any) map[string]any {
 	t.Helper()
 	layouts := ast["layouts"].([]any)
 	l0 := layouts[0].(map[string]any)
-	lines := l0["lines"].([]any)
+	lines := l0["children"].([]any)
 	line0 := lines[0].(map[string]any)
 	children := line0["children"].([]any)
 	f := children[1].(map[string]any)

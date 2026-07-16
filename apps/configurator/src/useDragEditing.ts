@@ -34,8 +34,22 @@ import type { LineChild } from "./types.ts";
 // Draggable id prefix for palette chips; the palette key follows the colon
 // ("field:<name>" or "preset:<id>").
 export const PALETTE_ID_PREFIX = "palette:";
-// Droppable id prefix for whole line rows; the line index follows the dash.
+// Droppable id prefix for a top-level (layout-child) line row; the layout
+// child's position index follows the dash. A responsive-free layout's lines
+// keep this exact scheme, unchanged from before <responsive> existed.
 export const LINE_ID_PREFIX = "line-";
+// Droppable id prefix for a line row nested inside a <responsive>'s variant;
+// the line's own AST id follows the colon (variant-nested lines have no
+// single flat index to key on the way top-level lines do).
+export const VARIANT_LINE_ID_PREFIX = "vline:";
+// Draggable id prefix for a <variant> card being reordered within its
+// <responsive>; the variant's own AST id follows the colon.
+export const VARIANT_ID_PREFIX = "variant:";
+// Synthetic (non-AST) droppable/container id for a responsive's variant
+// list, so the caret math and paint-only drop indicators shared with chip
+// drops (DropTarget / dropFlags) also work for variant reordering. The
+// responsive's own AST id follows the colon.
+export const VARIANT_CONTAINER_PREFIX = "variants-of:";
 
 // A drop container as the drag logic sees it: a line or a span (nested spans
 // included), with the AST node IDs of its direct children (the chips).
@@ -57,10 +71,20 @@ export interface DropTarget {
 
 // What was dragged, resolved at drag start. A palette drag carries the
 // freshly built AST node; a canvas drag carries the existing node's ID plus
-// its kind (needed to reject line-only nodes as span content).
+// its kind (needed to reject line-only nodes as span content); a variant
+// drag reorders a whole <variant> card within its <responsive> and never
+// touches line/span content at all.
 export type DragPayload =
     | { kind: "palette"; node: LineChild }
-    | { kind: "node"; id: string; nodeKind: string };
+    | { kind: "node"; id: string; nodeKind: string }
+    | { kind: "variant"; id: string };
+
+// A <responsive>'s variant list, as the drag logic sees it: the responsive's
+// own AST id plus its variants' AST ids in order (widest first).
+export interface VariantListView {
+    responsiveId: string;
+    variantIds: string[];
+}
 
 interface Rect {
     left: number;
@@ -83,7 +107,12 @@ export function spanContainersOf(children: readonly LineChild[]): ContainerView[
     return out;
 }
 
-function draggedNodeKind(payload: DragPayload): string {
+// The chip-drag payloads computeDropTarget/resolveRawTarget understand —
+// everything but a variant reorder, which never touches line/span content
+// and is resolved separately (resolveVariantDropTarget).
+export type ChipDragPayload = Exclude<DragPayload, { kind: "variant" }>;
+
+function draggedNodeKind(payload: ChipDragPayload): string {
     return payload.kind === "palette" ? payload.node.kind : payload.nodeKind;
 }
 
@@ -94,7 +123,7 @@ function draggedNodeKind(payload: DragPayload): string {
 export function computeDropTarget(
     containers: readonly ContainerView[],
     overId: string,
-    payload: DragPayload,
+    payload: ChipDragPayload,
     pointerX: number | null,
     overRect: Rect | null,
 ): DropTarget | null {
@@ -131,6 +160,11 @@ function resolveRawTarget(
         const line = containers.find((c) => c.kind === "line" && c.lineIndex === n);
         return line ? { containerId: line.id, index: line.childIds.length } : null;
     }
+    if (overId.startsWith(VARIANT_LINE_ID_PREFIX)) {
+        const lineId = overId.slice(VARIANT_LINE_ID_PREFIX.length);
+        const line = containers.find((c) => c.kind === "line" && c.id === lineId);
+        return line ? { containerId: line.id, index: line.childIds.length } : null;
+    }
     // Hovering a span group's own area (its chip): append INTO the span.
     // This takes priority over the span's role as a child chip of its line;
     // placing before/after a span is done via its neighbor chips or the row.
@@ -147,6 +181,31 @@ function resolveRawTarget(
                 overRect !== null &&
                 pointerX > overRect.left + overRect.width / 2;
             return { containerId: c.id, index: after ? j + 1 : j };
+        }
+    }
+    return null;
+}
+
+// Pure: resolve a droppable/sortable id to a variant-reorder caret within
+// `lists`, or null when it addresses no variant list. Mirrors the chip
+// caret math (before/after the hovered card by pointer position) but over a
+// flat variant-id list rather than a container tree — a <variant> never
+// nests into anything else, so there is no span-like "append into" case.
+function resolveVariantDropTarget(
+    lists: readonly VariantListView[],
+    overId: string,
+    pointerX: number | null,
+    overRect: Rect | null,
+): DropTarget | null {
+    for (const list of lists) {
+        const containerId = VARIANT_CONTAINER_PREFIX + list.responsiveId;
+        const j = list.variantIds.indexOf(overId);
+        if (j >= 0) {
+            const after =
+                pointerX !== null &&
+                overRect !== null &&
+                pointerX > overRect.left + overRect.width / 2;
+            return { containerId, index: after ? j + 1 : j };
         }
     }
     return null;
@@ -193,14 +252,19 @@ export interface DragEditing {
 }
 
 interface Args {
-    // The current layout's drop containers (lines + all spans), or null while
-    // nothing is loaded / the DSL is invalid. Read fresh on every event so
-    // the logic never captures a stale tree.
+    // The current layout's drop containers (lines, incl. every variant's
+    // lines, + all spans), or null while nothing is loaded / the DSL is
+    // invalid. Read fresh on every event so the logic never captures a stale
+    // tree.
     getContainers: () => ContainerView[] | null;
+    // Every <responsive>'s variant-id list in the current layout, for
+    // variant-reorder drags; null while nothing is loaded / the DSL is
+    // invalid. Omit when the caller has no responsive containers to manage.
+    getVariantLists?: () => VariantListView[] | null;
     // Build the AST node (and overlay label) for a palette key
     // ("field:<name>" / "preset:<id>"); null cancels the drag.
     makePaletteNode: (key: string) => { node: LineChild; label: string } | null;
-    // Overlay label for an existing canvas chip.
+    // Overlay label for an existing canvas chip or variant card.
     labelForNodeId: (id: string) => string;
     // AST node kind for an existing canvas chip (null = unknown).
     kindForNodeId: (id: string) => string | null;
@@ -210,6 +274,7 @@ interface Args {
 
 export function useDragEditing({
     getContainers,
+    getVariantLists = () => null,
     makePaletteNode,
     labelForNodeId,
     kindForNodeId,
@@ -236,6 +301,10 @@ export function useDragEditing({
                 }
                 payloadRef.current = { kind: "palette", node: made.node };
                 setDragLabel(made.label);
+            } else if (id.startsWith(VARIANT_ID_PREFIX)) {
+                const variantId = id.slice(VARIANT_ID_PREFIX.length);
+                payloadRef.current = { kind: "variant", id: variantId };
+                setDragLabel(labelForNodeId(variantId));
             } else {
                 payloadRef.current = { kind: "node", id, nodeKind: kindForNodeId(id) ?? "" };
                 setDragLabel(labelForNodeId(id));
@@ -244,48 +313,51 @@ export function useDragEditing({
         [kindForNodeId, labelForNodeId, makePaletteNode],
     );
 
+    // Resolves the current drop target for `payload` against `overId`,
+    // dispatching to the variant-list resolver or the chip/container
+    // resolver depending on what is being dragged.
+    const resolveTarget = useCallback(
+        (payload: DragPayload, overId: string, pointerX: number | null, overRect: Rect | null) => {
+            if (payload.kind === "variant") {
+                const lists = getVariantLists();
+                return lists ? resolveVariantDropTarget(lists, overId, pointerX, overRect) : null;
+            }
+            const containers = getContainers();
+            return containers
+                ? computeDropTarget(containers, overId, payload, pointerX, overRect)
+                : null;
+        },
+        [getContainers, getVariantLists],
+    );
+
     const onDragOver = useCallback(
         (e: DragOverEvent) => {
             const payload = payloadRef.current;
-            const containers = getContainers();
-            if (!payload || !containers) {
+            if (!payload) {
                 return;
             }
             const next = e.over
-                ? computeDropTarget(
-                      containers,
-                      String(e.over.id),
-                      payload,
-                      pointerXOf(e),
-                      overRectOf(e),
-                  )
+                ? resolveTarget(payload, String(e.over.id), pointerXOf(e), overRectOf(e))
                 : null;
             // Bail out (same object) when unchanged so repeated identical
             // drag-over events cause zero re-renders.
             setDropTarget((prev) => (sameTarget(prev, next) ? prev : next));
         },
-        [getContainers],
+        [resolveTarget],
     );
 
     const onDragEnd = useCallback(
         (e: DragEndEvent) => {
             const payload = payloadRef.current;
-            const containers = getContainers();
-            if (payload && containers && e.over) {
-                const target = computeDropTarget(
-                    containers,
-                    String(e.over.id),
-                    payload,
-                    pointerXOf(e),
-                    overRectOf(e),
-                );
+            if (payload && e.over) {
+                const target = resolveTarget(payload, String(e.over.id), pointerXOf(e), overRectOf(e));
                 if (target) {
                     onDrop(payload, target);
                 }
             }
             reset();
         },
-        [getContainers, onDrop, reset],
+        [onDrop, reset, resolveTarget],
     );
 
     return { dragLabel, dropTarget, onDragStart, onDragOver, onDragEnd, onDragCancel: reset };

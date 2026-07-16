@@ -151,6 +151,48 @@ git情報収集の設定。rootの直下に0または1個だけ置ける。省�
 
 複数の`line`を記述した場合は複数行として出力する。
 
+### `responsive` / `variant`
+
+端末幅に応じて表現を切り替えるコンテナ。`responsive`は`layout`直下にのみ書け、幅の**広い順**に複数の`variant`（表現候補）を並べる。数値（マジックナンバー）は書かず、**自動first-fit**でバリアントを選ぶ。
+
+```xml
+<layout active="true">
+  <line><field name="model"/></line>            <!-- 固定行 -->
+  <responsive>
+    <variant>                                     <!-- 広い: 1行 -->
+      <line>
+        <field name="context-percentage" prefix="ctx "/>
+        <text role="separator" padding="1">|</text>
+        <field name="session-cost" prefix="$"/>
+      </line>
+    </variant>
+    <variant>                                     <!-- 狭い: 2行（fallback） -->
+      <line><field name="context-percentage" prefix="ctx "/></line>
+      <line><field name="session-cost" prefix="$"/></line>
+    </variant>
+  </responsive>
+</layout>
+```
+
+選択ルール:
+
+* レンダラは各`variant`の全`line`の自然幅（natural width）を実測し、**全`line`が端末幅（`COLUMNS`）に収まる最初の`variant`**を採用する
+* `variant`が収まる ⟺ その`variant`の**全`line`が収まる**。`line`が収まる ⟺ その`line`の自然幅 ≤ 端末幅
+* 自然幅 = gate（`optional`/`when`）とseparator折りたたみ適用後の、可視なcontent/separatorの表示幅の合算。**`flex`は幅0として扱う**（`flex`は残余を埋めるだけなので、固定部が幅内なら必ず満たせる）
+* どの`variant`も収まらない場合は**最後の`variant`**（＝最も詰めたfallback）を採用する
+* 端末幅が不明（`COLUMNS`未設定など）の場合は**先頭`variant`**（最も広い候補）を採用する（width-unbounded時と一貫）
+
+配置・入れ子ルール:
+
+* `responsive`は`layout`直下にのみ記述できる。`line`/`span`内やroot直下はvalidation error
+* `responsive`の子は`variant`のみ（1個以上必須。0個はvalidation error）
+* `variant`の子は`line`のみ（1個以上必須。0個はvalidation error）
+* `responsive`の入れ子は禁止（`variant`内や`responsive`直下に`responsive`を置くとvalidation error）
+* `responsive`/`variant`は装飾属性を持たない
+* activeなlayoutは常にちょうど1つ、というルールは不変（`responsive`はその内側）
+
+compactとの関係: `compact-threshold`によるcompact変換は`responsive`と当面併存する（compactは全体の閾値、`responsive`はコンテナ単位の表現切替）。自然幅の計測はその時点のcompact状態で行う。
+
 ### `span`
 
 子ノードをまとめるコンテナ。

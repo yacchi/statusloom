@@ -790,6 +790,139 @@ input[type="number"] {
     margin-top: 10px;
 }
 
+/* ---- responsive containers / variant cards ---- */
+
+.canvas-row.responsive-row {
+    align-items: flex-start;
+}
+
+.responsive-block {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    flex: 1;
+    flex-wrap: wrap;
+}
+
+.variant-track {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.variant-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 140px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: var(--panel-2);
+}
+
+/* The width-selected variant — the feature's whole point made visible. */
+.variant-card.variant-selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+}
+
+.variant-card.dragging {
+    opacity: 0.3;
+}
+
+/* Paint-only drop indicator, same convention as .seg-chip.drop-before/after
+   (see the #185 regression note in useDragEditing.ts): never affects layout. */
+.variant-card.drop-before::before,
+.variant-card.drop-after::before {
+    content: "";
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    width: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+    pointer-events: none;
+}
+
+.variant-card.drop-before::before {
+    left: -6px;
+}
+
+.variant-card.drop-after::before {
+    right: -6px;
+}
+
+.variant-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.variant-drag {
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+    color: var(--text-dim);
+    font-size: 11px;
+}
+
+.variant-drag:hover {
+    color: var(--accent);
+}
+
+.variant-title {
+    flex: 1;
+    font-size: 11px;
+    opacity: 0.8;
+    white-space: nowrap;
+}
+
+.variant-selected-badge {
+    margin-left: 6px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 0 5px;
+    color: var(--accent);
+    font-size: 10px;
+}
+
+.variant-delete {
+    padding: 0 4px;
+    font-size: 11px;
+    opacity: 0.5;
+    background: transparent;
+}
+
+.variant-delete:hover {
+    opacity: 1;
+    color: var(--danger);
+}
+
+.variant-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.variant-add-line,
+.variant-add {
+    align-self: flex-start;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    background: transparent;
+    opacity: 0.6;
+    font-size: 11px;
+}
+
+.variant-add-line:hover,
+.variant-add:hover {
+    opacity: 1;
+    border-color: var(--accent);
+}
+
 .drag-overlay-chip {
     background: var(--panel-2);
     color: var(--text);

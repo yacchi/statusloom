@@ -12,10 +12,16 @@ package webconfig
 //	root.c{k}            the k-th XML comment directly under the root
 //	L{i}                 the i-th <layout>
 //	L{i}.c{k}            the k-th comment directly under layout i
-//	L{i}.{j}             the j-th <line> of layout i (index into layout.Lines)
+//	L{i}.{p}             the p-th child of layout i (a line or a responsive;
+//	                     index into layout.Children)
+//	L{i}.{p}.v{v}        the v-th <variant> of responsive L{i}.{p}
+//	L{i}.{p}.v{v}.{j}    the j-th <line> of that variant
 //	{parent}.{k}         the k-th mixed-content child of a line/span
 //	                     (index into Children; spans nest, so paths grow)
 //	{owner}.cr{c}        the c-th <color-rule> of a field/span/text owner
+//
+// A responsive-free layout's line at position p keeps the historical L{i}.{p}
+// form (child index == line index), so IDs are unchanged for such documents.
 //
 // The same traversal produces the AST JSON (buildAST) and the dsl.Node ->
 // node-ID map used to label preview segments, so an ID in the AST always
@@ -137,14 +143,58 @@ func (b *astBuilder) layout(l *dsl.LayoutNode, i int) map[string]any {
 	if l.Active != nil {
 		m["active"] = *l.Active
 	}
-	lines := make([]any, 0, len(l.Lines))
-	for j, ln := range l.Lines {
-		lines = append(lines, b.line(ln, fmt.Sprintf("%s.%d", id, j)))
+	children := make([]any, 0, len(l.Children))
+	for p, ch := range l.Children {
+		childID := fmt.Sprintf("%s.%d", id, p)
+		switch c := ch.(type) {
+		case *dsl.LineNode:
+			children = append(children, b.line(c, childID))
+		case *dsl.ResponsiveNode:
+			children = append(children, b.responsive(c, childID))
+		}
 	}
-	m["lines"] = lines
+	m["children"] = children
 	if len(l.Comments) > 0 {
 		cs := make([]any, 0, len(l.Comments))
 		for k, c := range l.Comments {
+			cs = append(cs, b.comment(c, fmt.Sprintf("%s.c%d", id, k)))
+		}
+		m["comments"] = cs
+	}
+	return m
+}
+
+// responsive emits a <responsive> container node: kind "responsive" with a
+// "variants" array (and optional interleaved "comments").
+func (b *astBuilder) responsive(r *dsl.ResponsiveNode, id string) map[string]any {
+	m := map[string]any{"id": id, "kind": "responsive", "range": rangeJSON(r.Meta.SourceRange)}
+	variants := make([]any, 0, len(r.Variants))
+	for v, vr := range r.Variants {
+		variants = append(variants, b.variant(vr, fmt.Sprintf("%s.v%d", id, v)))
+	}
+	m["variants"] = variants
+	if len(r.Comments) > 0 {
+		cs := make([]any, 0, len(r.Comments))
+		for k, c := range r.Comments {
+			cs = append(cs, b.comment(c, fmt.Sprintf("%s.c%d", id, k)))
+		}
+		m["comments"] = cs
+	}
+	return m
+}
+
+// variant emits a <variant> node: kind "variant" with a "lines" array (and
+// optional interleaved "comments").
+func (b *astBuilder) variant(vr *dsl.VariantNode, id string) map[string]any {
+	m := map[string]any{"id": id, "kind": "variant", "range": rangeJSON(vr.Meta.SourceRange)}
+	lines := make([]any, 0, len(vr.Lines))
+	for j, ln := range vr.Lines {
+		lines = append(lines, b.line(ln, fmt.Sprintf("%s.%d", id, j)))
+	}
+	m["lines"] = lines
+	if len(vr.Comments) > 0 {
+		cs := make([]any, 0, len(vr.Comments))
+		for k, c := range vr.Comments {
 			cs = append(cs, b.comment(c, fmt.Sprintf("%s.c%d", id, k)))
 		}
 		m["comments"] = cs
@@ -320,10 +370,13 @@ type astNodeJSON struct {
 	IncludeUntracked *bool `json:"include-untracked"`
 	CollectNumstat   *bool `json:"collect-numstat"`
 
-	// layout
-	Name   string        `json:"name"` // also field name
-	Active *bool         `json:"active"`
-	Lines  []astNodeJSON `json:"lines"`
+	// layout / responsive / variant
+	Name     string        `json:"name"` // also field name
+	Active   *bool         `json:"active"`
+	Lines    []astNodeJSON `json:"lines"`    // variant's lines
+	Variants []astNodeJSON `json:"variants"` // responsive's variants
+	// (a layout's ordered line/responsive children use the shared "children"
+	// field below.)
 
 	// common display attributes
 	Color         string        `json:"color"`
@@ -409,13 +462,40 @@ func jsonToDocument(root astNodeJSON) (*dsl.Document, error) {
 
 func jsonToLayout(lj astNodeJSON) *dsl.LayoutNode {
 	ln := &dsl.LayoutNode{Meta: metaJSON(lj), Name: lj.Name, Active: lj.Active}
-	for _, linej := range lj.Lines {
-		ln.Lines = append(ln.Lines, jsonToLine(linej))
+	for _, cj := range lj.Children {
+		switch cj.Kind {
+		case "responsive":
+			ln.Children = append(ln.Children, jsonToResponsive(cj))
+		case "line":
+			ln.Children = append(ln.Children, jsonToLine(cj))
+		}
 	}
 	for i := range lj.Comments {
 		ln.Comments = append(ln.Comments, jsonToComment(lj.Comments[i]))
 	}
 	return ln
+}
+
+func jsonToResponsive(j astNodeJSON) *dsl.ResponsiveNode {
+	r := &dsl.ResponsiveNode{Meta: metaJSON(j)}
+	for _, vj := range j.Variants {
+		r.Variants = append(r.Variants, jsonToVariant(vj))
+	}
+	for i := range j.Comments {
+		r.Comments = append(r.Comments, jsonToComment(j.Comments[i]))
+	}
+	return r
+}
+
+func jsonToVariant(j astNodeJSON) *dsl.VariantNode {
+	vr := &dsl.VariantNode{Meta: metaJSON(j)}
+	for _, linej := range j.Lines {
+		vr.Lines = append(vr.Lines, jsonToLine(linej))
+	}
+	for i := range j.Comments {
+		vr.Comments = append(vr.Comments, jsonToComment(j.Comments[i]))
+	}
+	return vr
 }
 
 func jsonToLine(j astNodeJSON) *dsl.LineNode {

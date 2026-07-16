@@ -232,11 +232,96 @@ func (p *parser) parseLayout(se xml.StartElement, start int) *LayoutNode {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
+			switch t.Name.Local {
+			case "line":
+				n.Children = append(n.Children, p.parseLine(t, tstart))
+			case "responsive":
+				n.Children = append(n.Children, p.parseResponsive(t, tstart))
+			default:
+				p.skipElement()
+				p.errf(SourceRange{Start: tstart, End: p.prevOffset}, "unknown element <%s> inside <layout>; expected <line> or <responsive>", t.Name.Local)
+			}
+		case xml.Comment:
+			n.Comments = append(n.Comments, &CommentNode{
+				Meta: NodeMeta{SourceRange: SourceRange{Start: tstart, End: p.prevOffset}},
+				Text: string(t),
+			})
+		case xml.CharData:
+			p.strayText(t, tstart)
+		case xml.EndElement:
+			n.Meta.SourceRange = SourceRange{Start: start, End: p.prevOffset}
+			return n
+		}
+	}
+	n.Meta.SourceRange = SourceRange{Start: start, End: p.prevOffset}
+	return n
+}
+
+// parseResponsive parses a <responsive> container: its children must be
+// <variant> elements only (markup.md "responsive"). Comments directly under it
+// are preserved; any other element (including a nested <responsive>) or
+// non-whitespace text is reported as an invalid-nesting error but consumed to
+// keep the decoder balanced. Variant-count validation (>=1) is done in Validate.
+func (p *parser) parseResponsive(se xml.StartElement, start int) *ResponsiveNode {
+	openEnd := p.prevOffset
+	tagRange := SourceRange{Start: start, End: openEnd}
+	n := &ResponsiveNode{}
+	for _, a := range se.Attr {
+		p.errf(tagRange, "unknown attribute %q on <responsive>", a.Name.Local)
+	}
+	for {
+		tok, tstart, ok := p.token()
+		if !ok {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "variant" {
+				n.Variants = append(n.Variants, p.parseVariant(t, tstart))
+			} else {
+				p.skipElement()
+				p.errf(SourceRange{Start: tstart, End: p.prevOffset}, "unknown element <%s> inside <responsive>; expected <variant>", t.Name.Local)
+			}
+		case xml.Comment:
+			n.Comments = append(n.Comments, &CommentNode{
+				Meta: NodeMeta{SourceRange: SourceRange{Start: tstart, End: p.prevOffset}},
+				Text: string(t),
+			})
+		case xml.CharData:
+			p.strayText(t, tstart)
+		case xml.EndElement:
+			n.Meta.SourceRange = SourceRange{Start: start, End: p.prevOffset}
+			return n
+		}
+	}
+	n.Meta.SourceRange = SourceRange{Start: start, End: p.prevOffset}
+	return n
+}
+
+// parseVariant parses a <variant> inside a <responsive>: its children must be
+// <line> elements only (markup.md "responsive"). Comments are preserved; any
+// other element (including a nested <responsive>) or non-whitespace text is a
+// reported invalid-nesting error. Line-count validation (>=1) is done in
+// Validate.
+func (p *parser) parseVariant(se xml.StartElement, start int) *VariantNode {
+	openEnd := p.prevOffset
+	tagRange := SourceRange{Start: start, End: openEnd}
+	n := &VariantNode{}
+	for _, a := range se.Attr {
+		p.errf(tagRange, "unknown attribute %q on <variant>", a.Name.Local)
+	}
+	for {
+		tok, tstart, ok := p.token()
+		if !ok {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
 			if t.Name.Local == "line" {
 				n.Lines = append(n.Lines, p.parseLine(t, tstart))
 			} else {
 				p.skipElement()
-				p.errf(SourceRange{Start: tstart, End: p.prevOffset}, "unknown element <%s> inside <layout>; expected <line>", t.Name.Local)
+				p.errf(SourceRange{Start: tstart, End: p.prevOffset}, "unknown element <%s> inside <variant>; expected <line>", t.Name.Local)
 			}
 		case xml.Comment:
 			n.Comments = append(n.Comments, &CommentNode{

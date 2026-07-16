@@ -238,6 +238,56 @@ func serializeLayout(b *strings.Builder, depth int, n *LayoutNode) {
 	b.WriteString("\n")
 
 	var items []serItem
+	for _, ch := range n.Children {
+		switch c := ch.(type) {
+		case *LineNode:
+			ln := c
+			items = append(items, serItem{ln.Meta.SourceRange.Start, func() { serializeLine(b, depth+1, ln) }})
+		case *ResponsiveNode:
+			rn := c
+			items = append(items, serItem{rn.Meta.SourceRange.Start, func() { serializeResponsive(b, depth+1, rn) }})
+		}
+	}
+	for _, c := range n.Comments {
+		c := c
+		items = append(items, serItem{c.Meta.SourceRange.Start, func() { serializeComment(b, depth+1, c) }})
+	}
+	emitSorted(items)
+
+	b.WriteString(ind)
+	b.WriteString("</layout>\n")
+}
+
+// serializeResponsive emits a <responsive> container: its <variant> children
+// and any interleaved comments, in source-position order.
+func serializeResponsive(b *strings.Builder, depth int, n *ResponsiveNode) {
+	ind := indentStr(depth)
+	b.WriteString(ind)
+	b.WriteString("<responsive>\n")
+
+	var items []serItem
+	for _, vr := range n.Variants {
+		vr := vr
+		items = append(items, serItem{vr.Meta.SourceRange.Start, func() { serializeVariant(b, depth+1, vr) }})
+	}
+	for _, c := range n.Comments {
+		c := c
+		items = append(items, serItem{c.Meta.SourceRange.Start, func() { serializeComment(b, depth+1, c) }})
+	}
+	emitSorted(items)
+
+	b.WriteString(ind)
+	b.WriteString("</responsive>\n")
+}
+
+// serializeVariant emits a <variant>: its <line> children and any interleaved
+// comments, in source-position order.
+func serializeVariant(b *strings.Builder, depth int, n *VariantNode) {
+	ind := indentStr(depth)
+	b.WriteString(ind)
+	b.WriteString("<variant>\n")
+
+	var items []serItem
 	for _, l := range n.Lines {
 		l := l
 		items = append(items, serItem{l.Meta.SourceRange.Start, func() { serializeLine(b, depth+1, l) }})
@@ -249,7 +299,7 @@ func serializeLayout(b *strings.Builder, depth int, n *LayoutNode) {
 	emitSorted(items)
 
 	b.WriteString(ind)
-	b.WriteString("</layout>\n")
+	b.WriteString("</variant>\n")
 }
 
 // writeLineOpenTag writes "<line ...>" up to but not including the closing

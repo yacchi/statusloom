@@ -4,11 +4,14 @@ import type { DragEndEvent, DragOverEvent, DragStartEvent } from "@dnd-kit/core"
 import {
     LINE_ID_PREFIX,
     PALETTE_ID_PREFIX,
+    VARIANT_CONTAINER_PREFIX,
+    VARIANT_ID_PREFIX,
     computeDropTarget,
     useDragEditing,
     type ContainerView,
     type DragPayload,
     type DropTarget,
+    type VariantListView,
 } from "./useDragEditing.ts";
 import type { LineChild } from "./types.ts";
 
@@ -442,5 +445,110 @@ describe("useDragEditing", () => {
             ),
         );
         expect(onDrop).not.toHaveBeenCalled();
+    });
+});
+
+// Reordering <variant> cards is a structurally different drag from a chip
+// drop (it never touches line/span content), resolved against
+// getVariantLists rather than getContainers, but sharing the same
+// DropTarget/dropFlags painting contract via the synthetic
+// VARIANT_CONTAINER_PREFIX container id.
+describe("useDragEditing: variant reorder", () => {
+    function variantSetup(lists: VariantListView[] | null = [{
+        responsiveId: "L0.1",
+        variantIds: ["L0.1.v0", "L0.1.v1", "L0.1.v2"],
+    }]) {
+        const onDrop = vi.fn<(payload: DragPayload, target: DropTarget) => void>();
+        const view = renderHook(() =>
+            useDragEditing({
+                getContainers: () => null,
+                getVariantLists: () => lists,
+                makePaletteNode: () => null,
+                labelForNodeId: (id) => `node ${id}`,
+                kindForNodeId: () => null,
+                onDrop,
+            }),
+        );
+        return { view, onDrop };
+    }
+
+    it("drags a variant card and reports a reorder target on drop", () => {
+        const { view, onDrop } = variantSetup();
+
+        act(() =>
+            view.result.current.onDragStart(startEvent(`${VARIANT_ID_PREFIX}L0.1.v0`)),
+        );
+        expect(view.result.current.dragLabel).toBe("node L0.1.v0");
+
+        // Dragged center (18) is right of the hovered card's center (15):
+        // an after-caret, landing past the last variant (index 3).
+        act(() =>
+            view.result.current.onDragOver(
+                overEvent(`${VARIANT_ID_PREFIX}L0.1.v0`, "L0.1.v2", {
+                    activeCenter: 18,
+                    overLeft: 10,
+                    overWidth: 10,
+                }),
+            ),
+        );
+        expect(view.result.current.dropTarget).toEqual({
+            containerId: `${VARIANT_CONTAINER_PREFIX}L0.1`,
+            index: 3,
+        });
+
+        act(() =>
+            view.result.current.onDragEnd(
+                endEvent(`${VARIANT_ID_PREFIX}L0.1.v0`, "L0.1.v2", {
+                    activeCenter: 18,
+                    overLeft: 10,
+                    overWidth: 10,
+                }),
+            ),
+        );
+        expect(onDrop).toHaveBeenCalledTimes(1);
+        expect(onDrop.mock.calls[0][0]).toEqual({ kind: "variant", id: "L0.1.v0" });
+        expect(onDrop.mock.calls[0][1]).toEqual({
+            containerId: `${VARIANT_CONTAINER_PREFIX}L0.1`,
+            index: 3,
+        });
+    });
+
+    it("stays inert when getVariantLists returns null (read-only while the DSL is invalid)", () => {
+        const { view, onDrop } = variantSetup(null);
+
+        act(() =>
+            view.result.current.onDragStart(startEvent(`${VARIANT_ID_PREFIX}L0.1.v0`)),
+        );
+        act(() =>
+            view.result.current.onDragOver(
+                overEvent(`${VARIANT_ID_PREFIX}L0.1.v0`, "L0.1.v2"),
+            ),
+        );
+        expect(view.result.current.dropTarget).toBeNull();
+        act(() =>
+            view.result.current.onDragEnd(
+                endEvent(`${VARIANT_ID_PREFIX}L0.1.v0`, "L0.1.v2"),
+            ),
+        );
+        expect(onDrop).not.toHaveBeenCalled();
+    });
+
+    it("resolves to null (and cancels) when dropped outside any variant list", () => {
+        const { view, onDrop } = variantSetup();
+        act(() =>
+            view.result.current.onDragStart(startEvent(`${VARIANT_ID_PREFIX}L0.1.v0`)),
+        );
+        act(() =>
+            view.result.current.onDragEnd(endEvent(`${VARIANT_ID_PREFIX}L0.1.v0`, "L0.1.v0")),
+        );
+        // Hovering the dragged card itself resolves to its own index (0) —
+        // dnd-kit's sortable semantics tolerate this as a no-op reorder; the
+        // hook still calls onDrop (App.tsx's moveVariant is itself a no-op
+        // for this case).
+        expect(onDrop).toHaveBeenCalledTimes(1);
+        expect(onDrop.mock.calls[0][1]).toEqual({
+            containerId: `${VARIANT_CONTAINER_PREFIX}L0.1`,
+            index: 0,
+        });
     });
 });

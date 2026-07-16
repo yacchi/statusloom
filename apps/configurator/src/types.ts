@@ -125,11 +125,35 @@ export interface LineNode extends AstBase, CommonAttrs {
     children: LineChild[];
 }
 
+// A layout's ordered child: its rendered rows (LineNode) interleaved with any
+// width-adaptive containers (ResponsiveNode). A responsive-free layout's
+// children are all LineNode, and its node IDs are unchanged from before this
+// type existed (see DSL_API.md "Node IDs").
+export type LayoutChild = LineNode | ResponsiveNode;
+
+// <variant> — one rendering candidate inside a <responsive>. Never appears
+// outside a ResponsiveNode's `variants`; carries no attributes of its own.
+export interface VariantNode extends AstBase {
+    kind: "variant";
+    lines: LineNode[];
+    comments?: CommentNode[];
+}
+
+// <responsive> — a layout-child-only, width-adaptive container: the renderer
+// picks the first variant (widest first) all of whose lines fit the terminal
+// width, falling back to the last variant when none fit (unknown width ->
+// the first/widest variant). Carries no attributes of its own.
+export interface ResponsiveNode extends AstBase {
+    kind: "responsive";
+    variants: VariantNode[];
+    comments?: CommentNode[];
+}
+
 export interface LayoutNode extends AstBase {
     kind: "layout";
     name?: string;
     active?: boolean;
-    lines: LineNode[];
+    children: LayoutChild[];
     comments?: CommentNode[];
 }
 
@@ -160,6 +184,8 @@ export type AstNode =
     | StatusloomNode
     | GitNode
     | LayoutNode
+    | ResponsiveNode
+    | VariantNode
     | LineNode
     | LineChild
     | ColorRuleNode;

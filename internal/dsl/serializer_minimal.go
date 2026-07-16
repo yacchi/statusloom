@@ -122,12 +122,53 @@ func layoutClean(l *LayoutNode, src string) bool {
 	if !metaReusable(l.Meta, src) {
 		return false
 	}
-	for _, ln := range l.Lines {
+	for _, ch := range l.Children {
+		switch c := ch.(type) {
+		case *LineNode:
+			if !lineClean(c, src) {
+				return false
+			}
+		case *ResponsiveNode:
+			if !responsiveClean(c, src) {
+				return false
+			}
+		}
+	}
+	for _, c := range l.Comments {
+		if !metaReusable(c.Meta, src) {
+			return false
+		}
+	}
+	return true
+}
+
+func responsiveClean(r *ResponsiveNode, src string) bool {
+	if !metaReusable(r.Meta, src) {
+		return false
+	}
+	for _, vr := range r.Variants {
+		if !variantClean(vr, src) {
+			return false
+		}
+	}
+	for _, c := range r.Comments {
+		if !metaReusable(c.Meta, src) {
+			return false
+		}
+	}
+	return true
+}
+
+func variantClean(vr *VariantNode, src string) bool {
+	if !metaReusable(vr.Meta, src) {
+		return false
+	}
+	for _, ln := range vr.Lines {
 		if !lineClean(ln, src) {
 			return false
 		}
 	}
-	for _, c := range l.Comments {
+	for _, c := range vr.Comments {
 		if !metaReusable(c.Meta, src) {
 			return false
 		}
@@ -213,6 +254,78 @@ func emitMinimalLayout(b *strings.Builder, depth int, n *LayoutNode, src string)
 	b.WriteString("\n")
 
 	var items []serItem
+	for _, ch := range n.Children {
+		switch c := ch.(type) {
+		case *LineNode:
+			ln := c
+			items = append(items, serItem{sortKey(ln.Meta, src), func() { emitMinimalLine(b, depth+1, ln, src) }})
+		case *ResponsiveNode:
+			rn := c
+			items = append(items, serItem{sortKey(rn.Meta, src), func() { emitMinimalResponsive(b, depth+1, rn, src) }})
+		}
+	}
+	for _, c := range n.Comments {
+		c := c
+		items = append(items, serItem{sortKey(c.Meta, src), func() {
+			if metaReusable(c.Meta, src) {
+				reuseSlice(b, depth+1, src, c.Meta.SourceRange)
+			} else {
+				serializeComment(b, depth+1, c)
+			}
+		}})
+	}
+	emitSorted(items)
+
+	b.WriteString(ind)
+	b.WriteString("</layout>\n")
+}
+
+// emitMinimalResponsive reuses a clean <responsive> verbatim, otherwise
+// reconstructs its open/close tags and processes each variant (and interleaved
+// comment) by the minimal-diff rule.
+func emitMinimalResponsive(b *strings.Builder, depth int, n *ResponsiveNode, src string) {
+	if responsiveClean(n, src) {
+		reuseSlice(b, depth, src, n.Meta.SourceRange)
+		return
+	}
+	ind := indentStr(depth)
+	b.WriteString(ind)
+	b.WriteString("<responsive>\n")
+
+	var items []serItem
+	for _, vr := range n.Variants {
+		vr := vr
+		items = append(items, serItem{sortKey(vr.Meta, src), func() { emitMinimalVariant(b, depth+1, vr, src) }})
+	}
+	for _, c := range n.Comments {
+		c := c
+		items = append(items, serItem{sortKey(c.Meta, src), func() {
+			if metaReusable(c.Meta, src) {
+				reuseSlice(b, depth+1, src, c.Meta.SourceRange)
+			} else {
+				serializeComment(b, depth+1, c)
+			}
+		}})
+	}
+	emitSorted(items)
+
+	b.WriteString(ind)
+	b.WriteString("</responsive>\n")
+}
+
+// emitMinimalVariant reuses a clean <variant> verbatim, otherwise reconstructs
+// its open/close tags and processes each line (and interleaved comment) by the
+// minimal-diff rule.
+func emitMinimalVariant(b *strings.Builder, depth int, n *VariantNode, src string) {
+	if variantClean(n, src) {
+		reuseSlice(b, depth, src, n.Meta.SourceRange)
+		return
+	}
+	ind := indentStr(depth)
+	b.WriteString(ind)
+	b.WriteString("<variant>\n")
+
+	var items []serItem
 	for _, l := range n.Lines {
 		l := l
 		items = append(items, serItem{sortKey(l.Meta, src), func() { emitMinimalLine(b, depth+1, l, src) }})
@@ -230,7 +343,7 @@ func emitMinimalLayout(b *strings.Builder, depth int, n *LayoutNode, src string)
 	emitSorted(items)
 
 	b.WriteString(ind)
-	b.WriteString("</layout>\n")
+	b.WriteString("</variant>\n")
 }
 
 func emitMinimalLine(b *strings.Builder, depth int, n *LineNode, src string) {

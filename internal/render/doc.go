@@ -36,10 +36,11 @@ type DocSegment struct {
 }
 
 // RenderDocument renders the active layout of a DSL document into per-line,
-// per-leaf segments. The result is 1:1 with the layout's lines, including
-// omitted ones (a line with no visible content). It does not substitute the
-// fallback line; RenderDocumentString does that when every line is omitted.
-// A nil document, missing root, or layout-less document yields nil.
+// per-leaf segments. The result is 1:1 with the layout's rendered lines
+// (a <responsive> container contributes the lines of its selected variant),
+// including omitted ones (a line with no visible content). It does not
+// substitute the fallback line; RenderDocumentString does that when every line
+// is omitted. A nil document, missing root, or layout-less document yields nil.
 func RenderDocument(snap schema.StatusSnapshot, doc *dsl.Document, opts Options) []DocLine {
 	if doc == nil || doc.Root == nil {
 		return nil
@@ -49,11 +50,68 @@ func RenderDocument(snap schema.StatusSnapshot, doc *dsl.Document, opts Options)
 		return nil
 	}
 	e := newDocEval(snap, doc, opts)
-	out := make([]DocLine, 0, len(layout.Lines))
-	for _, ln := range layout.Lines {
-		out = append(out, e.renderLineDoc(ln))
+	out := make([]DocLine, 0, len(layout.Children))
+	for _, ch := range layout.Children {
+		switch c := ch.(type) {
+		case *dsl.LineNode:
+			out = append(out, e.renderLineDoc(c))
+		case *dsl.ResponsiveNode:
+			for _, ln := range e.selectVariant(c) {
+				out = append(out, e.renderLineDoc(ln))
+			}
+		}
 	}
 	return out
+}
+
+// selectVariant chooses a <responsive> container's rendering variant by
+// automatic first-fit (markup.md "responsive"): the first variant all of whose
+// lines fit the terminal width. When the width is unknown (opts.Width <= 0) the
+// first (widest) variant is used, consistent with width-unbounded rendering.
+// When no variant fits, the last variant (the most compact fallback) is used.
+// A variant with no lines cannot occur after validation; an empty container
+// yields no lines.
+func (e *docEval) selectVariant(r *dsl.ResponsiveNode) []*dsl.LineNode {
+	if len(r.Variants) == 0 {
+		return nil
+	}
+	if e.opts.Width <= 0 {
+		return r.Variants[0].Lines
+	}
+	for _, vr := range r.Variants {
+		if e.variantFits(vr) {
+			return vr.Lines
+		}
+	}
+	return r.Variants[len(r.Variants)-1].Lines
+}
+
+// variantFits reports whether every line of a variant fits the terminal width,
+// i.e. each line's natural width is <= opts.Width.
+func (e *docEval) variantFits(vr *dsl.VariantNode) bool {
+	for _, ln := range vr.Lines {
+		if e.lineNaturalWidth(ln) > e.opts.Width {
+			return false
+		}
+	}
+	return true
+}
+
+// lineNaturalWidth measures a line's natural (fixed) width for variant fit
+// selection: the same base width computeFlexWidths uses (visible content +
+// separator display widths, flex pieces counted as 0). It mirrors renderLineDoc
+// up through separator collapsing (markSeparators) so the measured shape
+// matches what would be rendered, then sums via the shared baseWidth helper.
+func (e *docEval) lineNaturalWidth(line *dsl.LineNode) int {
+	pieces := e.flattenLine(line)
+	pieces = e.preparePowerlinePieces(pieces)
+	e.applyPowerlineSegments(pieces)
+	ps := make([]piece, len(pieces))
+	for i, fp := range pieces {
+		ps[i] = piece{kind: fp.kind, plain: fp.plain, visible: fp.visible, flex: fp.flex}
+	}
+	markSeparators(ps)
+	return baseWidth(ps)
 }
 
 // RenderDocumentString renders a DSL document to newline-joined output,

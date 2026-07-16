@@ -50,6 +50,11 @@ const EN = {
     omittedBadge: "omitted at this width",
     rendering: "rendering…",
     noPreview: "No preview yet.",
+    // responsive / variant
+    helpResponsive:
+        "Width-adaptive container: picks the first variant (widest first) whose lines all fit the current width, or the last variant when none fit.",
+    variantLabel: "Variant",
+    variantSelectedBadge: "selected at this width",
     // layout tabs
     layoutTabHint: "Click to edit this layout; double-click to rename.",
     layoutActive: "● active",
@@ -165,6 +170,10 @@ const JA: Record<MessageKey, string> = {
     omittedBadge: "この幅では省略されます",
     rendering: "描画中…",
     noPreview: "プレビューはまだありません。",
+    helpResponsive:
+        "幅に応じて表示を切り替えるコンテナです。全行が収まる最初のバリアント（広い順）を採用し、どれも収まらない場合は最後のバリアントを使います。",
+    variantLabel: "Variant",
+    variantSelectedBadge: "この幅で選択中",
     layoutTabHint: "クリックでこのレイアウトを編集、ダブルクリックで名前変更。",
     layoutActive: "● active",
     layoutSetActive: "○ set active",

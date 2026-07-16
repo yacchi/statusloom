@@ -77,7 +77,7 @@ func (v *validator) validateLayouts(layouts []*LayoutNode) {
 				v.errf(l.Meta.SourceRange, "multiple active layouts; exactly one layout may be active")
 			}
 		}
-		v.validateLine(l)
+		v.validateLayoutChildren(l)
 	}
 	if activeCount == 0 {
 		if !(len(layouts) == 1 && layouts[0].Active == nil) {
@@ -86,12 +86,39 @@ func (v *validator) validateLayouts(layouts []*LayoutNode) {
 	}
 }
 
-func (v *validator) validateLine(l *LayoutNode) {
-	for _, ln := range l.Lines {
-		v.validateCommon(ln.Common, ln.Meta.SourceRange, "")
-		for _, ch := range ln.Children {
-			v.validateNode(ch)
+// validateLayoutChildren validates a layout's ordered line / responsive
+// children. A <responsive> must hold at least one <variant>, and each
+// <variant> at least one <line> (markup.md "responsive"); placement/nesting
+// violations were already reported by the parser.
+func (v *validator) validateLayoutChildren(l *LayoutNode) {
+	for _, ch := range l.Children {
+		switch c := ch.(type) {
+		case *LineNode:
+			v.validateLineNode(c)
+		case *ResponsiveNode:
+			v.validateResponsive(c)
 		}
+	}
+}
+
+func (v *validator) validateResponsive(r *ResponsiveNode) {
+	if len(r.Variants) == 0 {
+		v.errf(r.Meta.SourceRange, "<responsive> requires at least one <variant>")
+	}
+	for _, vr := range r.Variants {
+		if len(vr.Lines) == 0 {
+			v.errf(vr.Meta.SourceRange, "<variant> requires at least one <line>")
+		}
+		for _, ln := range vr.Lines {
+			v.validateLineNode(ln)
+		}
+	}
+}
+
+func (v *validator) validateLineNode(ln *LineNode) {
+	v.validateCommon(ln.Common, ln.Meta.SourceRange, "")
+	for _, ch := range ln.Children {
+		v.validateNode(ch)
 	}
 }
 

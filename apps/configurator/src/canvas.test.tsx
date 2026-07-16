@@ -12,8 +12,10 @@ import {
     installFakeDslServer,
     lay,
     ln,
+    resp,
     spn,
     txt,
+    variant,
     type FakeServer,
 } from "./test/fakeDsl.ts";
 import type { StatusloomNode } from "./types.ts";
@@ -253,13 +255,13 @@ describe("canvas drop indicators (standalone)", () => {
         const { assignIds } = await import("./test/fakeDsl.ts");
 
         const ast = assignIds(testDoc());
-        const lines = ast.layouts[0].lines;
+        const children = ast.layouts[0].children;
         const noop = () => {};
         const renderWith = (dropTarget: { containerId: string; index: number } | null) =>
             render(
                 <DndContext>
                     <Canvas
-                        lines={lines}
+                        children={children}
                         previewLines={null}
                         fallback={null}
                         selection={null}
@@ -279,7 +281,11 @@ describe("canvas drop indicators (standalone)", () => {
                         onDeselect={noop}
                         onActivateLine={noop}
                         onAddLine={noop}
+                        onAddResponsive={noop}
                         onDeleteLine={noop}
+                        onAddLineToVariant={noop}
+                        onAddVariant={noop}
+                        onDeleteVariant={noop}
                         onWidth={noop}
                         onPreviewSourceChange={noop}
                         onRefreshSessions={noop}
@@ -310,5 +316,106 @@ describe("canvas drop indicators (standalone)", () => {
         expect(lineCaret.getByTestId("seg-0-0").className).toContain("drop-before");
         expect(lineCaret.getByTestId("span-L0.0.1").className).not.toContain("drop-into");
         lineCaret.unmount();
+    });
+});
+
+// L0.0: model (plain line)
+// L0.1: responsive — variant 0 (wide, 60 chars, fits only at generous
+// widths) / variant 1 (narrow fallback, 1 char, always fits).
+function responsiveTestDoc(): StatusloomNode {
+    return doc([
+        lay(
+            "Default",
+            [
+                ln([fld("model")]),
+                resp([variant([ln([txt("X".repeat(60))])]), variant([ln([txt("Y")])])]),
+            ],
+            true,
+        ),
+    ]);
+}
+
+describe("canvas responsive / variant editing", () => {
+    it("highlights the width-selected variant and flips it when the width changes", async () => {
+        server = installFakeDslServer(responsiveTestDoc());
+        await renderApp();
+        await waitFor(() => expect(screen.getByTestId("variant-L0.1.v0")).toBeTruthy(), {
+            timeout: 3000,
+        });
+
+        // Default width (120) fits the wide variant (60 chars): it is the
+        // one selected, and only it carries the "selected" badge/class.
+        await waitFor(() => {
+            expect(screen.getByTestId("variant-L0.1.v0").className).toContain(
+                "variant-selected",
+            );
+            expect(screen.getByTestId("variant-L0.1.v1").className).not.toContain(
+                "variant-selected",
+            );
+        });
+
+        // Narrowing the width past the wide variant's natural width (60)
+        // flips the selection to the fallback — this is the feature's whole
+        // point made visible: the slider shows which candidate would
+        // actually render at that width.
+        fireEvent.change(screen.getByTestId("width-slider"), { target: { value: "45" } });
+        await waitFor(() => {
+            expect(screen.getByTestId("variant-L0.1.v1").className).toContain(
+                "variant-selected",
+            );
+            expect(screen.getByTestId("variant-L0.1.v0").className).not.toContain(
+                "variant-selected",
+            );
+        });
+    });
+
+    it("adds and deletes a variant via the canvas buttons, round-tripping through serialize", async () => {
+        server = installFakeDslServer(responsiveTestDoc());
+        await renderApp();
+        await waitFor(() => expect(screen.getByTestId("variant-L0.1.v0")).toBeTruthy());
+
+        fireEvent.click(screen.getByTestId("responsive-add-variant-L0.1"));
+        await waitFor(() => expect(screen.getByTestId("variant-L0.1.v2")).toBeTruthy(), {
+            timeout: 3000,
+        });
+        await waitFor(() => {
+            const last = server.putDraftBodies[server.putDraftBodies.length - 1] ?? "";
+            expect(JSON.parse(last).layouts[0].children[1].variants).toHaveLength(3);
+        });
+
+        fireEvent.click(screen.getByTestId("variant-delete-L0.1.v2"));
+        await waitFor(() => expect(screen.queryByTestId("variant-L0.1.v2")).toBeNull(), {
+            timeout: 3000,
+        });
+    });
+
+    it("disables deleting a responsive's last remaining variant", async () => {
+        server = installFakeDslServer(
+            doc([lay("Default", [resp([variant([ln([fld("model")])])])], true)]),
+        );
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("variant-delete-L0.0.v0")).toBeTruthy(), {
+            timeout: 3000,
+        });
+        expect((screen.getByTestId("variant-delete-L0.0.v0") as HTMLButtonElement).disabled).toBe(
+            true,
+        );
+    });
+
+    it("adds a line to a variant and a new responsive from the canvas footer", async () => {
+        server = installFakeDslServer(responsiveTestDoc());
+        await renderApp();
+        await waitFor(() => expect(screen.getByTestId("variant-add-line-L0.1.v0")).toBeTruthy());
+
+        fireEvent.click(screen.getByTestId("variant-add-line-L0.1.v0"));
+        await waitFor(() => {
+            const last = server.putDraftBodies[server.putDraftBodies.length - 1] ?? "";
+            expect(JSON.parse(last).layouts[0].children[1].variants[0].lines).toHaveLength(2);
+        });
+
+        fireEvent.click(screen.getByText("+ Add responsive"));
+        await waitFor(() => expect(document.querySelectorAll(".responsive-row")).toHaveLength(2), {
+            timeout: 3000,
+        });
     });
 });

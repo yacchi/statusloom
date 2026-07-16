@@ -209,9 +209,20 @@ func documentHasResetField(doc *dsl.Document) bool {
 			break
 		}
 	}
-	for _, line := range layout.Lines {
-		if nodesHaveResetField(line.Children) {
-			return true
+	for _, ch := range layout.Children {
+		switch c := ch.(type) {
+		case *dsl.LineNode:
+			if nodesHaveResetField(c.Children) {
+				return true
+			}
+		case *dsl.ResponsiveNode:
+			for _, vr := range c.Variants {
+				for _, line := range vr.Lines {
+					if nodesHaveResetField(line.Children) {
+						return true
+					}
+				}
+			}
 		}
 	}
 	return false

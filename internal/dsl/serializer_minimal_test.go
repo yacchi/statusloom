@@ -43,7 +43,7 @@ func TestSerializeMinimal_CleanIsByteIdentical(t *testing.T) {
 // changes its color; every other node's exact source bytes must survive.
 func TestSerializeMinimal_OnlyDirtyNodeRegenerated(t *testing.T) {
 	doc := parseClean(t, docBody)
-	line0 := doc.Root.Layouts[0].Lines[0]
+	line0 := doc.Root.Layouts[0].Children[0].(*LineNode)
 
 	// Locate the two fields in the first line.
 	modelField := findField(t, line0, "model")
@@ -95,7 +95,7 @@ func TestSerializeMinimal_OnlyDirtyNodeRegenerated(t *testing.T) {
 // siblings are reused verbatim (container-with-mixed-children case).
 func TestSerializeMinimal_InsertedNodeRegenerated(t *testing.T) {
 	doc := parseClean(t, docBody)
-	line1 := doc.Root.Layouts[0].Lines[1]
+	line1 := doc.Root.Layouts[0].Children[1].(*LineNode)
 	branchSlice := line1.Lines0Field(t).Meta.SourceRange.Slice(docBody)
 
 	// Insert a new field with no source range (as the visual editor does).
@@ -118,7 +118,7 @@ func TestSerializeMinimal_InsertedNodeRegenerated(t *testing.T) {
 // child must be gone and remaining children reused verbatim.
 func TestSerializeMinimal_RemovedChildForcesReconstruct(t *testing.T) {
 	doc := parseClean(t, docBody)
-	line0 := doc.Root.Layouts[0].Lines[0]
+	line0 := doc.Root.Layouts[0].Children[0].(*LineNode)
 	sepSlice := `<text role="separator" padding="1">|</text>`
 
 	// Remove the separator text (index 2 in this document's children order),
@@ -164,10 +164,10 @@ func TestSerializeMinimal_NestedDirtyReconstructsAncestors(t *testing.T) {
 </statusloom>
 `
 	doc := parseClean(t, src)
-	span := doc.Root.Layouts[0].Lines[0].Children[0].(*SpanNode)
+	span := doc.Root.Layouts[0].Children[0].(*LineNode).Children[0].(*SpanNode)
 	field := span.Children[1].(*FieldNode)
 	textSlice := span.Children[0].(*TextNode).Meta.SourceRange.Slice(src)
-	line1Slice := doc.Root.Layouts[0].Lines[1].Meta.SourceRange.Slice(src)
+	line1Slice := doc.Root.Layouts[0].Children[1].(*LineNode).Meta.SourceRange.Slice(src)
 
 	field.Common.Style.Color = "red"
 	field.Meta.Dirty = true

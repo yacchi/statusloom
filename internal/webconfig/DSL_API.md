@@ -28,10 +28,18 @@ A parsed document is represented as a tree of node objects. Every node has:
   "kind": "field",         // node kind (see below)
   "range": { "start": 42, "end": 78 },  // byte offsets into the source
   // ...attributes, keyed by their DSL attribute name (kebab-case)...
-  "children": [ /* nodes */ ],   // line/span only
+  "children": [ /* nodes */ ],   // line/span (mixed content); also layout (ordered line|responsive)
   "colorRules": [ /* color-rule nodes */ ]  // field/span/text only
 }
 ```
+
+A `layout` node's `children` is an ordered mix of `line` and `responsive`
+nodes (the layout's rendered rows and its width-adaptive containers). A
+`responsive` node has a `variants` array (widest first); each `variant` has a
+`lines` array. The renderer picks the first variant all of whose lines fit the
+terminal width (unknown width → first/widest variant, none fit → last variant);
+a `/api/dsl/preview` therefore emits segments only for the width-selected
+variant's lines.
 
 - Attribute keys are the DSL attribute names verbatim (`color`, `bold`,
   `padding`, `padding-left`, `prefix`, `role`, `name`, `format`, `precision`,
@@ -54,7 +62,9 @@ A parsed document is represented as a tree of node objects. Every node has:
 |------|-----------|------------------|
 | `statusloom` | `version`, `tool`, `color-level`, `compact-threshold`, `context-percentage-mode`, `context-reserve-tokens` | `git?`, `layouts[]`, `comments[]?` |
 | `git` | `cache-ttl-ms`, `timeout-ms`, `include-untracked`, `collect-numstat` | — |
-| `layout` | `name`, `active` | `lines[]`, `comments[]?` |
+| `layout` | `name`, `active` | `children[]` (ordered `line` \| `responsive`), `comments[]?` |
+| `responsive` | — | `variants[]`, `comments[]?` |
+| `variant` | — | `lines[]`, `comments[]?` |
 | `line` | *common* | `children[]` |
 | `span` | *common* | `children[]`, `colorRules[]?` |
 | `text` | `role`, `value`, *common* | `colorRules[]?` |
@@ -84,16 +94,22 @@ git                  the optional <git/> element
 root.c{k}            k-th XML comment directly under the root
 L{i}                 i-th <layout>
 L{i}.c{k}            k-th comment directly under layout i
-L{i}.{j}             j-th <line> of layout i (index into layout.lines)
+L{i}.{p}             p-th child of layout i — a line or a responsive (index into layout.children)
+L{i}.{p}.v{v}        v-th <variant> of responsive L{i}.{p}
+L{i}.{p}.v{v}.{j}    j-th <line> of that variant
 {parent}.{k}         k-th mixed-content child of a line/span (index into children)
 {owner}.cr{c}        c-th <color-rule> of a field/span/text owner
 ```
 
 `children` nest, so a field inside a span inside a line reads e.g.
-`L0.2.1.0` (layout 0, line 2, child 1 = span, child 0 = field). Comments that
-appear inside a line/span are ordinary `children` entries (kind `comment`) and
-take a numeric child index; only root-level and layout-level comments use the
-`.c{k}` form.
+`L0.2.1.0` (layout 0, child 2 = line, child 1 = span, child 0 = field). A field
+inside a responsive's variant reads e.g. `L0.1.v0.0.1` (layout 0, child 1 =
+responsive, variant 0, line 0, child 1). A **responsive-free** layout's line at
+position `p` keeps the historical `L{i}.{p}` form (child index equals line
+index), so IDs are unchanged for such documents. Comments that appear inside a
+line/span are ordinary `children` entries (kind `comment`) and take a numeric
+child index; root-level, layout-level, responsive-level, and variant-level
+comments use the `.c{k}` form.
 
 ## Endpoints
 

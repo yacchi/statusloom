@@ -3,16 +3,21 @@ import {
     activeLayoutIndex,
     addLayout,
     addLine,
+    addResponsive,
+    addVariant,
     adjustIdAfterRemoval,
     appendLayouts,
     applyDropEdit,
     deleteLayout,
     deleteLine,
+    deleteVariant,
     duplicateLayout,
     getNode,
     insertChild,
+    insertVariant,
     lineIndexOfContainerId,
     moveChild,
+    moveVariant,
     parentChildId,
     parentIdOf,
     parseNodeId,
@@ -25,8 +30,15 @@ import {
     updateGitAttrs,
     updateRootAttrs,
 } from "./ast.ts";
-import { assignIds, doc, fld, lay, ln, spn, txt } from "./test/fakeDsl.ts";
-import type { FieldNode, LineNode, SpanNode, StatusloomNode } from "./types.ts";
+import { assignIds, doc, fld, lay, ln, resp, spn, txt, variant } from "./test/fakeDsl.ts";
+import type {
+    FieldNode,
+    LineNode,
+    ResponsiveNode,
+    SpanNode,
+    StatusloomNode,
+    VariantNode,
+} from "./types.ts";
 
 // A document with ids assigned per the backend scheme:
 // L0.0: [model, span[thinking-effort], text"|"], L0.1: [git-branch]
@@ -44,8 +56,28 @@ function fixture(): StatusloomNode {
     );
 }
 
+// A document whose layout mixes a plain line with a <responsive> (two
+// variants: a one-line wide candidate and a one-line fallback), per
+// plans/responsive-container-design.md §10:
+// L0.0: [model] (plain line)
+// L0.1: responsive, variant 0 (L0.1.v0.0: [git-branch]), variant 1 (L0.1.v1.0: [session-cost])
+function responsiveFixture(): StatusloomNode {
+    return assignIds(
+        doc([
+            lay(
+                "Default",
+                [
+                    ln([fld("model")]),
+                    resp([variant([ln([fld("git-branch")])]), variant([ln([fld("session-cost")])])]),
+                ],
+                true,
+            ),
+        ]),
+    );
+}
+
 function childNames(root: StatusloomNode, layout: number, line: number): string[] {
-    const l = root.layouts[layout].lines[line];
+    const l = root.layouts[layout].children[line] as LineNode;
     return l.children.map((c) => {
         if (c.kind === "field") {
             return c.name ?? "";
@@ -70,21 +102,55 @@ describe("parseNodeId", () => {
             { t: "layout", i: 0 },
             { t: "layoutComment", k: 0 },
         ]);
+        // A responsive-free layout's line at position p keeps the historical
+        // "L{i}.{p}" form (DSL_API.md "Node IDs").
         expect(parseNodeId("L0.1")).toEqual([
             { t: "layout", i: 0 },
-            { t: "line", j: 1 },
+            { t: "layoutChild", p: 1 },
         ]);
         expect(parseNodeId("L0.1.2.0")).toEqual([
             { t: "layout", i: 0 },
-            { t: "line", j: 1 },
+            { t: "layoutChild", p: 1 },
             { t: "child", k: 2 },
             { t: "child", k: 0 },
         ]);
         expect(parseNodeId("L0.0.1.cr2")).toEqual([
             { t: "layout", i: 0 },
-            { t: "line", j: 0 },
+            { t: "layoutChild", p: 0 },
             { t: "child", k: 1 },
             { t: "colorRule", c: 2 },
+        ]);
+    });
+
+    it("parses responsive/variant forms", () => {
+        expect(parseNodeId("L0.1.c0")).toEqual([
+            { t: "layout", i: 0 },
+            { t: "layoutChild", p: 1 },
+            { t: "responsiveComment", k: 0 },
+        ]);
+        expect(parseNodeId("L0.1.v0")).toEqual([
+            { t: "layout", i: 0 },
+            { t: "layoutChild", p: 1 },
+            { t: "variant", v: 0 },
+        ]);
+        expect(parseNodeId("L0.1.v0.c1")).toEqual([
+            { t: "layout", i: 0 },
+            { t: "layoutChild", p: 1 },
+            { t: "variant", v: 0 },
+            { t: "variantComment", k: 1 },
+        ]);
+        expect(parseNodeId("L0.1.v0.2")).toEqual([
+            { t: "layout", i: 0 },
+            { t: "layoutChild", p: 1 },
+            { t: "variant", v: 0 },
+            { t: "variantLine", j: 2 },
+        ]);
+        expect(parseNodeId("L0.1.v0.2.3")).toEqual([
+            { t: "layout", i: 0 },
+            { t: "layoutChild", p: 1 },
+            { t: "variant", v: 0 },
+            { t: "variantLine", j: 2 },
+            { t: "child", k: 3 },
         ]);
     });
 
@@ -94,6 +160,8 @@ describe("parseNodeId", () => {
         expect(parseNodeId("L0.x")).toBeNull();
         expect(parseNodeId("L0.1.cr0.0")).toBeNull();
         expect(parseNodeId("root.c1.0")).toBeNull();
+        expect(parseNodeId("L0.1.v0.x")).toBeNull();
+        expect(parseNodeId("L0.1.vX")).toBeNull();
     });
 });
 
@@ -184,8 +252,8 @@ describe("insertChild / removeNode / moveChild", () => {
 
     it("removes a whole line", () => {
         const root = fixture();
-        const next = deleteLine(root, 0, 0);
-        expect(next.layouts[0].lines).toHaveLength(1);
+        const next = deleteLine(root, "L0.0");
+        expect(next.layouts[0].children).toHaveLength(1);
         expect(childNames(next, 0, 0)).toEqual(["git-branch"]);
     });
 
@@ -227,9 +295,9 @@ describe("insertChild / removeNode / moveChild", () => {
 describe("layout operations", () => {
     it("addLine appends an empty line", () => {
         const root = fixture();
-        const next = addLine(root, 1);
-        expect(next.layouts[1].lines).toHaveLength(2);
-        expect((next.layouts[1].lines[1] as LineNode).children).toEqual([]);
+        const next = addLine(root, "L1");
+        expect(next.layouts[1].children).toHaveLength(2);
+        expect((next.layouts[1].children[1] as LineNode).children).toEqual([]);
     });
 
     it("addLayout appends an inactive layout with a unique name", () => {
@@ -272,7 +340,7 @@ describe("layout operations", () => {
         expect(dup.layouts[1].active).toBeUndefined();
         expect(activeLayoutIndex(dup)).toBe(0);
         // The copy shares no node identity with the source.
-        expect(dup.layouts[1].lines[0]).not.toBe(dup.layouts[0].lines[0]);
+        expect(dup.layouts[1].children[0]).not.toBe(dup.layouts[0].children[0]);
     });
 
     it("appendLayouts disambiguates names and never imports an active flag", () => {
@@ -282,6 +350,91 @@ describe("layout operations", () => {
         expect(next.layouts.map((l) => l.name)).toEqual(["Default", "Compact", "Default 2"]);
         expect(next.layouts[2].active).toBeUndefined();
         expect(activeLayoutIndex(next)).toBe(0);
+    });
+});
+
+// A layout child at position p is either a line or a responsive; these
+// operations manage the latter (plans/responsive-container-design.md).
+describe("responsive / variant operations", () => {
+    const isDirty = (root: StatusloomNode, id: string): boolean =>
+        (getNode(root, id) as { dirty?: boolean } | null)?.dirty === true;
+
+    it("resolves responsive/variant node paths", () => {
+        const root = responsiveFixture();
+        expect((getNode(root, "L0.1") as ResponsiveNode).kind).toBe("responsive");
+        expect((getNode(root, "L0.1.v0") as VariantNode).kind).toBe("variant");
+        expect((getNode(root, "L0.1.v0.0") as LineNode).kind).toBe("line");
+        expect((getNode(root, "L0.1.v0.0.0") as FieldNode).name).toBe("git-branch");
+        expect((getNode(root, "L0.1.v1.0.0") as FieldNode).name).toBe("session-cost");
+    });
+
+    it("addResponsive appends a two-variant, one-line-each responsive", () => {
+        const root = fixture();
+        const next = addResponsive(root, 1);
+        const responsive = next.layouts[1].children[1] as ResponsiveNode;
+        expect(responsive.kind).toBe("responsive");
+        expect(responsive.variants).toHaveLength(2);
+        expect(responsive.variants[0].lines).toHaveLength(1);
+        expect(responsive.variants[0].lines[0].children).toEqual([]);
+    });
+
+    it("addVariant appends an empty-line variant", () => {
+        const root = responsiveFixture();
+        const next = addVariant(root, "L0.1");
+        const responsive = next.layouts[0].children[1] as ResponsiveNode;
+        expect(responsive.variants).toHaveLength(3);
+        expect(responsive.variants[2].lines).toHaveLength(1);
+    });
+
+    it("insertVariant clamps the index", () => {
+        const root = responsiveFixture();
+        const newVariant: VariantNode = { id: "", kind: "variant", lines: [ln([fld("model")])] };
+        const next = insertVariant(root, "L0.1", 0, newVariant);
+        const responsive = next.layouts[0].children[1] as ResponsiveNode;
+        expect(responsive.variants).toHaveLength(3);
+        expect((responsive.variants[0].lines[0].children[0] as FieldNode).name).toBe("model");
+    });
+
+    it("deleteVariant removes a variant but keeps at least one", () => {
+        const root = responsiveFixture();
+        const next = deleteVariant(root, "L0.1.v0");
+        const responsive = next.layouts[0].children[1] as ResponsiveNode;
+        expect(responsive.variants).toHaveLength(1);
+        expect((responsive.variants[0].lines[0].children[0] as FieldNode).name).toBe(
+            "session-cost",
+        );
+        // Refuses to drop the last variant.
+        expect(deleteVariant(next, "L0.1.v0")).toBe(next);
+    });
+
+    it("moveVariant reorders within the same responsive", () => {
+        const root = responsiveFixture();
+        const next = moveVariant(root, "L0.1.v1", "L0.1", 0);
+        const responsive = next.layouts[0].children[1] as ResponsiveNode;
+        expect((responsive.variants[0].lines[0].children[0] as FieldNode).name).toBe(
+            "session-cost",
+        );
+        expect((responsive.variants[1].lines[0].children[0] as FieldNode).name).toBe(
+            "git-branch",
+        );
+        // No-op moves return the same root.
+        expect(moveVariant(root, "L0.1.v0", "L0.1", 0)).toBe(root);
+        expect(moveVariant(root, "L0.1.v0", "L0.1", 1)).toBe(root);
+    });
+
+    it("lineIndexOfContainerId resolves the owning responsive's position for a variant-nested line", () => {
+        expect(lineIndexOfContainerId("L0.1.v0.0")).toBe(1);
+        expect(lineIndexOfContainerId("L0.1.v0.0.0")).toBe(1);
+    });
+
+    it("deleteVariant stamps the responsive whose variant list shrank", () => {
+        // deleteVariant delegates to removeNode, which stamps the parent
+        // dirty so the serializer reconstructs it; addVariant/moveVariant
+        // append/reorder without a range, matching addLine's convention of
+        // relying on the missing range alone to trigger regeneration.
+        const root = responsiveFixture();
+        const removed = deleteVariant(root, "L0.1.v0");
+        expect(isDirty(removed, "L0.1")).toBe(true);
     });
 });
 

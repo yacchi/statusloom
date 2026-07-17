@@ -1,11 +1,12 @@
 // Package config defines the configuration types statusloom's renderer
 // consumes.
 //
-// The on-disk configuration source is the DSL document (<tool>.xml, see
-// document.go). The types in this file are the render-time primitives the
-// renderer resolves a document into: ToolConfig carries the tool-level
-// settings, WidgetSpec identifies a single field to render, and GitConfig /
-// ContextConfig hold the git-collection and context-percentage knobs.
+// The on-disk configuration source is the internal store's
+// (internal/store) committed DSL document for a tool (see document.go). The
+// types in this file are the render-time primitives the renderer resolves a
+// document into: ToolConfig carries the tool-level settings, WidgetSpec
+// identifies a single field to render, and GitConfig / ContextConfig hold the
+// git-collection and context-percentage knobs.
 package config
 
 // GitConfig controls how git repository status is collected.

@@ -94,7 +94,7 @@ func TestDSLSerialize_BaseSource_OnlyDirtyRegenerated(t *testing.T) {
 		t.Errorf("dirty field's new color missing:\n%s", got)
 	}
 	// The document must still re-parse cleanly.
-	if _, diags := parseAndValidateSource(got); dsl.HasErrors(diags) {
+	if _, diags := dsl.ParseAndValidate(got); dsl.HasErrors(diags) {
 		t.Errorf("minimal serialize output not valid: %v", diags)
 	}
 }

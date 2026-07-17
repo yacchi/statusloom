@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "./App.tsx";
 import { defaultTestDoc, installFakeDslServer, type FakeServer } from "./test/fakeDsl.ts";
 
@@ -77,5 +77,82 @@ describe("App usage-probe field refresh", () => {
         });
         await waitFor(() => expect(server.fetchMock).toHaveBeenCalled());
         expect(fieldsRequestCount()).toBe(1);
+    });
+});
+
+// settleDraftBeforeRestore (plans/config-store-and-format.md §4.2): a
+// history restore discards the tool's server-side draft working node
+// unconditionally, so a debounced draft-autosave write that lands *after*
+// the restore would resurrect content the restore just discarded. HistoryPanel
+// awaits `beforeRestore` (App's settleDraftBeforeRestore) before calling the
+// restore API; HistoryPanel.test.tsx checks that ordering against a bare
+// `vi.fn()` stand-in, which cannot exercise settleDraftBeforeRestore's own
+// body (clearing the pending setTimeout, awaiting the in-flight PUT). This
+// drives the real App end-to-end instead, so a regression in
+// settleDraftBeforeRestore itself (e.g. turning it into a no-op) is caught.
+describe("App history restore vs draft autosave", () => {
+    const TOKEN = "a".repeat(32);
+    let server: FakeServer;
+
+    beforeEach(() => {
+        window.location.hash = `#token=${TOKEN}`;
+        server = installFakeDslServer(defaultTestDoc());
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        window.location.hash = "";
+        window.localStorage.clear();
+    });
+
+    it("cancels a pending draft-autosave debounce before restoring, so no stale draft PUT follows", async () => {
+        // Delay the restore response so the debounce's 250ms deadline falls
+        // squarely inside the restore's in-flight window: if
+        // settleDraftBeforeRestore failed to cancel the pending timer, the
+        // debounced flushDraftNow would fire while the restore is still
+        // pending and PUT a draft the restore is about to discard.
+        server.restoreDelayMs = 400;
+        render(<App />);
+
+        await waitFor(() => expect(screen.getByTestId("palette-field:model")).toBeTruthy(), {
+            timeout: 3000,
+        });
+
+        // Get all the way to the restore confirmation for the older
+        // revision *before* touching the canvas, so the confirm click below
+        // fires immediately after the palette click starts the debounce.
+        fireEvent.click(screen.getByTestId("history-button"));
+        await waitFor(() => expect(screen.getByTestId("history-row-rev-1")).toBeTruthy());
+        fireEvent.click(screen.getByTestId("history-row-rev-1"));
+        await waitFor(() => expect(screen.getByTestId("history-restore-rev-1")).toBeTruthy());
+        fireEvent.click(screen.getByTestId("history-restore-rev-1"));
+        await waitFor(() => expect(screen.getByTestId("history-confirm-restore")).toBeTruthy());
+
+        // Start the 250ms draft-autosave debounce. The canvas chip
+        // ("seg-0-1") appears the instant applyAstEdit's *optimistic* setAst
+        // runs, well before its serialize/parse round-trip resolves and
+        // calls setHistory — and it is only that later setHistory (updating
+        // `present`) that the draft-publish effect actually depends on, so
+        // waiting on the chip would race the debounce's own scheduling, not
+        // just its firing. Undo enabling is driven by that same setHistory
+        // call, so it is the right signal that `present` has actually
+        // changed and the debounce has been scheduled.
+        fireEvent.click(screen.getByTestId("palette-field:model"));
+        await waitFor(() =>
+            expect((screen.getByTitle(/Undo/i) as HTMLButtonElement).disabled).toBe(false),
+        );
+        // ...confirm the debounce truly hasn't fired yet (otherwise this
+        // test would not be exercising the race it claims to)...
+        expect(server.putDraftBodies.length).toBe(0);
+        // ...then immediately restore.
+        fireEvent.click(screen.getByTestId("history-confirm-restore"));
+
+        await waitFor(() => expect(screen.getByText(/Restored revision/i)).toBeTruthy(), {
+            timeout: 3000,
+        });
+        // The original 250ms deadline is long past by now; give it a further
+        // margin before asserting no debounced write ever landed.
+        await new Promise((r) => setTimeout(r, 300));
+        expect(server.putDraftBodies.length).toBe(0);
     });
 });

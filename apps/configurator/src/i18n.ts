@@ -157,6 +157,20 @@ const EN = {
     embeddedTerminalConnecting: "connecting…",
     embeddedTerminalConnected: "session running",
     embeddedTerminalClosed: "The session has ended.",
+    // history panel
+    historyTitle: "History",
+    historyHint:
+        "Every saved revision of this document, newest first. Select one to see its diff against the current document, then restore it.",
+    historyEmpty: "No revisions yet.",
+    historyCurrentBadge: "● current",
+    historyNoDiffSelected: "Select a revision to see its diff against the current document.",
+    historyDiffEmpty: "No differences.",
+    historyRestoreConfirm:
+        "Restore this revision? Your editor will reload the restored document.",
+    historyRestoreConfirmDraftWarning: "This will also discard your unsaved draft edits.",
+    // import/export
+    importFormatHint:
+        "A Statusloom DSL document or a .sloom.md Markdown exchange file are both accepted — pasted or dropped content starting with \"---\" is treated as .sloom.md.",
 };
 
 const JA: Record<MessageKey, string> = {
@@ -271,6 +285,17 @@ const JA: Record<MessageKey, string> = {
     embeddedTerminalConnecting: "接続中…",
     embeddedTerminalConnected: "セッション実行中",
     embeddedTerminalClosed: "セッションが終了しました。",
+    historyTitle: "履歴",
+    historyHint:
+        "このドキュメントの保存済みリビジョンを新しい順に表示します。選択すると現在のドキュメントとの差分を確認でき、そこから復元できます。",
+    historyEmpty: "まだ履歴がありません。",
+    historyCurrentBadge: "● current",
+    historyNoDiffSelected: "リビジョンを選択すると、現在のドキュメントとの差分が表示されます。",
+    historyDiffEmpty: "差分はありません。",
+    historyRestoreConfirm: "このリビジョンに復元しますか？エディタは復元後のドキュメントで再読み込みされます。",
+    historyRestoreConfirmDraftWarning: "未保存のドラフト編集も破棄されます。",
+    importFormatHint:
+        "Statusloom DSL ドキュメント、または .sloom.md Markdown 交換ファイルのどちらも読み込めます — 貼り付け・ドロップした内容が \"---\" で始まる場合は .sloom.md として扱われます。",
 };
 
 export type MessageKey = keyof typeof EN;

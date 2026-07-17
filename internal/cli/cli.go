@@ -64,6 +64,15 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, version strin
 	case "draft":
 		return runDraft(args[1:], stdout, stderr)
 
+	case "history":
+		return runHistory(args[1:], stdout, stderr)
+
+	case "import":
+		return runImportExchange(args[1:], stdin, stdout, stderr)
+
+	case "export":
+		return runExportExchange(args[1:], stdout, stderr)
+
 	case "fmt":
 		return runFmt(args[1:], stdin, stdout, stderr)
 
@@ -111,8 +120,11 @@ Usage:
   statusloom monitor --emit-url URL --token TOK   render like claude, forwarding the payload to a config server for live preview
   statusloom refresh --once --session-id ID --transcript PATH   refresh transcript-derived cache data
   statusloom render [--tool ID]   render the status line, detecting the tool from stdin if --tool is omitted
-  statusloom draft pull|push [file]   pull the shared web-configurator draft to a file, or push an edited file back
-  statusloom fmt [file] [--check]   rewrite a DSL document (or <tool>.xml) in canonical form; --check reports without writing; - uses stdin/stdout
+  statusloom draft pull|push [file]   pull the web-configurator's draft to a file, or push an edited file back
+  statusloom history list|show <id>|diff <id> [<id2>]|restore <id> [--force] [--tool ID]   view or restore the config revision history; restore refuses (unless --force) to discard an unsaved draft that differs from current
+  statusloom import [--tool ID] <file>   import a *.sloom.md Markdown exchange document (or - for stdin) as a new revision
+  statusloom export [--tool ID] [-o file]   export the saved document as a *.sloom.md Markdown exchange document; defaults to stdout
+  statusloom fmt [file] [--check] [--write]   rewrite a DSL document in canonical form; with no file, formats the saved document (printed to stdout unless --write persists it); --check reports without writing; - uses stdin/stdout
   statusloom config [--port N] [--no-browser]   launch the local web configurator
   statusloom setup claude-code [--settings PATH] [--yes] [--dry-run] [--refresh-interval N]   configure Claude Code
   statusloom doctor [--settings PATH]   diagnose the local environment

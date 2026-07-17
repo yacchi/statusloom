@@ -34,7 +34,7 @@ import {
     verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { parseAnsiLine, type Theme } from "../ansi.ts";
+import { parseAnsiLine, type Theme } from "@statusloom/ansi";
 import { t, useLang } from "../i18n.ts";
 import { nodeLabel } from "../presets.ts";
 import { effectiveLines, matchPreview, type PreviewMatch } from "../previewMatch.ts";

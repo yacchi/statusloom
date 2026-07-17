@@ -15,6 +15,8 @@ import type {
     CommentNode,
     Diagnostic,
     FieldCatalogEntry,
+    HistoryRefs,
+    HistoryRevisionEntry,
     LayoutChild,
     LayoutNode,
     LineChild,
@@ -558,6 +560,17 @@ export interface FakeServer {
     // reachable; defaults to the same "no token" shape the real backend
     // returns when no OAuth credentials are present.
     usageProbe: { available: boolean; reason: string; extraUsageEnabled?: boolean };
+    // GET /api/history + GET /api/history/{id} backing store. Two revisions
+    // by default ("rev-1" the parent, "rev-2" the current one), each with
+    // its own source so a restore visibly changes `document`. Mutate
+    // `history.refs`/`history.revisions` or `historySources` before render()
+    // to change what a test's history panel sees.
+    history: { revisions: HistoryRevisionEntry[]; refs: HistoryRefs };
+    historySources: Record<string, string>;
+    // Artificial delay (ms) applied to POST /api/history/{id}/restore's
+    // response, so tests can put a debounce deadline mid-flight to prove it
+    // was settled beforehand rather than merely racing to finish first.
+    restoreDelayMs: number;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -568,14 +581,36 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 export function installFakeDslServer(initial: StatusloomNode): FakeServer {
+    const initialSource = srcOf(initial);
     const server: FakeServer = {
-        document: srcOf(initial),
+        document: initialSource,
         draft: null,
         draftFails: false,
         putDraftBodies: [],
         putDocumentBodies: [],
         fetchMock: vi.fn(),
         usageProbe: { available: false, reason: "no-token" },
+        history: {
+            revisions: [
+                {
+                    id: "rev-1",
+                    parent: null,
+                    savedAt: "2026-01-01T00:00:00Z",
+                    origin: "cli",
+                    meta: {},
+                },
+                {
+                    id: "rev-2",
+                    parent: "rev-1",
+                    savedAt: "2026-01-02T00:00:00Z",
+                    origin: "ui",
+                    meta: {},
+                },
+            ],
+            refs: { current: "rev-2", draft: false },
+        },
+        historySources: { "rev-1": initialSource, "rev-2": initialSource },
+        restoreDelayMs: 0,
     };
 
     server.fetchMock.mockImplementation(
@@ -669,6 +704,37 @@ export function installFakeDslServer(initial: StatusloomNode): FakeServer {
                         body.section ?? "main",
                     ),
                 );
+            }
+            if (url.startsWith("/api/history/") && url.endsWith("/restore")) {
+                const id = decodeURIComponent(
+                    url.slice("/api/history/".length, -"/restore".length),
+                );
+                if (server.restoreDelayMs > 0) {
+                    await new Promise((r) => setTimeout(r, server.restoreDelayMs));
+                }
+                const source = server.historySources[id];
+                if (source === undefined) {
+                    return jsonResponse({ error: "unknown revision" }, 404);
+                }
+                // A restore discards the draft working node and repoints
+                // `current` at the restored revision (plans/config-store-
+                // and-format.md §4.2), mirroring the real store's semantics.
+                server.document = source;
+                server.draft = null;
+                server.history.refs = { current: id, draft: false };
+                return jsonResponse({ ok: true, tool: "claude-code", current: id });
+            }
+            if (url.startsWith("/api/history/")) {
+                const id = decodeURIComponent(url.slice("/api/history/".length));
+                const entry = server.history.revisions.find((r) => r.id === id);
+                const source = server.historySources[id];
+                if (!entry || source === undefined) {
+                    return jsonResponse({ error: "unknown revision" }, 404);
+                }
+                return jsonResponse({ ...entry, tool: "claude-code", source });
+            }
+            if (url.startsWith("/api/history?")) {
+                return jsonResponse(server.history);
             }
             return jsonResponse({ error: "not found" }, 404);
         },

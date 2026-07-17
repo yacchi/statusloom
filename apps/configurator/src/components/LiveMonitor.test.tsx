@@ -41,6 +41,13 @@ function makeApi(overrides: Partial<Api> = {}): Api {
         getFields: vi.fn(async () => []),
         getMetrics: vi.fn(async () => []),
         probeUsage: vi.fn(async () => ({ available: false, reason: "no-token" })),
+        getHistory: vi.fn(async () => ({ revisions: [], refs: { current: "", draft: false } })),
+        getHistoryRevision: vi.fn(async () => {
+            throw new Error("not used in this test");
+        }),
+        restoreRevision: vi.fn(async () => ({ ok: true, tool: "claude-code", current: "" })),
+        importExchange: vi.fn(async () => ({ saved: true, tool: "claude-code", revision: "", diagnostics: [] })),
+        getExportMarkdown: vi.fn(async () => ""),
         getSessions: vi.fn(async () => []),
         shutdown: vi.fn(async () => {}),
         startLiveSession: vi.fn(async () => ({

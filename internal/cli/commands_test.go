@@ -6,7 +6,47 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// writeRawStoreDocument writes a minimal statusloom.json directly into dir
+// (the resolved config directory), bypassing the store's Save validation
+// boundary entirely. Documents in the store normally can never be invalid —
+// Save rejects error-severity diagnostics before writing — so this simulates
+// the one way an invalid document can still end up as a tool's current
+// revision: a hand-edited or otherwise corrupted store file. Ordinary tests
+// that need a *valid* current document should use writeDocument (cli_test.go)
+// instead, which goes through the real Save validation boundary.
+func writeRawStoreDocument(t *testing.T, dir, tool, src string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sf := map[string]any{
+		"formatVersion": 1,
+		"revisions": map[string]any{
+			"01900000-0000-7000-8000-000000000000": map[string]any{
+				"hash":    "raw-test",
+				"tool":    tool,
+				"source":  src,
+				"savedAt": time.Now().UTC().Format(time.RFC3339),
+				"parent":  nil,
+				"origin":  "test",
+				"meta":    map[string]any{},
+			},
+		},
+		"refs": map[string]any{
+			tool: map[string]any{"current": "01900000-0000-7000-8000-000000000000"},
+		},
+	}
+	data, err := json.MarshalIndent(sf, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "statusloom.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestSetupClaudeCode(t *testing.T) {
 	tests := []struct {
@@ -91,15 +131,16 @@ func TestDoctorStatusesAndExit(t *testing.T) {
 		`<layout name="d" active="true"><line><field name="model"/></line></layout></statusloom>`
 	tests := []struct {
 		name         string
-		document     string // claude-code.xml source ("" = absent)
+		document     string // claude-code current-document source ("" = absent)
+		rawDocument  bool   // true: install document directly into the store, bypassing Save's validation boundary (simulates a corrupted store)
 		settings     string
 		wantDocument string
 		wantClaude   string
 		wantCode     int
 	}{
-		{"defaults and missing setup", "", "", "PASS document - using built-in defaults", "WARN claude-code", 0},
-		{"valid configured", validDoc, `{"statusLine":{"command":"statusloom claude"}}`, "PASS document", "PASS claude-code", 0},
-		{"invalid document", `<statusloom>`, "", "FAIL document", "WARN claude-code", 1},
+		{"defaults and missing setup", "", false, "", "PASS document - using built-in defaults", "WARN claude-code", 0},
+		{"valid configured", validDoc, false, `{"statusLine":{"command":"statusloom claude"}}`, "PASS document", "PASS claude-code", 0},
+		{"invalid document", `<statusloom>`, true, "", "FAIL document", "WARN claude-code", 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -107,14 +148,18 @@ func TestDoctorStatusesAndExit(t *testing.T) {
 			configPath := filepath.Join(dir, "config.json")
 			settingsPath := filepath.Join(dir, "settings.json")
 			cachePath := filepath.Join(dir, "cache")
+			t.Setenv("STATUSLOOM_CONFIG", configPath)
+			t.Setenv("STATUSLOOM_CACHE_DIR", cachePath)
 			if tt.document != "" {
-				os.WriteFile(filepath.Join(dir, "claude-code.xml"), []byte(tt.document), 0o600)
+				if tt.rawDocument {
+					writeRawStoreDocument(t, dir, "claude-code", tt.document)
+				} else {
+					writeDocument(t, "claude-code", tt.document)
+				}
 			}
 			if tt.settings != "" {
 				os.WriteFile(settingsPath, []byte(tt.settings), 0o600)
 			}
-			t.Setenv("STATUSLOOM_CONFIG", configPath)
-			t.Setenv("STATUSLOOM_CACHE_DIR", cachePath)
 			out, stderr, code := runCLI(t, []string{"doctor", "--settings", settingsPath}, nil, nil)
 			if code != tt.wantCode || stderr != "" {
 				t.Fatalf("code=%d stderr=%q out=%q", code, stderr, out)
@@ -359,10 +404,10 @@ func TestDoctorRefreshInterval(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			settingsPath := filepath.Join(dir, "settings.json")
-			os.WriteFile(filepath.Join(dir, "claude-code.xml"), []byte(tt.document), 0o600)
-			os.WriteFile(settingsPath, []byte(tt.settings), 0o600)
 			t.Setenv("STATUSLOOM_CONFIG", filepath.Join(dir, "config.json"))
 			t.Setenv("STATUSLOOM_CACHE_DIR", filepath.Join(dir, "cache"))
+			writeDocument(t, "claude-code", tt.document)
+			os.WriteFile(settingsPath, []byte(tt.settings), 0o600)
 
 			out, _, _ := runCLI(t, []string{"doctor", "--settings", settingsPath}, nil, nil)
 			gotWarn := strings.Contains(out, "WARN refresh")
@@ -374,9 +419,9 @@ func TestDoctorRefreshInterval(t *testing.T) {
 }
 
 // TestDoctorRefreshIntervalSkipsWhenUnreadable covers the silent-skip
-// cases: no <tool>.xml document on disk (built-in defaults / migration
-// pending), and unreadable Claude settings. Both are handled by other doctor
-// checks, so "refresh" must stay quiet to avoid double reporting.
+// cases: no committed document in the store yet (built-in defaults), and
+// unreadable Claude settings. Both are handled by other doctor checks, so
+// "refresh" must stay quiet to avoid double reporting.
 func TestDoctorRefreshIntervalSkipsWhenUnreadable(t *testing.T) {
 	t.Run("no document", func(t *testing.T) {
 		dir := t.TempDir()
@@ -392,10 +437,10 @@ func TestDoctorRefreshIntervalSkipsWhenUnreadable(t *testing.T) {
 
 	t.Run("claude settings unreadable", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "claude-code.xml"), []byte(
-			`<statusloom version="1" tool="claude-code"><layout name="d" active="true"><line><field name="weekly-reset"/></line></layout></statusloom>`), 0o600)
 		t.Setenv("STATUSLOOM_CONFIG", filepath.Join(dir, "config.json"))
 		t.Setenv("STATUSLOOM_CACHE_DIR", filepath.Join(dir, "cache"))
+		writeDocument(t, "claude-code",
+			`<statusloom version="1" tool="claude-code"><layout name="d" active="true"><line><field name="weekly-reset"/></line></layout></statusloom>`)
 		out, _, _ := runCLI(t, []string{"doctor", "--settings", filepath.Join(dir, "missing-settings.json")}, nil, nil)
 		if strings.Contains(out, "WARN refresh") {
 			t.Errorf("did not expect a refresh warning: %q", out)

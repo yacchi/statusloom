@@ -1,5 +1,5 @@
-// App-level tests of the shared DSL draft channel (<tool>.draft.xml via
-// GET/PUT /api/dsl/draft): source edits publish (debounced), external edits
+// App-level tests of the shared DSL draft channel (the store's draft working
+// node via GET/PUT /api/dsl/draft): source edits publish (debounced), external edits
 // fold into undoable history, our own echo never loops, and a backend
 // without draft support leaves the app fully usable.
 

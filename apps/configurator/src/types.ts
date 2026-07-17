@@ -428,3 +428,71 @@ export interface TerminalResize {
     cols: number;
     rows: number;
 }
+
+// ---- history (GET /api/history, GET /api/history/{id}, POST
+// /api/history/{id}/restore — DSL_API.md "History API") ----
+
+export interface HistoryMeta {
+    name?: string;
+    description?: string;
+    author?: string;
+    // Free-form Markdown prose (the exchange format's pre-fence body text,
+    // internal/exchange.Meta.Notes) carried alongside the revision. Not
+    // currently surfaced in the history panel's UI.
+    notes?: string;
+}
+
+// One revision in GET /api/history's listing, deliberately without `source`
+// (fetch it via getHistoryRevision) so the listing stays light with many
+// revisions.
+export interface HistoryRevisionEntry {
+    id: string;
+    parent: string | null;
+    savedAt: string; // RFC3339
+    origin: string; // "ui" | "cli" | "import"
+    meta: HistoryMeta;
+}
+
+// `current` is the tool's current committed revision id; `draft` reports
+// only whether a draft working node exists (never its source).
+export interface HistoryRefs {
+    current: string;
+    draft: boolean;
+}
+
+export interface HistoryListResponse {
+    revisions: HistoryRevisionEntry[];
+    refs: HistoryRefs;
+}
+
+// GET /api/history/{id}: the listing entry plus the tool it belongs to and
+// its full source text.
+export interface HistoryRevisionDetail extends HistoryRevisionEntry {
+    tool: string;
+    source: string;
+}
+
+// POST /api/history/{id}/restore.
+export interface HistoryRestoreResponse {
+    ok: boolean;
+    tool: string;
+    current: string;
+}
+
+// ---- exchange (*.sloom.md Markdown) ----
+//
+// POST /api/exchange/import's request body is raw *.sloom.md text, not JSON
+// (see api.ts's importExchange) — only the response is JSON, mirroring
+// PutSourceResponse's saved/diagnostics shape but also reporting which tool
+// and revision id the import produced (derived server-side from the
+// document's own `<statusloom tool="...">` attribute, since the request
+// carries no tool of its own).
+export interface ImportExchangeResponse {
+    // False when the import was rejected (409) because the extracted DSL has
+    // error-severity diagnostics, or the Markdown envelope itself failed to
+    // decode.
+    saved: boolean;
+    tool?: string;
+    revision?: string;
+    diagnostics: Diagnostic[];
+}

@@ -6,6 +6,10 @@
 
 import type {
     DocumentResponse,
+    HistoryListResponse,
+    HistoryRestoreResponse,
+    HistoryRevisionDetail,
+    ImportExchangeResponse,
     LiveSessionInfo,
     Metric,
     ParseResponse,
@@ -96,6 +100,35 @@ async function rawRequest(
     return { status: res.status, parsed };
 }
 
+// rawTextRequest is rawRequest's sibling for the two exchange endpoints,
+// whose bodies are raw *.sloom.md Markdown text rather than JSON: it neither
+// JSON.stringifies the request body nor JSON.parses the response, leaving
+// both to the caller (import's response happens to be JSON; export's is the
+// Markdown file itself).
+async function rawTextRequest(
+    token: string,
+    method: string,
+    path: string,
+    body?: string,
+    contentType?: string,
+): Promise<{ status: number; text: string }> {
+    const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+    };
+    if (body !== undefined && contentType) {
+        headers["Content-Type"] = contentType;
+    }
+
+    let res: Response;
+    try {
+        res = await fetch(path, { method, headers, body });
+    } catch (err) {
+        throw new ApiError(0, `Network error: ${(err as Error).message}`);
+    }
+
+    return { status: res.status, text: await res.text() };
+}
+
 function errorMessage(status: number, parsed: unknown): string {
     return parsed && typeof parsed === "object" && "error" in parsed
         ? String((parsed as { error: unknown }).error)
@@ -119,10 +152,12 @@ export interface Api {
     // GET /api/tools — the documents (tools) the configurator can switch
     // between, in display order.
     getTools(): Promise<ToolInfo[]>;
-    // GET /api/dsl/document — the saved <tool>.xml (or the built-in default).
+    // GET /api/dsl/document — tool's current committed source from the
+    // internal store (or the built-in default).
     getDocument(tool: string): Promise<DocumentResponse>;
-    // PUT /api/dsl/document — save. A 409 (error diagnostics; nothing written)
-    // resolves with saved=false rather than throwing.
+    // PUT /api/dsl/document — save (a new store revision). A 409 (error
+    // diagnostics; nothing written) resolves with saved=false rather than
+    // throwing.
     putDocument(tool: string, source: string): Promise<PutSourceResponse>;
     // POST /api/dsl/parse — live analysis for the DSL Editor; never writes.
     parse(source: string): Promise<ParseResponse>;
@@ -130,7 +165,7 @@ export interface Api {
     // given, unchanged nodes are reused verbatim (minimal-diff); otherwise the
     // whole-document canonical form is returned.
     serialize(ast: StatusloomNode, baseSource?: string): Promise<SerializeResponse>;
-    // GET/PUT /api/dsl/draft — the shared draft source (last-writer-wins).
+    // GET/PUT /api/dsl/draft — the tool's draft working node (last-writer-wins).
     getDraft(tool: string): Promise<DocumentResponse>;
     putDraft(tool: string, source: string): Promise<PutSourceResponse>;
     // POST /api/dsl/preview — render `source` and return node-ID segments.
@@ -142,6 +177,20 @@ export interface Api {
     // GET /api/usage/probe — availability of the authenticated OAuth usage
     // API, gating oauth-usage-capability fields in the palette.
     probeUsage(): Promise<UsageProbe>;
+    // GET /api/history — tool's revision listing (oldest-first) plus refs.
+    getHistory(tool: string): Promise<HistoryListResponse>;
+    // GET /api/history/{id} — one revision's full record (including source).
+    getHistoryRevision(id: string): Promise<HistoryRevisionDetail>;
+    // POST /api/history/{id}/restore — repoints tool's current ref at id and
+    // discards its draft working node; never creates a new revision.
+    restoreRevision(id: string): Promise<HistoryRestoreResponse>;
+    // POST /api/exchange/import — decode+validate a raw *.sloom.md Markdown
+    // document (the request body itself, not JSON) and save it as a new
+    // revision (origin "import"). See DSL_API.md "Exchange API".
+    importExchange(markdown: string): Promise<ImportExchangeResponse>;
+    // GET /api/exchange/export?tool= — tool's current revision as a raw
+    // *.sloom.md Markdown document (the response body itself, not JSON).
+    getExportMarkdown(tool: string): Promise<string>;
     getSessions(): Promise<SessionSummary[]>;
     shutdown(): Promise<void>;
     startLiveSession(): Promise<LiveSessionInfo>;
@@ -224,6 +273,75 @@ export function createApi(token: string): Api {
         },
         async probeUsage() {
             return request<UsageProbe>(token, "GET", "/api/usage/probe");
+        },
+        async getHistory(tool: string) {
+            return request<HistoryListResponse>(
+                token,
+                "GET",
+                `/api/history?tool=${encodeURIComponent(tool)}`,
+            );
+        },
+        async getHistoryRevision(id: string) {
+            return request<HistoryRevisionDetail>(
+                token,
+                "GET",
+                `/api/history/${encodeURIComponent(id)}`,
+            );
+        },
+        async restoreRevision(id: string) {
+            return request<HistoryRestoreResponse>(
+                token,
+                "POST",
+                `/api/history/${encodeURIComponent(id)}/restore`,
+            );
+        },
+        async importExchange(markdown: string) {
+            const { status, text } = await rawTextRequest(
+                token,
+                "POST",
+                "/api/exchange/import",
+                markdown,
+                "text/markdown; charset=utf-8",
+            );
+            let parsed: unknown = undefined;
+            if (text.length > 0) {
+                try {
+                    parsed = JSON.parse(text);
+                } catch {
+                    parsed = undefined;
+                }
+            }
+            if (status === 200 || status === 409) {
+                const body = parsed as {
+                    tool?: string;
+                    revision?: string;
+                    diagnostics?: ImportExchangeResponse["diagnostics"];
+                };
+                return {
+                    saved: status === 200,
+                    tool: body.tool,
+                    revision: body.revision,
+                    diagnostics: body.diagnostics ?? [],
+                };
+            }
+            throw new ApiError(status, errorMessage(status, parsed));
+        },
+        async getExportMarkdown(tool: string) {
+            const { status, text } = await rawTextRequest(
+                token,
+                "GET",
+                `/api/exchange/export?tool=${encodeURIComponent(tool)}`,
+            );
+            if (status !== 200) {
+                let parsed: unknown = undefined;
+                try {
+                    parsed = JSON.parse(text);
+                } catch {
+                    parsed = undefined;
+                }
+                throw new ApiError(status, errorMessage(status, parsed));
+            }
+            return text;
         },
         async getSessions() {
             const res = await request<{ sessions?: SessionSummary[] }>(

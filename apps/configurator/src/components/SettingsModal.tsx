@@ -1,12 +1,16 @@
 // Git settings hosted in a modal (opened from the header ⚙ button). The form
-// body lives in GitSettings; this component only provides the modal chrome
-// (backdrop, title, Close). Follows the same pattern as ImportModal.
+// body lives in GitSettings; this component only provides the title and
+// hosts it in the shared modal chrome. Every change here is a live attribute
+// patch (GitSettings' doc comment) — there is no separate save step, so this
+// modal has no footer/primary action; the × button and Escape are its only
+// ways to close.
 
 import type { AttrPatch } from "../ast.ts";
 import type { StatusloomNode } from "../types.ts";
 import { t, useLang } from "../i18n.ts";
 import { HelpTip } from "./HelpTip.tsx";
 import { GitSettings } from "./GitSettings.tsx";
+import { Modal } from "./Modal.tsx";
 
 interface Props {
     root: StatusloomNode;
@@ -18,18 +22,16 @@ interface Props {
 export function SettingsModal({ root, readOnly, onPatchGit, onClose }: Props) {
     const lang = useLang();
     return (
-        <div className="modal-backdrop" onClick={onClose}>
-            <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
-                <div className="modal-head">
-                    <h2 style={{ margin: 0 }}>
-                        {t(lang, "settingsTitle")} <HelpTip k="helpGit" />
-                    </h2>
-                </div>
-                <GitSettings root={root} readOnly={readOnly} onPatchGit={onPatchGit} />
-                <div className="modal-actions">
-                    <button onClick={onClose}>Close</button>
-                </div>
-            </div>
-        </div>
+        <Modal
+            title={
+                <>
+                    {t(lang, "settingsTitle")} <HelpTip k="helpGit" />
+                </>
+            }
+            onClose={onClose}
+            className="settings-modal"
+        >
+            <GitSettings root={root} readOnly={readOnly} onPatchGit={onPatchGit} />
+        </Modal>
     );
 }

@@ -74,6 +74,7 @@ import {
     type VariantListView,
 } from "./useDragEditing.ts";
 import { I18nContext, loadLang, saveLang, t, type Lang } from "./i18n.ts";
+import { exportFilename } from "./exportFilename.ts";
 import { STRUCTURAL_PRESETS, makeDefaultSubagentLine, makeFieldNode, nodeLabel } from "./presets.ts";
 import {
     hasErrors,
@@ -90,7 +91,7 @@ import {
     type StatusloomNode,
     type ToolInfo,
 } from "./types.ts";
-import type { Theme } from "./ansi.ts";
+import type { Theme } from "@statusloom/ansi";
 import { Header } from "./components/Header.tsx";
 import { Canvas } from "./components/Canvas.tsx";
 import { DslEditor } from "./components/DslEditor.tsx";
@@ -99,6 +100,7 @@ import { PropertiesPanel } from "./components/PropertiesPanel.tsx";
 import { DisplaySettings } from "./components/DisplaySettings.tsx";
 import { SettingsModal } from "./components/SettingsModal.tsx";
 import { ImportModal, type ImportMode } from "./components/ImportModal.tsx";
+import { HistoryPanel } from "./components/HistoryPanel.tsx";
 import { LayoutTabs } from "./components/LayoutTabs.tsx";
 import { LiveMonitor } from "./components/LiveMonitor.tsx";
 
@@ -275,6 +277,7 @@ function Configurator({ token }: { token: string }) {
     const [closed, setClosed] = useState(false);
     const [showImport, setShowImport] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
+    const [showHistory, setShowHistory] = useState(false);
 
     // Embedded terminal drawer: `termOpen` toggles the drawer's visibility;
     // bumping `termStartNonce` asks the (mounted) drawer to (re)start a
@@ -374,7 +377,7 @@ function Configurator({ token }: { token: string }) {
         setValidState(next);
     }, []);
 
-    // ---- shared draft (<tool>.draft.xml) ----
+    // ---- draft working node (server-side: the store's refs.<tool>.draft) ----
     // The version (sha256 of the source) we last wrote or imported. A poll
     // returning this same version is our own echo and is ignored; a different
     // version is an external edit (e.g. `statusloom draft push`, or Claude in
@@ -383,6 +386,16 @@ function Configurator({ token }: { token: string }) {
     const lastDraftContentRef = useRef<string | null>(null);
     // Disabled after the first draft call fails so the feature stays inert.
     const draftEnabledRef = useRef(true);
+    // The debounced auto-publish effect's pending setTimeout handle (null
+    // when nothing is scheduled), and the in-flight flushDraftNow promise it
+    // (or switchTool's own flush) started, if any is currently pending. Both
+    // exist so settleDraftBeforeRestore (below) can guarantee no stale draft
+    // write lands after a history restore has cleared the server-side draft
+    // (plans/config-store-and-format.md §4.2): a restore must first cancel
+    // any not-yet-fired debounce timer, then await any write already in
+    // flight, before it is safe to call the restore API.
+    const pendingDraftTimeoutRef = useRef<number | null>(null);
+    const draftFlushInFlightRef = useRef<Promise<void> | null>(null);
 
     // Per-tool editing state kept alive across tab switches. Keyed by tool
     // id; an entry exists once that tool has been loaded (lazily, on first
@@ -707,12 +720,25 @@ function Configurator({ token }: { token: string }) {
             if (!draftEnabledRef.current || source === lastDraftContentRef.current) {
                 return;
             }
+            // Record this call's promise so settleDraftBeforeRestore can await
+            // it regardless of which caller (the debounce below, or
+            // switchTool's own flush) started it.
+            const run = (async () => {
+                try {
+                    const { version } = await api.putDraft(tool, source);
+                    lastDraftVersionRef.current = version;
+                    lastDraftContentRef.current = source;
+                } catch {
+                    draftEnabledRef.current = false;
+                }
+            })();
+            draftFlushInFlightRef.current = run;
             try {
-                const { version } = await api.putDraft(tool, source);
-                lastDraftVersionRef.current = version;
-                lastDraftContentRef.current = source;
-            } catch {
-                draftEnabledRef.current = false;
+                await run;
+            } finally {
+                if (draftFlushInFlightRef.current === run) {
+                    draftFlushInFlightRef.current = null;
+                }
             }
         },
         [api],
@@ -729,13 +755,40 @@ function Configurator({ token }: { token: string }) {
             return;
         }
         const handle = window.setTimeout(() => {
+            pendingDraftTimeoutRef.current = null;
             if (present === lastDraftContentRef.current) {
                 return;
             }
             void flushDraftNow(activeTool, present);
         }, 250);
-        return () => window.clearTimeout(handle);
+        pendingDraftTimeoutRef.current = handle;
+        return () => {
+            window.clearTimeout(handle);
+            if (pendingDraftTimeoutRef.current === handle) {
+                pendingDraftTimeoutRef.current = null;
+            }
+        };
     }, [activeTool, present, flushDraftNow]);
+
+    // Called by HistoryPanel immediately before it calls the restore API
+    // (before its own confirm/onRestored flow runs). A history restore
+    // discards the server-side draft working node unconditionally (§4.2);
+    // without this, a debounce timer already scheduled — or a PUT already
+    // in flight — from edits made just before opening the history panel
+    // could still land *after* the restore, resurrecting stale draft
+    // content the user just discarded. Cancelling the pending timer first
+    // and then awaiting any in-flight write guarantees no such write starts
+    // after this function returns, so it is safe for the caller to proceed
+    // straight to the restore call.
+    const settleDraftBeforeRestore = useCallback(async () => {
+        if (pendingDraftTimeoutRef.current !== null) {
+            window.clearTimeout(pendingDraftTimeoutRef.current);
+            pendingDraftTimeoutRef.current = null;
+        }
+        if (draftFlushInFlightRef.current) {
+            await draftFlushInFlightRef.current;
+        }
+    }, []);
 
     // Poll the active tool's shared draft; a version different from the one
     // we last wrote/imported means the other side edited the draft. Fold
@@ -1275,19 +1328,30 @@ function Configurator({ token }: { token: string }) {
         setClosed(true);
     }
 
-    function doExport() {
-        if (present === null || activeTool === null) {
+    // Export the *saved* document (not the in-progress editor buffer — the
+    // Markdown exchange format is generated server-side from the store's
+    // current committed revision, meta included; GET /api/exchange/export).
+    // This is the sole export path (App.tsx / Header.tsx): raw-XML download
+    // was removed since the DSL editor already gives full access to the raw
+    // source, and a single .sloom.md file is what's portable/shareable.
+    async function doExportMarkdown() {
+        if (activeTool === null) {
             return;
         }
-        const blob = new Blob([present], { type: "application/xml" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `${activeTool}.xml`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+        try {
+            const md = await api.getExportMarkdown(activeTool);
+            const blob = new Blob([md], { type: "text/markdown" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${exportFilename(md, activeTool)}.sloom.md`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            setSaveError((err as Error).message);
+        }
     }
 
     // Import: "append" adds the pasted document's layouts to the current set;
@@ -1332,6 +1396,72 @@ function Configurator({ token }: { token: string }) {
             return null;
         } catch (err) {
             return (err as Error).message;
+        }
+    }
+
+    // Import a *.sloom.md exchange document (ImportModal detects the format
+    // from its content — a leading "---" frontmatter block — not a mode
+    // toggle). Unlike DSL append/replace, this always goes through the
+    // store's validation boundary server-side (POST /api/exchange/import):
+    // success commits a new revision, so — exactly like a history restore —
+    // the editor reloads its whole bundle from the server rather than
+    // patching the in-memory AST. Returns an error message or null.
+    async function onImportMarkdown(markdown: string): Promise<string | null> {
+        let res;
+        try {
+            res = await api.importExchange(markdown);
+        } catch (err) {
+            return (err as Error).message;
+        }
+        if (!res.saved) {
+            const msgs = res.diagnostics
+                .filter((d) => d.severity === "error")
+                .map((d) => d.message);
+            return msgs.length > 0 ? msgs.join("; ") : "Invalid document.";
+        }
+        const tool = activeToolRef.current ?? activeTool;
+        if (tool === null) {
+            setShowImport(false);
+            return null;
+        }
+        try {
+            const bundle = await loadBundle(tool);
+            stashRef.current[tool] = bundle;
+            applyDocState(bundle);
+            setSelection(null);
+            setActiveLine(0);
+            setShowImport(false);
+            setNotice(`Imported revision ${res.revision ? res.revision.slice(0, 8) : ""}.`);
+            return null;
+        } catch (err) {
+            // The import itself already succeeded server-side; only the
+            // editor's reload failed, so report it as a save-banner error
+            // (like onHistoryRestored) rather than an in-modal one.
+            setShowImport(false);
+            setSaveError((err as Error).message);
+            return null;
+        }
+    }
+
+    // Called by HistoryPanel once POST /api/history/{id}/restore has
+    // succeeded server-side: reloads the active tool's whole editing bundle
+    // (document + draft, now discarded per §4.2) from the server, exactly
+    // like a tool's first open, so the editor reflects the restored
+    // revision. The panel refreshes its own list separately.
+    async function onHistoryRestored(id: string) {
+        const tool = activeToolRef.current ?? activeTool;
+        if (tool === null) {
+            return;
+        }
+        try {
+            const bundle = await loadBundle(tool);
+            stashRef.current[tool] = bundle;
+            applyDocState(bundle);
+            setSelection(null);
+            setActiveLine(0);
+            setNotice(`Restored revision ${id.slice(0, 8)}.`);
+        } catch (err) {
+            setSaveError((err as Error).message);
         }
     }
 
@@ -1440,9 +1570,10 @@ function Configurator({ token }: { token: string }) {
                 onRedo={() => setHistory((h) => (h ? redo(h) : h))}
                 onSave={doSave}
                 onSaveClose={doSaveClose}
-                onExport={doExport}
+                onExportMarkdown={doExportMarkdown}
                 onImport={() => setShowImport(true)}
                 onOpenSettings={() => setShowSettings(true)}
+                onOpenHistory={() => setShowHistory(true)}
             />
 
             {warnings ? (
@@ -1711,7 +1842,12 @@ function Configurator({ token }: { token: string }) {
             </footer>
 
             {showImport ? (
-                <ImportModal onImport={onImport} onClose={() => setShowImport(false)} />
+                <ImportModal
+                    lang={lang}
+                    onImport={onImport}
+                    onImportMarkdown={onImportMarkdown}
+                    onClose={() => setShowImport(false)}
+                />
             ) : null}
 
             {showSettings && ast ? (
@@ -1722,6 +1858,17 @@ function Configurator({ token }: { token: string }) {
                         applyAstEdit((root) => updateGitAttrs(root, patch))
                     }
                     onClose={() => setShowSettings(false)}
+                />
+            ) : null}
+
+            {showHistory && activeTool !== null ? (
+                <HistoryPanel
+                    api={api}
+                    tool={activeTool}
+                    localDirty={dirty}
+                    onClose={() => setShowHistory(false)}
+                    onRestored={onHistoryRestored}
+                    beforeRestore={settleDraftBeforeRestore}
                 />
             ) : null}
         </div>

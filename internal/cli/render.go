@@ -58,15 +58,15 @@ func runRenderPipeline(stdin io.Reader, stdout, stderr io.Writer, getenv func(st
 }
 
 // renderDocFromRaw is the DSL render path shared by `statusloom claude`,
-// `statusloom render`, and `statusloom monitor`: it loads the <tool>.xml
-// document, renders it, and returns the joined output lines. Diagnostics are
-// written to stderr directly; a document with error diagnostics (or an
-// unreadable/invalid one) never crashes or blanks the status line — it falls
-// back to DefaultDocument.
+// `statusloom render`, and `statusloom monitor`: it loads the tool's current
+// committed document from the internal store, renders it, and returns the
+// joined output lines. Diagnostics are written to stderr directly; a
+// document with error diagnostics (or an unreadable/invalid one) never
+// crashes or blanks the status line — it falls back to DefaultDocument.
 //
-// When draft is true (`statusloom monitor --draft`), the shared draft
-// <tool>.draft.xml is rendered instead, falling back to the saved document when
-// the draft is absent or invalid. The saved-document path (draft=false) keeps
+// When draft is true (`statusloom monitor --draft`), the tool's draft working
+// node is rendered instead, falling back to the saved document when the draft
+// is absent or invalid. The saved-document path (draft=false) keeps
 // `statusloom claude` output byte-identical regardless of caller.
 //
 // It performs no network I/O (only the local account/repo/session caches and
@@ -114,11 +114,12 @@ func applyTranscriptCache(snap *schema.StatusSnapshot, now time.Time) {
 }
 
 // resolveRenderDocument returns the renderable document for a render pass. With
-// draft=true it prefers the shared draft (falling back to the saved document
-// when the draft is absent or invalid); otherwise it loads the saved
-// <tool>.xml. It always returns a non-nil, renderable document, falling back to
-// the built-in DefaultDocument when the chosen source has error diagnostics or
-// cannot be read (markup.md "fallback"). Diagnostics are written to stderr.
+// draft=true it prefers the tool's draft working node (falling back to the
+// saved document when the draft is absent or invalid); otherwise it loads the
+// saved current document from the store. It always returns a non-nil,
+// renderable document, falling back to the built-in DefaultDocument when the
+// chosen source has error diagnostics or cannot be read (markup.md
+// "fallback"). Diagnostics are written to stderr.
 func resolveRenderDocument(tool string, draft bool, stderr io.Writer) *dsl.Document {
 	if draft {
 		if doc, ok := loadDraftDocument(tool, stderr); ok {
@@ -127,7 +128,7 @@ func resolveRenderDocument(tool string, draft bool, stderr io.Writer) *dsl.Docum
 	}
 	doc, diags, err := config.LoadDocument(tool)
 	if err != nil {
-		fmt.Fprintf(stderr, "statusloom: cannot load %s.xml: %v\n", tool, err)
+		fmt.Fprintf(stderr, "statusloom: cannot load %s document: %v\n", tool, err)
 		doc, _ = dsl.Parse(config.DefaultDocument(tool))
 		return doc
 	}
@@ -138,32 +139,33 @@ func resolveRenderDocument(tool string, draft bool, stderr io.Writer) *dsl.Docum
 	return doc
 }
 
-// loadDraftDocument parses the shared draft <tool>.draft.xml. ok is true only
-// when a draft file exists and parses without error-severity diagnostics;
-// otherwise the caller falls back to the saved document. Diagnostics (and a
-// fallback notice) are written to stderr.
+// loadDraftDocument parses and validates the tool's draft working node
+// (config.LoadDraftDocument). ok is true only when a draft is present and
+// parses without error-severity diagnostics; otherwise the caller falls back
+// to the saved document. Diagnostics (and a fallback notice, only when a
+// draft was actually present but invalid) are written to stderr.
 func loadDraftDocument(tool string, stderr io.Writer) (*dsl.Document, bool) {
-	src, exists, err := config.LoadDraftDocumentSource(tool)
-	if err != nil || !exists {
+	if !config.DraftExists(tool) {
 		return nil, false
 	}
-	doc, diags := dsl.Parse(src)
-	if doc != nil && doc.Root != nil {
-		diags = append(diags, dsl.Validate(doc)...)
+	doc, diags, ok, err := config.LoadDraftDocument(tool)
+	if err != nil {
+		return nil, false
 	}
-	writeDiagnostics(stderr, tool+".draft", diags)
-	if doc == nil || doc.Root == nil || dsl.HasErrors(diags) {
-		fmt.Fprintf(stderr, "statusloom: %s.draft.xml invalid; rendering the saved document\n", tool)
+	writeDiagnostics(stderr, tool+" draft", diags)
+	if !ok {
+		fmt.Fprintf(stderr, "statusloom: %s draft invalid; rendering the saved document\n", tool)
 		return nil, false
 	}
 	return doc, true
 }
 
 // writeDiagnostics prints DSL parse/validation diagnostics to stderr, one per
-// line, prefixed with the document name.
-func writeDiagnostics(stderr io.Writer, tool string, diags []dsl.Diagnostic) {
+// line, prefixed with the document label (e.g. "claude-code" or "claude-code
+// draft").
+func writeDiagnostics(stderr io.Writer, label string, diags []dsl.Diagnostic) {
 	for _, d := range diags {
-		fmt.Fprintf(stderr, "statusloom: %s.xml: %s: %s\n", tool, d.Severity, d.Message)
+		fmt.Fprintf(stderr, "statusloom: %s: %s: %s\n", label, d.Severity, d.Message)
 	}
 }
 

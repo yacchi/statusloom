@@ -6,7 +6,7 @@
 // round trip.
 
 import { useState } from "react";
-import type { Theme } from "../ansi.ts";
+import type { Theme } from "@statusloom/ansi";
 import type { AttrPatch } from "../ast.ts";
 import { pickDescription, t, useLang, type Lang } from "../i18n.ts";
 import {

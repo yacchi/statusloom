@@ -13,7 +13,7 @@
 // selected, so the layout never shifts.
 
 import { useRef, useState } from "react";
-import { paletteFor, type Theme } from "../ansi.ts";
+import { paletteFor, type Theme } from "@statusloom/ansi";
 import { t, type Lang } from "../i18n.ts";
 import {
     addBreakpoint,

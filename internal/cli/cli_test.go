@@ -16,7 +16,43 @@ import (
 	"time"
 
 	"github.com/yacchi/statusloom/internal/cache"
+	"github.com/yacchi/statusloom/internal/dsl"
+	"github.com/yacchi/statusloom/internal/store"
 )
+
+// writeDocument installs src as tool's committed current revision through the
+// store's Save validation boundary, mirroring what a real UI/CLI save does.
+// It fails the test if src has error-severity diagnostics (use a raw store
+// helper instead when a test deliberately needs an invalid current
+// revision — see e.g. commands_test.go's doctor "invalid document" case).
+func writeDocument(t *testing.T, tool, src string) {
+	t.Helper()
+	st, err := store.Open()
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	_, diags, err := st.Save(tool, src, "test", store.Meta{})
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if dsl.HasErrors(diags) {
+		t.Fatalf("Save rejected %s document: %+v", tool, diags)
+	}
+}
+
+// writeDraft installs src as tool's draft working node via the store
+// (last-writer-wins, no validation — mirrors the draft's tolerance for
+// in-progress/invalid input).
+func writeDraft(t *testing.T, tool, src string) {
+	t.Helper()
+	st, err := store.Open()
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	if err := st.WriteDraft(tool, src); err != nil {
+		t.Fatalf("WriteDraft: %v", err)
+	}
+}
 
 // fixture reads a Claude Code stdin fixture from fixtures/claude/.
 func fixture(t *testing.T, name string) []byte {

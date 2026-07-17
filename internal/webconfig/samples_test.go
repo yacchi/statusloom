@@ -4,18 +4,24 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yacchi/statusloom/internal/samples"
 )
 
-// TestPreviewFor_ExtraUsageFields verifies that fullSample (samples.go)
-// populates the account fields the new extra-usage / per-model weekly-usage
-// DSL fields read (Account.ExtraUsage, Account.SevenDayOpus,
-// Account.SevenDaySonnet), so previewFor (catalog.go) renders a real value
-// for each of them instead of falling back to previewFallback
-// ("(no sample)"). This is what makes the config UI's palette show something
-// useful for these fields before the usage-API probe has ever run.
+// TestPreviewFor_ExtraUsageFields verifies that the full sample
+// (internal/samples) populates the account fields the new extra-usage /
+// per-model weekly-usage DSL fields read (Account.ExtraUsage,
+// Account.SevenDayOpus, Account.SevenDaySonnet), so previewFor (catalog.go)
+// renders a real value for each of them instead of falling back to
+// previewFallback ("(no sample)"). This is what makes the config UI's
+// palette show something useful for these fields before the usage-API probe
+// has ever run.
 func TestPreviewFor_ExtraUsageFields(t *testing.T) {
 	now := time.Now()
-	snap := fullSample(now)
+	snap, ok := samples.Snapshot(samples.Full, now)
+	if !ok {
+		t.Fatal("samples.Snapshot(samples.Full) ok = false")
+	}
 
 	cases := []struct {
 		field string

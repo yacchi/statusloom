@@ -1653,11 +1653,236 @@ button.link-button.danger-text {
     gap: 8px;
 }
 
+/* Every modal's header: title on the left, × close button pinned to the
+   top-right (Escape closes too — see components/Modal.tsx). Fixed size
+   regardless of title length so it never pushes the close button around. */
+.modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.modal-close {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-dim);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.modal-close:hover {
+    background: var(--panel-2);
+    color: var(--text);
+    border-color: var(--border);
+}
+
 .inline-error {
     color: var(--danger);
     font-size: 13px;
     white-space: pre-wrap;
     margin-top: 8px;
+}
+
+/* ---- history panel ---- */
+
+/* Large, and scales with the window rather than capping at a fixed px size
+   — diffs benefit from all the room a big display can give. `max()` only
+   enforces a *floor* (so the modal stays usable on a small window); there is
+   deliberately no upper px cap. Regardless of viewport, the modal must not
+   resize as revisions are selected/deselected (only the scrollable regions
+   inside it — .history-diff, .history-list — grow internally): same
+   dimensions whether nothing is selected, a diff is loading, or a full diff
+   is showing. */
+.history-modal {
+    width: max(90vw, 640px);
+    height: max(85vh, 480px);
+}
+
+.history-body {
+    display: flex;
+    gap: 12px;
+    min-height: 0;
+    flex: 1;
+}
+
+/* Master (list) / detail (diff) side by side when there's room; a narrow
+   modal (small viewport) stacks them instead, per the media query below.
+   Width is a share of the (now window-linked, see .history-modal) modal
+   width rather than a fixed px, so the name column (.history-name) gets
+   more room to breathe on larger windows instead of staying pinned at
+   whatever fit a 1100px-capped modal. */
+.history-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    width: 34%;
+    flex: none;
+    overflow-y: auto;
+    /* Fills the fixed-height history-body (rather than its own vh-based
+       height) so it scrolls internally instead of growing the modal as
+       revisions accumulate (rotation caps at 50). */
+    height: 100%;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+.history-list li + li {
+    border-top: 1px solid var(--border);
+}
+
+/* One row = one line: fixed padding/height regardless of selection, so
+   highlighting a row never reflows its neighbors (only border/background
+   change on `.on`). */
+.history-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid transparent;
+    border-radius: 0;
+    cursor: pointer;
+    text-align: left;
+    font-size: 12px;
+}
+
+.history-row.on {
+    border-color: var(--accent);
+    background: var(--panel-2);
+}
+
+.history-row-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.history-savedat {
+    flex: none;
+    font-family: ui-monospace, monospace;
+    color: var(--text-dim);
+}
+
+.history-origin {
+    flex: none;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    color: var(--text-dim);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.history-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+}
+
+.history-current-badge {
+    flex: none;
+    color: var(--accent);
+    font-size: 11px;
+}
+
+.history-detail {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Narrow modal (small viewport): stack list above detail instead of
+   side-by-side, matching the flex-direction switch other modals use once
+   there isn't room for two columns. A fixed (not %/vh-based) list height
+   here, since stacked-mode's list is no longer sharing the row's width with
+   the detail pane. */
+@media (max-width: 640px) {
+    .history-body {
+        flex-direction: column;
+    }
+
+    .history-list {
+        width: 100%;
+        height: 160px;
+        flex: none;
+    }
+}
+
+/* The one box that hosts every detail state — the no-selection placeholder,
+   the loading/error message, and the diff itself — so switching between them
+   never changes its size (task: same footprint for empty/unselected states).
+   flex:1 + min-height:0 lets it fill whatever's left of the fixed-height
+   modal and scroll internally instead of growing it. */
+.history-diff {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    padding: 4px 0;
+}
+
+/* The placeholder/loading/error states share the diff rows' horizontal
+   padding, even though they aren't .diff-line elements themselves. */
+.history-diff > .hint,
+.history-diff > .inline-error {
+    padding: 4px 8px;
+    margin: 0;
+}
+
+.diff-line {
+    display: flex;
+    gap: 6px;
+    padding: 0 8px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.diff-line.diff-add {
+    background: rgba(76, 175, 80, 0.15);
+}
+
+.diff-line.diff-remove {
+    background: rgba(241, 76, 76, 0.15);
+}
+
+.diff-marker {
+    flex: none;
+    color: var(--text-dim);
+}
+
+.history-confirm {
+    border: 1px solid var(--warn-border);
+    background: var(--warn-bg);
+    border-radius: 4px;
+    padding: 8px 10px;
+}
+
+.history-confirm p {
+    margin: 0 0 6px;
 }
 
 /* ---- DSL editor pane ---- */

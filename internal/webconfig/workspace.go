@@ -72,10 +72,10 @@ func gitInitWorkspace(dir string) {
 // shows how to preview a render.
 const workspaceClaudeMD = "# statusloom statusline workspace\n" + `
 This is a throwaway workspace for customizing your statusloom **status line**.
-Editing here does not touch any project of yours; it only changes the shared
-**draft** the web configurator is showing. Saving to your real config
-(` + "`<tool>.xml`" + `) is done from the web UI (the Save action), never
-automatically.
+Editing here does not touch any project of yours; it only changes the
+**draft working node** the web configurator is showing. Saving to your real
+config (a new revision in statusloom's internal store) is done from the web
+UI (the Save action), never automatically.
 
 ## Editing the draft
 
@@ -83,8 +83,8 @@ automatically.
    ` + "`statusloom draft pull`" + `  (writes ` + "`./statusloom-draft.xml`" + `)
 2. Edit that XML markup (see the DSL summary below).
 3. Push it back:
-   ` + "`statusloom draft push`" + `  (writes the shared draft; diagnostics are
-   printed but do not block the push, so in-progress edits still share)
+   ` + "`statusloom draft push`" + `  (writes the draft working node; diagnostics
+   are printed but do not block the push, so in-progress edits still share)
 
 Your changes appear in the web configurator as **unsaved edits**, and this
 session's status line re-renders against them (it runs
@@ -111,8 +111,8 @@ tasks[] payload:
     statusloom claude-subagent --preview
 
 Add ` + "`--draft`" + ` to preview that same built-in payload against the
-draft ` + "`<subagent>`" + ` region of the ` + "`claude-code`" + ` document
-you're editing here, instead of the saved document:
+` + "`<subagent>`" + ` region of the draft working node you're editing here,
+instead of the saved document:
 
     statusloom claude-subagent --preview --draft
 
@@ -127,15 +127,15 @@ line tool (for example ccstatusline, whose config lives at
 2. Express the same layout in statusloom markup (see the DSL summary below),
    mapping each item to a ` + "`<field>`" + ` and reproducing separators, labels,
    colors, and conditional visibility.
-3. Push it to the shared draft with ` + "`statusloom draft push`" + ` and preview it
+3. Push it to the draft working node with ` + "`statusloom draft push`" + ` and preview it
    with ` + "`statusloom claude < sample.json`" + ` (or the ` + "`--draft`" + ` monitor render).
 4. Compare against the original and iterate until it matches, then let the user
    Save it from the web UI.
 
 ## Markup DSL (summary)
 
-The status line is described in an XML/JSX-style markup, one file per tool
-(` + "`claude-code.xml`" + `). See ` + "`markup.md`" + ` in this workspace for the
+The status line is described in an XML/JSX-style markup, one document per
+tool (` + "`claude-code`" + `). See ` + "`markup.md`" + ` in this workspace for the
 full spec (it is shipped here for you to read).
 
     <statusloom version="1" tool="claude-code" color-level="ansi16" output-style="standard"

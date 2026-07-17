@@ -7,20 +7,20 @@ import (
 	"testing"
 
 	"github.com/yacchi/statusloom/internal/config"
+	"github.com/yacchi/statusloom/internal/store"
 )
 
-// setupDraftEnv isolates STATUSLOOM_CONFIG (so the draft document resolves into
-// a temp dir) and STATUSLOOM_CACHE_DIR, returning the config dir.
-func setupDraftEnv(t *testing.T) string {
+// setupDraftEnv isolates STATUSLOOM_CONFIG (so the internal store resolves
+// into a temp dir) and STATUSLOOM_CACHE_DIR.
+func setupDraftEnv(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("STATUSLOOM_CONFIG", filepath.Join(dir, "config.json"))
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
-	return dir
 }
 
 func TestDraft_PullThenPush_RoundTrips(t *testing.T) {
-	dir := setupDraftEnv(t)
+	setupDraftEnv(t)
 	outFile := filepath.Join(t.TempDir(), "draft.xml")
 
 	// pull with no draft/document falls back to the default DSL and writes it.
@@ -50,25 +50,28 @@ func TestDraft_PullThenPush_RoundTrips(t *testing.T) {
 		t.Fatalf("write edited file: %v", err)
 	}
 
-	// push writes it to the shared draft.
+	// push writes it to the store's draft working node.
 	_, stderr, code = runCLI(t, []string{"draft", "push", outFile}, nil, nil)
 	if code != 0 {
 		t.Fatalf("push exit = %d, want 0 (stderr: %s)", code, stderr)
 	}
 
-	// The shared draft file now reflects the edit.
-	draftPath := filepath.Join(dir, "claude-code.draft.xml")
-	saved, err := os.ReadFile(draftPath)
+	// The store's draft now reflects the edit.
+	st, err := store.Open()
 	if err != nil {
-		t.Fatalf("shared draft not written: %v", err)
+		t.Fatalf("store.Open: %v", err)
 	}
-	if !strings.Contains(string(saved), `color-level="truecolor"`) {
+	saved, ok, err := st.ReadDraft(draftTool)
+	if err != nil || !ok {
+		t.Fatalf("draft not written: ok=%v err=%v", ok, err)
+	}
+	if !strings.Contains(saved, `color-level="truecolor"`) {
 		t.Errorf("draft did not capture the edit:\n%s", saved)
 	}
 }
 
 func TestDraft_PushInvalidStillShares(t *testing.T) {
-	dir := setupDraftEnv(t)
+	setupDraftEnv(t)
 	badFile := filepath.Join(t.TempDir(), "bad.xml")
 
 	// An invalid document (unknown field): push must still share it (the draft
@@ -86,11 +89,15 @@ func TestDraft_PushInvalidStillShares(t *testing.T) {
 		t.Errorf("stderr %q should report the diagnostic", stderr)
 	}
 	// The invalid draft was still written (monitor --draft falls back on it).
-	saved, err := os.ReadFile(filepath.Join(dir, "claude-code.draft.xml"))
+	st, err := store.Open()
 	if err != nil {
-		t.Fatalf("invalid push did not write the draft: %v", err)
+		t.Fatalf("store.Open: %v", err)
 	}
-	if !strings.Contains(string(saved), "not-a-field") {
+	saved, ok, err := st.ReadDraft(draftTool)
+	if err != nil || !ok {
+		t.Fatalf("invalid push did not write the draft: ok=%v err=%v", ok, err)
+	}
+	if !strings.Contains(saved, "not-a-field") {
 		t.Errorf("draft content mismatch:\n%s", saved)
 	}
 }
@@ -122,18 +129,13 @@ func draftNoColorSrc(t *testing.T) string {
 }
 
 func TestMonitor_Draft_RendersAgainstDraft(t *testing.T) {
-	dir := setupDraftEnv(t)
+	setupDraftEnv(t)
 	data := fixture(t, "full.json")
 
 	// Saved document = default (color-level ansi16 -> ANSI escapes present).
 	// Draft = color-level none -> NO ANSI escapes. monitor --draft must use
 	// the draft, so its output must differ from plain `claude`.
-	if err := config.SaveDraftDocumentSource("claude-code", draftNoColorSrc(t)); err != nil {
-		t.Fatalf("SaveDraftDocumentSource: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "claude-code.draft.xml")); err != nil {
-		t.Fatalf("draft not written: %v", err)
-	}
+	writeDraft(t, "claude-code", draftNoColorSrc(t))
 
 	claudeOut, _, _ := runCLI(t, []string{"claude"}, data, nil)
 	draftOut, stderr, code := runCLI(t,
@@ -157,9 +159,7 @@ func TestMonitor_Draft_InvalidFallsBackToSaved(t *testing.T) {
 	// An invalid draft (unknown field) must not blank the status line: monitor
 	// --draft falls back to the saved document, matching plain `claude`.
 	bad := `<statusloom version="1" tool="claude-code"><layout name="D" active="true"><line><field name="not-a-field"/></line></layout></statusloom>`
-	if err := config.SaveDraftDocumentSource("claude-code", bad); err != nil {
-		t.Fatalf("SaveDraftDocumentSource: %v", err)
-	}
+	writeDraft(t, "claude-code", bad)
 
 	claudeOut, _, _ := runCLI(t, []string{"claude"}, data, nil)
 	draftOut, stderr, code := runCLI(t,
@@ -181,9 +181,7 @@ func TestMonitor_NoDraft_MatchesClaude(t *testing.T) {
 
 	// A draft exists (color-level none), but monitor WITHOUT --draft must
 	// ignore it and render the saved document exactly like `claude`.
-	if err := config.SaveDraftDocumentSource("claude-code", draftNoColorSrc(t)); err != nil {
-		t.Fatalf("SaveDraftDocumentSource: %v", err)
-	}
+	writeDraft(t, "claude-code", draftNoColorSrc(t))
 
 	claudeOut, _, _ := runCLI(t, []string{"claude"}, data, nil)
 	monitorOut, stderr, code := runCLI(t,

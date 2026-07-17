@@ -46,18 +46,20 @@ func runDoctor(args []string, stdout, stderr io.Writer, version string) int {
 	return 0
 }
 
-// doctorDocument checks the DSL status-line document (<tool>.xml), which is
-// the source of truth the render path now uses. Absent: the built-in default
-// document is used (PASS). Present: it is parsed and validated, and any
-// diagnostics are surfaced human-readably (errors -> FAIL, warnings -> WARN).
+// doctorDocument checks the DSL status-line document held as tool's current
+// committed revision in the internal store, which is the source of truth the
+// render path now uses. Absent: the built-in default document is used (PASS).
+// Present: it is parsed (a committed revision already passed the store's Save
+// validation boundary, so only a structural parse failure — e.g. a hand-
+// edited/corrupted store file — can still surface here), and any diagnostics
+// are reported human-readably (errors -> FAIL, warnings -> WARN).
 func doctorDocument(report func(string, string, string)) {
 	const tool = "claude-code"
-	path := config.DocumentPath(tool)
 	if !config.DocumentExists(tool) {
-		report("PASS", "document", fmt.Sprintf("using built-in defaults (%s)", path))
+		report("PASS", "document", "using built-in defaults")
 		return
 	}
-	_, diags, err := config.LoadDocument(tool)
+	doc, diags, err := config.LoadDocument(tool)
 	if err != nil {
 		report("FAIL", "document", err.Error())
 		return
@@ -71,12 +73,12 @@ func doctorDocument(report func(string, string, string)) {
 		}
 	}
 	switch {
-	case len(errs) > 0:
-		report("FAIL", "document", fmt.Sprintf("%s: %s", path, strings.Join(errs, "; ")))
+	case doc == nil || doc.Root == nil || len(errs) > 0:
+		report("FAIL", "document", strings.Join(errs, "; "))
 	case len(warns) > 0:
-		report("WARN", "document", fmt.Sprintf("%s: %s", path, strings.Join(warns, "; ")))
+		report("WARN", "document", strings.Join(warns, "; "))
 	default:
-		report("PASS", "document", path)
+		report("PASS", "document", tool)
 	}
 }
 
@@ -141,13 +143,12 @@ func doctorClaudeCode(report func(string, string, string), path string) {
 // firing to trigger a re-render). See statusloom setup claude-code
 // --refresh-interval.
 //
-// It reads the saved <tool>.xml document: the DSL document is what the render
-// path uses. When no document file exists yet (built-in defaults) the check
-// stays silent, mirroring the previous "only warn once configured" behavior.
-// It is
-// also silent whenever the document or the Claude Code settings can't be
-// read/parsed, since those problems are already surfaced by the document /
-// claude-code checks.
+// It reads tool's current committed document from the internal store: the
+// DSL document is what the render path uses. When the store holds no current
+// revision yet (built-in defaults) the check stays silent, mirroring the
+// previous "only warn once configured" behavior. It is also silent whenever
+// the document or the Claude Code settings can't be read/parsed, since those
+// problems are already surfaced by the document / claude-code checks.
 func doctorRefreshInterval(report func(string, string, string), settingsPath string) {
 	const tool = "claude-code"
 	if !config.DocumentExists(tool) {

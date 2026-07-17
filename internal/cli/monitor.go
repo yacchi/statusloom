@@ -31,7 +31,7 @@ func runMonitor(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv
 	fs.SetOutput(stderr)
 	emitURL := fs.String("emit-url", "", "config server URL to POST the raw payload to (required)")
 	token := fs.String("token", "", "bearer token for the config server (required)")
-	draft := fs.Bool("draft", false, "render against the shared draft document (<tool>.draft.xml) instead of the saved document")
+	draft := fs.Bool("draft", false, "render against the tool's draft working node instead of the saved document")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -47,9 +47,9 @@ func runMonitor(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv
 
 	// Render and emit output first so the status line is complete before any
 	// network work happens. `monitor` is forced to the claude-code tool, the
-	// same as `statusloom claude`; with --draft it renders the shared draft
-	// document (<tool>.draft.xml), falling back to the saved document when the
-	// draft is absent or invalid. Without --draft, output is byte-identical to
+	// same as `statusloom claude`; with --draft it renders the tool's draft
+	// working node, falling back to the saved document when the draft is
+	// absent or invalid. Without --draft, output is byte-identical to
 	// `statusloom claude`.
 	lines, rerr := renderDocFromRaw(raw, getenv, "claude-code", stderr, *draft)
 	code := writeRenderResult(stdout, stderr, lines, nil, rerr)

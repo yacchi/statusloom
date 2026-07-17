@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ANSI_COLOR_NAMES, paletteFor, type Theme } from "../ansi.ts";
+import { ANSI_COLOR_NAMES, paletteFor, type Theme } from "@statusloom/ansi";
 import {
     ANSI_THEME_ID,
     COLOR_THEMES,

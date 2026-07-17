@@ -48,8 +48,8 @@ describe("settings modal", () => {
             expect(screen.getByTestId("setting-git-cache-ttl")).toBeTruthy(),
         );
 
-        // Closing removes it again.
-        fireEvent.click(screen.getByText("Close"));
+        // Closing removes it again (via the modal's × button).
+        fireEvent.click(screen.getByTestId("modal-close"));
         await waitFor(() =>
             expect(screen.queryByTestId("setting-git-cache-ttl")).toBeNull(),
         );

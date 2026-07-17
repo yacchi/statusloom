@@ -31,6 +31,16 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/dsl/metrics", s.handleDSLMetrics)
 	mux.HandleFunc("GET /api/usage/probe", s.handleUsageProbe)
 
+	// History endpoints (Phase B1). Contract: DSL_API.md "History API".
+	mux.HandleFunc("GET /api/history", s.handleGetHistory)
+	mux.HandleFunc("GET /api/history/{id}", s.handleGetHistoryByID)
+	mux.HandleFunc("POST /api/history/{id}/restore", s.handlePostHistoryRestore)
+
+	// Markdown exchange-format endpoints (Phase Ci). Contract: DSL_API.md
+	// "Exchange API".
+	mux.HandleFunc("POST /api/exchange/import", s.handleImportExchange)
+	mux.HandleFunc("GET /api/exchange/export", s.handleExportExchange)
+
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
 	mux.HandleFunc("POST /api/live", s.handleLive)
 	mux.HandleFunc("POST /api/live/session", s.handleLiveSession)

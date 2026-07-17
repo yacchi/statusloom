@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yacchi/statusloom/internal/config"
+	"github.com/yacchi/statusloom/internal/store"
 )
 
 // unformatted has a symbolic when (&gt;=), non-canonical attribute order, and
@@ -123,23 +123,78 @@ func TestFmt_ErrorsAbort(t *testing.T) {
 	}
 }
 
-func TestFmt_DefaultToolFile(t *testing.T) {
+// TestFmt_DefaultToolFile_PrintsWithoutWriting confirms the no-arg,
+// no-`--write` default: `statusloom fmt` formats the store's current
+// claude-code source but only prints it to stdout, never persisting the
+// result.
+func TestFmt_DefaultToolFile_PrintsWithoutWriting(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("STATUSLOOM_CONFIG", filepath.Join(dir, "config.json"))
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 
-	if err := config.SaveDocumentSource("claude-code", unformatted); err != nil {
-		t.Fatal(err)
-	}
-	_, stderr, code := runCLI(t, []string{"fmt"}, nil, nil)
-	if code != 0 {
-		t.Fatalf("fmt (default file) exit = %d, want 0 (stderr: %s)", code, stderr)
-	}
-	data, err := os.ReadFile(config.DocumentPath("claude-code"))
+	st, err := store.Open()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `when="context-percent ge 80"`) {
-		t.Errorf("default <tool>.xml not formatted:\n%s", data)
+	if _, _, err := st.Save("claude-code", unformatted, "test", store.Meta{}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := runCLI(t, []string{"fmt"}, nil, nil)
+	if code != 0 {
+		t.Fatalf("fmt (default) exit = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, `when="context-percent ge 80"`) {
+		t.Errorf("default fmt stdout not canonicalized:\n%s", stdout)
+	}
+
+	rev, _, _, err := st.Current("claude-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rev.Source != unformatted {
+		t.Errorf("fmt without --write must not persist; store source changed:\n%s", rev.Source)
+	}
+}
+
+// TestFmt_DefaultToolFile_Write confirms `statusloom fmt --write` persists
+// the formatted result as a new store revision.
+func TestFmt_DefaultToolFile_Write(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("STATUSLOOM_CONFIG", filepath.Join(dir, "config.json"))
+	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+
+	st, err := store.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.Save("claude-code", unformatted, "test", store.Meta{}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := runCLI(t, []string{"fmt", "--write"}, nil, nil)
+	if code != 0 {
+		t.Fatalf("fmt --write exit = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, "Formatted") {
+		t.Errorf("stdout missing confirmation: %q", stdout)
+	}
+
+	rev, _, _, err := st.Current("claude-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rev.Source, `when="context-percent ge 80"`) {
+		t.Errorf("fmt --write did not persist the formatted document:\n%s", rev.Source)
+	}
+
+	// Running --write again is a dedup no-op (idempotent): the store's tip
+	// hash already matches the formatted source.
+	stdout2, stderr2, code2 := runCLI(t, []string{"fmt", "--write"}, nil, nil)
+	if code2 != 0 {
+		t.Fatalf("second fmt --write exit = %d, want 0 (stderr: %s)", code2, stderr2)
+	}
+	if !strings.Contains(stdout2, "already formatted") {
+		t.Errorf("second fmt --write should be a no-op: %q", stdout2)
 	}
 }

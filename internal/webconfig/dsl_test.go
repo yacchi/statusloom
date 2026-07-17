@@ -3,7 +3,6 @@ package webconfig
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/yacchi/statusloom/internal/config"
 	"github.com/yacchi/statusloom/internal/dsl"
+	"github.com/yacchi/statusloom/internal/store"
 )
 
 // richSource exercises most node kinds and attributes: tool settings, a git
@@ -184,7 +184,7 @@ func TestDSL_PutDocument_ErrorNotSaved_ValidSaved(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("STATUSLOOM_CONFIG", filepath.Join(dir, "config.json"))
 	ts := startTestServer(t, time.Hour)
-	docPath := config.DocumentPath("claude-code")
+	st := store.OpenAt(filepath.Join(dir, "statusloom.json"))
 
 	// An invalid document (unknown field) must be rejected with 409, no write.
 	bad := `<statusloom version="1" tool="claude-code"><layout name="D" active="true"><line><field name="nope"/></line></layout></statusloom>`
@@ -200,8 +200,8 @@ func TestDSL_PutDocument_ErrorNotSaved_ValidSaved(t *testing.T) {
 	if len(errBody.Diagnostics) == 0 {
 		t.Error("expected diagnostics on invalid PUT")
 	}
-	if _, err := os.Stat(docPath); !os.IsNotExist(err) {
-		t.Errorf("invalid PUT wrote the document (stat err = %v), want absent", err)
+	if _, _, ok, err := st.Current("claude-code"); err != nil || ok {
+		t.Errorf("invalid PUT wrote a current revision (ok=%v err=%v), want absent", ok, err)
 	}
 
 	// A valid document is saved (200) with the exact source bytes.
@@ -211,11 +211,11 @@ func TestDSL_PutDocument_ErrorNotSaved_ValidSaved(t *testing.T) {
 		t.Fatalf("valid PUT status = %d, want 200", resp.StatusCode)
 	}
 	resp.Body.Close()
-	saved, err := os.ReadFile(docPath)
-	if err != nil {
-		t.Fatalf("document not saved: %v", err)
+	rev, _, ok, err := st.Current("claude-code")
+	if err != nil || !ok {
+		t.Fatalf("document not saved: ok=%v err=%v", ok, err)
 	}
-	if string(saved) != good {
+	if rev.Source != good {
 		t.Errorf("saved document != submitted source")
 	}
 }
@@ -238,11 +238,12 @@ func TestDSL_PutDraft_InvalidStillSaved(t *testing.T) {
 	if len(body.Diagnostics) == 0 {
 		t.Error("expected diagnostics reported for the invalid draft")
 	}
-	saved, err := os.ReadFile(config.DraftDocumentPath("claude-code"))
-	if err != nil {
-		t.Fatalf("invalid draft not saved: %v", err)
+	st := store.OpenAt(filepath.Join(dir, "statusloom.json"))
+	saved, ok, err := st.ReadDraft("claude-code")
+	if err != nil || !ok {
+		t.Fatalf("invalid draft not saved: ok=%v err=%v", ok, err)
 	}
-	if string(saved) != bad {
+	if saved != bad {
 		t.Error("saved draft != submitted source")
 	}
 }

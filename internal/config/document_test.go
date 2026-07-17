@@ -5,25 +5,8 @@ import (
 	"testing"
 
 	"github.com/yacchi/statusloom/internal/dsl"
+	"github.com/yacchi/statusloom/internal/store"
 )
-
-func TestDocumentPath_UsesConfigDir(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("STATUSLOOM_CONFIG", filepath.Join(dir, "config.json"))
-	if got, want := DocumentPath("claude-code"), filepath.Join(dir, "claude-code.xml"); got != want {
-		t.Errorf("DocumentPath = %q, want %q", got, want)
-	}
-}
-
-func TestDocumentPath_ConfigDirIsADirectory(t *testing.T) {
-	dir := t.TempDir()
-	// STATUSLOOM_CONFIG naming an existing directory is honored verbatim, so a
-	// harness can isolate every file inside a single mktemp -d directory.
-	t.Setenv("STATUSLOOM_CONFIG", dir)
-	if got, want := DocumentPath("claude-code"), filepath.Join(dir, "claude-code.xml"); got != want {
-		t.Errorf("DocumentPath = %q, want %q", got, want)
-	}
-}
 
 func TestDefaultDocument_ParsesAndValidates(t *testing.T) {
 	for _, tool := range []string{"claude-code"} {
@@ -120,8 +103,13 @@ func TestSaveAndLoadDocument_RoundTrips(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("STATUSLOOM_CONFIG", filepath.Join(dir, "config.json"))
 	src := DefaultDocument("claude-code")
-	if err := SaveDocumentSource("claude-code", src); err != nil {
-		t.Fatalf("SaveDocumentSource error = %v", err)
+
+	st, err := store.Open()
+	if err != nil {
+		t.Fatalf("store.Open error = %v", err)
+	}
+	if _, diags, err := st.Save("claude-code", src, "test", store.Meta{}); err != nil || dsl.HasErrors(diags) {
+		t.Fatalf("Save error = %v diags=%v", err, diags)
 	}
 	if !DocumentExists("claude-code") {
 		t.Fatal("document should exist after save")

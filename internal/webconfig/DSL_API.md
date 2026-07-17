@@ -3,16 +3,21 @@
 The DSL-native configurator API — the sole configuration API (the legacy
 widget-index endpoints have been removed). Alongside these `/api/dsl/*` paths
 the server also serves `GET /api/tools`, `GET /api/sessions`,
-`GET /api/usage/probe`, the live-preview and embedded-terminal channels, and
-`POST /api/shutdown`. Every path is under `/api/`, so the same security applies:
-127.0.0.1-only bind, `Authorization: Bearer <token>`, Host + Origin validation,
-no cookies.
+`GET /api/usage/probe`, the history endpoints (`GET /api/history`,
+`GET /api/history/{id}`, `POST /api/history/{id}/restore` — see "History API"
+below), the Markdown exchange-format endpoints (`POST /api/exchange/import`,
+`GET /api/exchange/export` — see "Exchange API" below), the live-preview and
+embedded-terminal channels, and `POST /api/shutdown`. Every path is under
+`/api/`, so the same security applies: 127.0.0.1-only bind, `Authorization:
+Bearer <token>`, Host + Origin validation, no cookies.
 
 Exactly one tool is supported: `claude-code` (the regular session
 `statusLine`). `GET /api/tools` returns this single entry. Every endpoint
 below that takes a `tool` parameter accepts only this value; any other tool
-name is rejected with `400`. The document lives at
-`<configDir>/claude-code.xml`, with its own draft.
+name is rejected with `400`. The document is `claude-code`'s current
+committed revision in the internal store (`<configDir>/statusloom.json`; see
+the root `CLAUDE.md`'s "設定ファイル配置"), with its own draft working node
+(`refs.claude-code.draft`).
 
 Claude Code's `subagentStatusLine` (one row per agent-panel task) is a
 `<subagent>` region (markup.md "subagent") nested inside the `claude-code`
@@ -152,17 +157,22 @@ holds two fields, their ids are `L0.s.0` and `L0.s.1`.
 ### `GET /api/dsl/document?tool=claude-code`
 → `200 { "source": string, "version": string, "exists": bool }`
 
-`source` is the saved `<tool>.xml` (or the built-in default when `exists` is
-`false`). `version` is the sha256 hex of `source`. The raw source is returned
-even if it is invalid, so the editor can display and repair it.
+`source` is tool's current committed revision's source (or the built-in
+default when `exists` is `false`). `version` is `sha256(tool + "\0" +
+source)` hex (the store's `SourceVersion`). The raw source is returned even
+if it is invalid, so the editor can display and repair it — though in
+practice a committed revision is always valid, since `PUT` (below) is the
+store's validation boundary.
 
 ### `PUT /api/dsl/document` `{ "tool", "source" }`
 → `200 { "version", "diagnostics": [] }` on save
 → `409 { "version", "diagnostics": [...] }` when `source` has error diagnostics
 
-Parses and validates `source`. **Error-severity diagnostics block the save**
-(409, nothing written). Warning-only source is saved and the warnings are
-returned.
+Parses and validates `source` (the store's `Save`, origin `"ui"`).
+**Error-severity diagnostics block the save** (409, nothing written; no new
+revision). Warning-only source is saved as a new revision and the warnings
+are returned (a save identical to the current tip is a no-op: no new
+revision, `current` unchanged).
 
 ### `POST /api/dsl/parse` `{ "source" }`
 → `200 { "ast"?: node, "diagnostics": [...], "version": string }`
@@ -189,16 +199,17 @@ a `statusloom` root (else `400`).
 ### `GET /api/dsl/draft?tool=claude-code`
 → `200 { "source", "version", "exists" }`
 
-The shared draft source (`<tool>.draft.xml`). `exists` reflects the draft
-file's presence; when absent, `source` falls back to the saved document, then
-the built-in default.
+The tool's draft working node (the store's `refs.<tool>.draft`). `exists`
+reflects the draft's presence; when absent, `source` falls back to the
+current committed document, then the built-in default.
 
 ### `PUT /api/dsl/draft` `{ "tool", "source" }`
 → `200 { "version", "diagnostics": [...] }`
 
-Saves `source` to the shared draft **unconditionally** (last-writer-wins). The
-draft is a text-sharing channel that tolerates in-progress, invalid input;
-diagnostics are returned for the editor but never block the write.
+Writes `source` to the tool's draft working node **unconditionally**
+(last-writer-wins; no new revision is ever created). The draft is a
+text-sharing channel that tolerates in-progress, invalid input; diagnostics
+are returned for the editor but never block the write.
 
 ### `POST /api/dsl/preview` `{ "tool", "source", "width", "sample", "sessionId"?, "layoutIndex"?, "allVariants"?, "section"? }`
 → `200 { "lines": [...], "diagnostics": [...], "fallback": { "ansi", "active" }, "selectedVariants"?, "subagentPreview"? }`
@@ -327,6 +338,116 @@ unavailable). `reason` explains the outcome:
 
 `extraUsageEnabled` is meaningful only when `reason` is `ok`: it reports whether
 the account has extra (metered) usage enabled at all.
+
+### History API
+
+The internal store (`<configDir>/statusloom.json`) keeps every committed
+revision of a tool's whole document in a single pool plus per-tool refs
+(`current` + an inline `draft` working node), modeled on git's objects/refs
+(plans/config-store-and-format.md §3–§4). These three endpoints expose that
+history: listing, single-revision lookup, and restore. Like every `/api/*`
+route they require the same `Authorization: Bearer <token>` and Host/Origin
+validation.
+
+Because a revision id is a UUIDv7 minted once at commit time, it is globally
+unique across every tool sharing the store — the two by-id endpoints below
+take no `tool` parameter; the id alone resolves it (via the revision's own
+`tool` field).
+
+#### `GET /api/history?tool=claude-code`
+→ `200 { "revisions": [...], "refs": { "current", "draft" } }`
+
+```jsonc
+"revisions": [
+  {
+    "id": "01958f2a-...",
+    "parent": "01958f29-..." | null,
+    "savedAt": "2026-07-17T09:00:00Z",   // RFC3339
+    "origin": "ui" | "cli" | "import",
+    "meta": { "name"?, "description"?, "author"?, "notes"? }
+  }
+]
+```
+
+`revisions` lists every revision belonging to `tool`, **oldest-first** by
+`savedAt` (ties broken by id ascending) — a flat chronological listing, not
+necessarily a single linear chain: a past `restore` (below) can leave more
+than one revision with the same parent (an implicit branch), and every branch
+still shows up here. The source text is deliberately omitted (kept out of the
+listing payload so it stays light with many revisions) — fetch it via
+`GET /api/history/{id}`.
+
+`refs.current` is `tool`'s current committed revision id (the one the render
+path and `GET /api/dsl/document` read); `refs.draft` reports only whether a
+draft working node exists (never its source — that stays behind
+`GET /api/dsl/draft`).
+
+An unrecognized `tool` is `400` (same `knownTool` gate as the `/api/dsl/*`
+endpoints; only `claude-code` is served today).
+
+#### `GET /api/history/{id}`
+→ `200 { "id", "tool", "source", "parent", "savedAt", "origin", "meta" }`
+→ `404` when `id` is unknown
+
+One revision's full record, including its `source` (the raw DSL text) —
+everything the listing above omits, for e.g. rendering a diff against the
+current document or another revision.
+
+#### `POST /api/history/{id}/restore`
+→ `200 { "ok": true, "tool", "current": id }`
+→ `404` when `id` is unknown
+
+Repoints `id`'s tool's `current` ref at `id` and **discards that tool's draft
+working node** — it never creates a new revision (plans/config-store-and-format.md
+§4.2). A subsequent edit therefore becomes a new child of `id`, an implicit
+branch whenever `id` already had a different child (visible on the next
+`GET /api/history` as two revisions sharing the same `parent`). Because
+restoring discards unsaved work, a caller with a dirty draft should confirm
+with the user before calling this.
+
+### Exchange API (`*.sloom.md` Markdown)
+
+The Markdown exchange format (plans/config-store-and-format.md §6: a
+frontmatter block — `format`/`formatVersion`/optional `name`/`description`/
+`author` — plus free-form Markdown prose (kept as `meta.notes`, not a
+frontmatter key) and a fenced ` ```xml ` block holding the DSL source
+verbatim).
+Frontmatter/fence parsing is `internal/exchange`'s sole responsibility (a
+self-contained package with no store/config/dsl dependency); these two
+endpoints wire it to the store's validation boundary. Like every `/api/*`
+route they require the same `Authorization: Bearer <token>` and Host/Origin
+validation. Unlike every other endpoint above, their request/response bodies
+are not both JSON — see each one below.
+
+#### `POST /api/exchange/import`
+Request body: **raw `*.sloom.md` text** (the file's exact bytes — `Content-Type`
+is not inspected), not JSON.
+→ `200 { "tool", "revision", "diagnostics": [...] }` on save
+→ `400 { "error" }` when the body fails to decode as a Markdown exchange
+  document (bad/missing frontmatter, no ` ```xml ` fence) or names an
+  unrecognized tool
+→ `409 { "diagnostics": [...] }` when the extracted DSL has error-severity
+  diagnostics (store untouched)
+
+Decodes the body via `exchange.Decode`, learns the target tool from the
+extracted DSL's own `<statusloom tool="...">` attribute (the request carries
+no separate `tool` field), and saves it through `store.Save` (origin
+`"import"`) using the decoded `meta` (`name`/`description`/`author`/`notes`,
+the last carrying whatever free-form prose sat between the frontmatter and
+the fence).
+Warning-only or dedup-no-op saves still return `200`; only error-severity
+diagnostics (surfaced by either the Markdown decode or the DSL validation)
+block the write.
+
+#### `GET /api/exchange/export?tool=claude-code`
+→ `200`, body: raw `*.sloom.md` text (`Content-Type: text/markdown`), not JSON
+→ `404 { "error" }` when `tool` has no current committed revision
+→ `400 { "error" }` for an unrecognized `tool`
+
+Encodes `tool`'s current committed revision (`source` + `meta`) via
+`exchange.Encode` and returns it verbatim. There is deliberately no
+`DefaultDocument` fallback here — exporting the built-in default would
+misrepresent it as a saved configuration.
 
 ## Diagnostics shape
 

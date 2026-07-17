@@ -1,132 +1,55 @@
 package config
 
-// This file implements the DSL-document side of the configuration layer
-// (markup.md "設定ファイルの配置"): loading, saving, and defaulting the
-// <tool>.xml documents that are the sole configuration source.
+// This file implements the DSL-document side of the configuration layer: a
+// thin layer above the internal store (internal/store) that resolves a
+// tool's committed document for the render path and CLI/webconfig
+// diagnostics (plans/config-store-and-format.md §7, §8.11). The store's
+// single cross-tool file (<configDir>/statusloom.json) is the single source
+// of truth; this package never touches it directly, only through
+// store.Open().
 //
-// Dependency direction: config -> dsl only (dsl imports no statusloom
-// package, so there is no cycle). config does NOT depend on render.
+// Dependency direction: config -> {dsl, store}. config does NOT depend on
+// render.
 
 import (
-	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
-	"sync/atomic"
-
 	"github.com/yacchi/statusloom/internal/dsl"
+	"github.com/yacchi/statusloom/internal/store"
 )
 
-// configDir resolves the directory that holds statusloom's <tool>.xml
-// documents. It reuses Path()'s STATUSLOOM_CONFIG / XDG / home resolution:
-//
-//   - When STATUSLOOM_CONFIG (or the resolved path) names an existing
-//     directory, that directory is used verbatim. This lets verification
-//     harnesses set STATUSLOOM_CONFIG=$(mktemp -d) and keep every statusloom
-//     file inside the isolated directory.
-//   - Otherwise the parent directory of the resolved config-file path is
-//     used, matching the "STATUSLOOM_CONFIG is a config-file path"
-//     convention (Path() and all existing tests).
-func configDir() (string, error) {
-	p, err := Path()
-	if err != nil {
-		return "", err
-	}
-	if fi, err := os.Stat(p); err == nil && fi.IsDir() {
-		return p, nil
-	}
-	return filepath.Dir(p), nil
-}
-
-// DocumentPath returns the DSL document location for a tool:
-// <configDir>/<tool>.xml. The file need not exist. On an unresolvable config
-// directory (e.g. no home directory) it degrades to a bare "<tool>.xml"
-// relative path rather than returning an error, keeping the signature simple
-// for the common case.
-func DocumentPath(tool string) string {
-	dir, err := configDir()
-	if err != nil {
-		return tool + ".xml"
-	}
-	return filepath.Join(dir, tool+".xml")
-}
-
-// DocumentExists reports whether the <tool>.xml document is present on disk.
+// DocumentExists reports whether the store holds a committed current
+// revision for tool, as opposed to LoadDocument falling back to the built-in
+// DefaultDocument. A store read failure is treated as "absent" (the caller's
+// subsequent LoadDocument call will surface the same error).
 func DocumentExists(tool string) bool {
-	_, err := os.Stat(DocumentPath(tool))
-	return err == nil
+	st, err := store.Open()
+	if err != nil {
+		return false
+	}
+	_, _, ok, err := st.Current(tool)
+	return err == nil && ok
 }
 
-// LoadDocument reads, parses, and validates the <tool>.xml document. A
-// missing file is not an error: it falls back to DefaultDocument(tool), which
-// is parsed and validated the same way (callers can distinguish absence with
-// DocumentExists). The returned diagnostics are Parse's structural findings
-// plus Validate's semantic findings. A read error other than "not found" is
-// returned as err (with a nil document).
+// LoadDocument returns tool's current committed document, parsed but not
+// re-validated: a committed revision already passed the store's Save
+// validation boundary (dsl.ParseAndValidate), so rendering only needs to
+// Parse it again (plans/config-store-and-format.md §7). A missing store or
+// tool ref falls back to DefaultDocument(tool), parsed the same way. A store
+// read/decode failure is returned as err (with a nil document).
 func LoadDocument(tool string) (*dsl.Document, []dsl.Diagnostic, error) {
-	path := DocumentPath(tool)
-	data, err := os.ReadFile(path)
+	st, err := store.Open()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			doc, diags := parseAndValidate(DefaultDocument(tool))
-			return doc, diags, nil
-		}
 		return nil, nil, err
 	}
-	doc, diags := parseAndValidate(string(data))
-	return doc, diags, nil
-}
-
-// parseAndValidate parses src and, when a root was produced, appends the
-// semantic validation diagnostics.
-func parseAndValidate(src string) (*dsl.Document, []dsl.Diagnostic) {
-	doc, diags := dsl.Parse(src)
-	if doc != nil && doc.Root != nil {
-		diags = append(diags, dsl.Validate(doc)...)
-	}
-	return doc, diags
-}
-
-var xmlTempSequence uint64
-
-// SaveDocumentSource atomically writes src to <tool>.xml (sibling temp file
-// + fsync + rename), mirroring the config.json write discipline so concurrent
-// readers never observe a partial file.
-func SaveDocumentSource(tool, src string) error {
-	return writeFileAtomic(DocumentPath(tool), []byte(src))
-}
-
-// WriteFileAtomic atomically writes data to an arbitrary path using the same
-// sibling-temp-file + fsync + rename discipline as the document/draft writers,
-// so concurrent readers never observe a partial file. Exposed for `statusloom
-// fmt`, which formats a document file in place.
-func WriteFileAtomic(path string, data []byte) error {
-	return writeFileAtomic(path, data)
-}
-
-func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp := fmt.Sprintf("%s.tmp.%d.%d", path, os.Getpid(), atomic.AddUint64(&xmlTempSequence, 1))
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	rev, _, ok, err := st.Current(tool)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	defer os.Remove(tmp)
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return err
+	src := DefaultDocument(tool)
+	if ok {
+		src = rev.Source
 	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	doc, diags := dsl.Parse(src)
+	return doc, diags, nil
 }
 
 // defaultDocuments holds the built-in DSL source for each tool. The

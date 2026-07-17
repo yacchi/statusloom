@@ -22,9 +22,10 @@ interface Props {
     onRedo: () => void;
     onSave: () => void;
     onSaveClose: () => void;
-    onExport: () => void;
+    onExportMarkdown: () => void;
     onImport: () => void;
     onOpenSettings: () => void;
+    onOpenHistory: () => void;
 }
 
 export function Header({
@@ -43,9 +44,10 @@ export function Header({
     onRedo,
     onSave,
     onSaveClose,
-    onExport,
+    onExportMarkdown,
     onImport,
     onOpenSettings,
+    onOpenHistory,
 }: Props) {
     return (
         <header className="header">
@@ -93,7 +95,16 @@ export function Header({
                     ⚙
                 </button>
                 <button onClick={onImport}>Import</button>
-                <button onClick={onExport}>Export</button>
+                <button
+                    data-testid="export-button"
+                    onClick={onExportMarkdown}
+                    title="Export as a .sloom.md Markdown exchange file"
+                >
+                    Export
+                </button>
+                <button data-testid="history-button" onClick={onOpenHistory}>
+                    History
+                </button>
                 <button
                     className="primary"
                     data-testid="save-button"

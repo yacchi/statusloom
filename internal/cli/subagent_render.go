@@ -106,20 +106,20 @@ const subagentPreviewPayload = `{
 // task's columns.
 //
 // With --draft (used by the monitor workspace's subagentStatusLine, mirroring
-// `statusloom monitor --draft`) it renders the shared draft
-// claude-code.draft.xml instead, falling back to the saved document when the
-// draft is absent or invalid.
+// `statusloom monitor --draft`) it renders the claude-code document's draft
+// working node instead, falling back to the saved document when the draft is
+// absent or invalid.
 //
 // With --preview, stdin is not read at all (even if piped) - the built-in
 // subagentPreviewPayload is decoded instead, so the agent-panel row can be
 // previewed without hand-crafting a tasks[] JSON payload. --preview composes
 // with --draft exactly like the stdin path: --preview alone renders the
 // saved (or built-in default) claude-code document, and --preview --draft
-// renders the shared draft against the same built-in payload.
+// renders the draft working node against the same built-in payload.
 func runSubagentRender(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("claude-subagent", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	draft := fs.Bool("draft", false, "render against the shared draft document (claude-code.draft.xml) instead of the saved document")
+	draft := fs.Bool("draft", false, "render against the claude-code document's draft working node instead of the saved document")
 	preview := fs.Bool("preview", false, "render a built-in representative payload instead of reading stdin (no JSON needed)")
 	if err := fs.Parse(args); err != nil {
 		return 2

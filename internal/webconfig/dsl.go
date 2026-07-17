@@ -10,13 +10,9 @@ package webconfig
 // withSecurity (security.go) because every path here is under /api/.
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -24,7 +20,9 @@ import (
 	"github.com/yacchi/statusloom/internal/config"
 	"github.com/yacchi/statusloom/internal/dsl"
 	"github.com/yacchi/statusloom/internal/render"
+	"github.com/yacchi/statusloom/internal/samples"
 	"github.com/yacchi/statusloom/internal/schema"
+	"github.com/yacchi/statusloom/internal/store"
 )
 
 // maxDSLBodyBytes bounds DSL request bodies (source text can be larger than a
@@ -40,50 +38,44 @@ func knownTool(tool string) bool {
 	return tool == string(schema.ToolClaudeCode)
 }
 
-// sourceVersion is the deterministic content hash (sha256 hex) of DSL source
-// text. GET and PUT compute it identically so the frontend can use it as an
-// echo guard and for last-writer-wins comparisons.
-func sourceVersion(src string) string {
-	sum := sha256.Sum256([]byte(src))
-	return hex.EncodeToString(sum[:])
+// dslSourceVersion is the version webconfig reports for POST /api/dsl/parse
+// and /api/dsl/serialize, whose request bodies carry no tool (only
+// "claude-code" is DSL-served today; §3.3/§8.3 unify every echo-guard version
+// on store.SourceVersion, so this is that single spelling under the one tool
+// these two endpoints ever see).
+func dslSourceVersion(src string) string {
+	return store.SourceVersion(string(schema.ToolClaudeCode), src)
 }
 
-// parseAndValidateSource parses src and, when a root was produced, appends the
-// semantic validation diagnostics (mirroring config.parseAndValidate, which is
-// unexported).
-func parseAndValidateSource(src string) (*dsl.Document, []dsl.Diagnostic) {
-	doc, diags := dsl.Parse(src)
-	if doc != nil && doc.Root != nil {
-		diags = append(diags, dsl.Validate(doc)...)
-	}
-	return doc, diags
-}
-
-// handleGetDSLDocument handles GET /api/dsl/document?tool=: it returns the
-// saved <tool>.xml source and its version, or DefaultDocument with exists=false
-// when the file is absent. The raw source is returned even if it is invalid, so
-// the editor can display and fix it.
+// handleGetDSLDocument handles GET /api/dsl/document?tool=: it returns tool's
+// current committed source (from the internal store) and its version, or
+// DefaultDocument with exists=false when the store holds no current revision
+// for tool yet.
 func (s *server) handleGetDSLDocument(w http.ResponseWriter, r *http.Request) {
 	tool := r.URL.Query().Get("tool")
 	if !knownTool(tool) {
 		writeError(w, http.StatusBadRequest, "unknown tool")
 		return
 	}
-	data, err := os.ReadFile(config.DocumentPath(tool))
+	st, err := store.Open()
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	rev, _, ok, err := st.Current(tool)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
 		src := config.DefaultDocument(tool)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"source": src, "version": sourceVersion(src), "exists": false,
+			"source": src, "version": store.SourceVersion(tool, src), "exists": false,
 		})
 		return
 	}
-	src := string(data)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"source": src, "version": sourceVersion(src), "exists": true,
+		"source": rev.Source, "version": store.SourceVersion(tool, rev.Source), "exists": true,
 	})
 }
 
@@ -94,19 +86,30 @@ type dslSourcePutRequest struct {
 	Source string `json:"source"`
 }
 
-// handlePutDSLDocument handles PUT /api/dsl/document: it parses and validates
-// the posted source and, only when it has no error-severity diagnostics, saves
-// it to <tool>.xml. A document with errors is rejected with 409 and its
-// diagnostics (no write). Warning-only documents are saved. The response always
-// carries the source version and the diagnostics.
+// handlePutDSLDocument handles PUT /api/dsl/document: it saves the posted
+// source through the store's Save validation boundary (dsl.ParseAndValidate),
+// which only commits a new revision (origin "ui") when there are no
+// error-severity diagnostics. A document with errors is rejected with 409 and
+// its diagnostics (no write, no new revision). Warning-only documents are
+// saved. The response always carries the source version and the diagnostics.
 func (s *server) handlePutDSLDocument(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeSourcePut(w, r)
 	if !ok {
 		return
 	}
 
-	_, diags := parseAndValidateSource(req.Source)
-	version := sourceVersion(req.Source)
+	version := store.SourceVersion(req.Tool, req.Source)
+
+	st, err := store.Open()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_, diags, err := st.Save(req.Tool, req.Source, "ui", store.Meta{})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	if dsl.HasErrors(diags) {
 		writeJSON(w, http.StatusConflict, map[string]any{
@@ -116,10 +119,6 @@ func (s *server) handlePutDSLDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := config.SaveDocumentSource(req.Tool, req.Source); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":     version,
 		"diagnostics": toDiagsJSON(diags),
@@ -141,10 +140,10 @@ func (s *server) handleParseDSL(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	doc, diags := parseAndValidateSource(req.Source)
+	doc, diags := dsl.ParseAndValidate(req.Source)
 	resp := map[string]any{
 		"diagnostics": toDiagsJSON(diags),
-		"version":     sourceVersion(req.Source),
+		"version":     dslSourceVersion(req.Source),
 	}
 	if doc != nil && doc.Root != nil {
 		ast, _ := buildAST(doc)
@@ -189,49 +188,76 @@ func (s *server) handleSerializeDSL(w http.ResponseWriter, r *http.Request) {
 	} else {
 		src = dsl.Serialize(doc)
 	}
-	_, diags := parseAndValidateSource(src)
+	_, diags := dsl.ParseAndValidate(src)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"source":      src,
 		"diagnostics": toDiagsJSON(diags),
 	})
 }
 
-// handleGetDSLDraft handles GET /api/dsl/draft?tool=: it returns the shared
-// draft source (<tool>.draft.xml), falling back to the saved document and then
-// the built-in default when no draft exists. exists reflects the draft file's
-// presence.
+// handleGetDSLDraft handles GET /api/dsl/draft?tool=: it returns the tool's
+// draft working node source from the internal store, falling back to the
+// saved document and then the built-in default when no draft exists yet.
+// exists reflects the draft's presence (not the fallback's).
 func (s *server) handleGetDSLDraft(w http.ResponseWriter, r *http.Request) {
 	tool := r.URL.Query().Get("tool")
 	if !knownTool(tool) {
 		writeError(w, http.StatusBadRequest, "unknown tool")
 		return
 	}
-	src, exists, err := config.LoadDraftDocumentSource(tool)
+	st, err := store.Open()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if src, ok, err := st.ReadDraft(tool); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if ok {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"source": src, "version": store.SourceVersion(tool, src), "exists": true,
+		})
+		return
+	}
+
+	// No draft: fall back to the current committed document, then the
+	// built-in default.
+	rev, _, ok, err := st.Current(tool)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	src := config.DefaultDocument(tool)
+	if ok {
+		src = rev.Source
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"source": src, "version": sourceVersion(src), "exists": exists,
+		"source": src, "version": store.SourceVersion(tool, src), "exists": false,
 	})
 }
 
-// handlePutDSLDraft handles PUT /api/dsl/draft: it saves the posted source to
-// the shared draft (<tool>.draft.xml) unconditionally (last-writer-wins). The
-// draft tolerates in-progress, invalid input; parse diagnostics are returned
-// for the editor's benefit but never block the write.
+// handlePutDSLDraft handles PUT /api/dsl/draft: it writes the posted source to
+// the tool's draft working node in the internal store unconditionally
+// (last-writer-wins). The draft tolerates in-progress, invalid input; parse
+// diagnostics are returned for the editor's benefit but never block the
+// write.
 func (s *server) handlePutDSLDraft(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeSourcePut(w, r)
 	if !ok {
 		return
 	}
-	_, diags := parseAndValidateSource(req.Source)
-	if err := config.SaveDraftDocumentSource(req.Tool, req.Source); err != nil {
+	_, diags := dsl.ParseAndValidate(req.Source)
+	st, err := store.Open()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := st.WriteDraft(req.Tool, req.Source); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":     sourceVersion(req.Source),
+		"version":     store.SourceVersion(req.Tool, req.Source),
 		"diagnostics": toDiagsJSON(diags),
 	})
 }
@@ -314,7 +340,7 @@ func (s *server) handlePreviewDSL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	doc, diags := parseAndValidateSource(req.Source)
+	doc, diags := dsl.ParseAndValidate(req.Source)
 	if doc == nil || doc.Root == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"lines":       []dslPreviewLine{},
@@ -399,9 +425,9 @@ func (s *server) handlePreviewDSL(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleSubagentSectionPreview(w http.ResponseWriter, doc *dsl.Document, ids map[dsl.Node]string, req dslPreviewRequest, diags []dsl.Diagnostic, opts render.Options) {
 	sampleName := req.Sample
 	if sampleName == "" {
-		sampleName = defaultSampleForSection("subagent")
+		sampleName = samples.DefaultForSection("subagent")
 	}
-	tasks, ok := subagentPreviewTasks(sampleName, time.Now())
+	tasks, ok := samples.SubagentTasks(sampleName, time.Now())
 	if !ok {
 		writeError(w, http.StatusBadRequest, "unknown sample")
 		return
@@ -514,7 +540,7 @@ func selectedVariantIDs(doc *dsl.Document, selected map[*dsl.ResponsiveNode]int)
 
 // previewSnapshot resolves the snapshot a preview renders against: a real
 // cached session (sessionId, as listed by GET /api/sessions), else a named
-// sample (defaulting to defaultSampleForSection(section)). It writes the
+// sample (defaulting to samples.DefaultForSection(section)). It writes the
 // error response and returns ok=false on failure.
 func (s *server) previewSnapshot(w http.ResponseWriter, section, sample, sessionID string) (schema.StatusSnapshot, bool) {
 	if sessionID != "" {
@@ -531,9 +557,9 @@ func (s *server) previewSnapshot(w http.ResponseWriter, section, sample, session
 	}
 	name := sample
 	if name == "" {
-		name = defaultSampleForSection(section)
+		name = samples.DefaultForSection(section)
 	}
-	snap, ok := sampleSnapshot(name, time.Now())
+	snap, ok := samples.Snapshot(name, time.Now())
 	if !ok {
 		writeError(w, http.StatusBadRequest, "unknown sample")
 		return schema.StatusSnapshot{}, false
@@ -636,7 +662,7 @@ func (s *server) handleDSLFields(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
-	snap, _ := sampleSnapshot(sampleFull, now)
+	snap, _ := samples.Snapshot(samples.Full, now)
 	overlayRealAccountUsage(&snap, now)
 	fields := dsl.Fields(tool)
 	out := make([]dslFieldEntry, 0, len(fields))

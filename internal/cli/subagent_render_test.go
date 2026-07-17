@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/yacchi/statusloom/internal/config"
 )
 
 // These tests write their own inline claude-code documents rather than
@@ -14,8 +12,8 @@ import (
 // on the default document's exact shape. `claude-subagent` renders the same
 // single claude-code document `claude` does (there is no separate subagent
 // tool or document anymore), so every case here installs whatever
-// <subagent> region it needs via config.SaveDocumentSource /
-// config.SaveDraftDocumentSource.
+// <subagent> region it needs via the writeDocument / writeDraft store
+// helpers (cli_test.go).
 
 // decodeSubagentLines parses stdout as one {"id","content"} JSON object per
 // line, failing the test on any malformed line.
@@ -32,12 +30,10 @@ func decodeSubagentLines(t *testing.T, stdout string) []subagentLine {
 	return out
 }
 
-// writeSubagentDoc installs src as the saved claude-code.xml document.
+// writeSubagentDoc installs src as the saved claude-code current document.
 func writeSubagentDoc(t *testing.T, src string) {
 	t.Helper()
-	if err := config.SaveDocumentSource("claude-code", src); err != nil {
-		t.Fatalf("SaveDocumentSource: %v", err)
-	}
+	writeDocument(t, "claude-code", src)
 }
 
 // subagentStdin builds a minimal subagentStatusLine stdin payload with the
@@ -354,14 +350,12 @@ func TestRun_ClaudeSubagent_UsesPayloadColumns(t *testing.T) {
 }
 
 // TestRun_ClaudeSubagent_Draft_RendersAgainstDraft confirms `claude-subagent
-// --draft` prefers the shared claude-code.draft.xml over the saved
-// document, the same fallback contract `monitor --draft` has.
+// --draft` prefers the tool's draft working node over the saved document, the
+// same fallback contract `monitor --draft` has.
 func TestRun_ClaudeSubagent_Draft_RendersAgainstDraft(t *testing.T) {
 	setupDraftEnv(t)
 	writeSubagentDoc(t, subagentDocBasic)
-	if err := config.SaveDraftDocumentSource("claude-code", subagentDocBasicDraftMarker); err != nil {
-		t.Fatalf("SaveDraftDocumentSource: %v", err)
-	}
+	writeDraft(t, "claude-code", subagentDocBasicDraftMarker)
 	data := fixture(t, "subagent-running.json")
 
 	savedOut, _, code := runCLI(t, []string{"claude-subagent"}, data, nil)
@@ -393,9 +387,7 @@ func TestRun_ClaudeSubagent_Draft_InvalidFallsBackToSaved(t *testing.T) {
 	data := fixture(t, "subagent-running.json")
 
 	bad := `<statusloom version="1" tool="claude-code"><layout name="D" active="true"><line><field name="not-a-field"/></line></layout></statusloom>`
-	if err := config.SaveDraftDocumentSource("claude-code", bad); err != nil {
-		t.Fatalf("SaveDraftDocumentSource: %v", err)
-	}
+	writeDraft(t, "claude-code", bad)
 
 	savedOut, _, _ := runCLI(t, []string{"claude-subagent"}, data, nil)
 	draftOut, stderr, code := runCLI(t, []string{"claude-subagent", "--draft"}, data, nil)
@@ -480,15 +472,13 @@ func TestRun_ClaudeSubagent_Preview_IgnoresStdin(t *testing.T) {
 }
 
 // TestRun_ClaudeSubagent_PreviewDraft confirms `claude-subagent --preview
-// --draft` renders the built-in preview payload against the shared draft
-// document, isolated from any real config via a temp STATUSLOOM_CONFIG/
+// --draft` renders the built-in preview payload against the tool's draft
+// working node, isolated from any real config via a temp STATUSLOOM_CONFIG/
 // STATUSLOOM_CACHE_DIR.
 func TestRun_ClaudeSubagent_PreviewDraft(t *testing.T) {
 	setupDraftEnv(t)
 	writeSubagentDoc(t, subagentDocBasic)
-	if err := config.SaveDraftDocumentSource("claude-code", subagentDocBasicDraftMarker); err != nil {
-		t.Fatalf("SaveDraftDocumentSource: %v", err)
-	}
+	writeDraft(t, "claude-code", subagentDocBasicDraftMarker)
 
 	savedOut, _, code := runCLI(t, []string{"claude-subagent", "--preview"}, nil, nil)
 	if code != 0 {

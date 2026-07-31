@@ -1389,6 +1389,12 @@ input[type="number"] {
     font-family: ui-monospace, monospace;
 }
 
+/* An incomplete hex entry is kept local and not applied to the document; mark
+   it so the box does not look like it took effect. */
+.custom-color input[type="text"][aria-invalid="true"] {
+    border-color: var(--warn-border);
+}
+
 .panel-actions {
     display: flex;
     align-items: center;

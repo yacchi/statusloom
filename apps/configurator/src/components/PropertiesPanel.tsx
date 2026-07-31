@@ -282,11 +282,24 @@ function VisibilitySection({
                     }
                 >
                     <option value="">(always)</option>
-                    {fields.map((f) => (
-                        <option key={f.name} value={f.name}>
-                            {f.displayName}
-                        </option>
-                    ))}
+                    {/* A var-taking field (env) cannot be named by a bare
+                        field name — optional must carry the variable too
+                        ("env:AWS_PROFILE"), which this dropdown has nowhere to
+                        type. Offering it would emit an invalid optional. Use
+                        the DSL editor for that form. */}
+                    {fields
+                        .filter((f) => !f.requiresVar)
+                        .map((f) => (
+                            <option key={f.name} value={f.name}>
+                                {f.displayName}
+                            </option>
+                        ))}
+                    {/* Keep an out-of-catalog value (e.g. an "env:VAR" written
+                        in the DSL editor) selectable, so opening the panel on
+                        such a node does not silently reset it. */}
+                    {node.optional && !fields.some((f) => f.name === node.optional) ? (
+                        <option value={node.optional}>{node.optional}</option>
+                    ) : null}
                 </select>
             </div>
             <TextAttr

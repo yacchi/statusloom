@@ -54,20 +54,14 @@ func TestValidateVar_Accepted(t *testing.T) {
 	}
 }
 
-// TestValidateVar_MissingVarIsWarning pins the deliberate choice that a
-// freshly dropped palette item stays SAVABLE: no var is a warning, not an
-// error.
-func TestValidateVar_MissingVarIsWarning(t *testing.T) {
+// TestValidateVar_MissingVarIsSilent pins the deliberate choice that a
+// var-less env field is diagnosed NOT AT ALL: the visual editor inserts one the
+// moment the palette item is dropped, and any diagnostic would then print to
+// the agent's stderr on every render for a node that merely renders empty.
+func TestValidateVar_MissingVarIsSilent(t *testing.T) {
 	diags := validateSrc(t, `<field name="env"/>`)
-	if HasErrors(diags) {
-		t.Errorf("missing var produced an error, want warning only: %v", diags)
-	}
-	d, ok := findDiag(diags, "no var attribute")
-	if !ok {
-		t.Fatalf("no warning about the missing var: %v", diags)
-	}
-	if d.Severity != SeverityWarning {
-		t.Errorf("severity = %v, want warning", d.Severity)
+	if len(diags) != 0 {
+		t.Errorf("a var-less env field produced diagnostics: %v", diags)
 	}
 }
 
@@ -185,8 +179,8 @@ func TestSerializeVar(t *testing.T) {
 // renderer both key off.
 func TestAccountFieldsRegistered(t *testing.T) {
 	for _, name := range []string{
-		"account-email", "account-name", "account-org",
-		"account-role", "account-plan", "account-seat",
+		"account-email", "account-name", "account-org", "account-role",
+		"account-type", "account-plan", "account-seat",
 	} {
 		def, ok := FieldByName("claude-code", name)
 		if !ok {

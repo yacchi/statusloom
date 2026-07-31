@@ -24,7 +24,9 @@ func writeConfig(t *testing.T, body string) func(string) string {
 	}
 }
 
-func TestLoad(t *testing.T) {
+// TestLoad_TeamAccount covers a Team seat, where the user-scoped rate-limit
+// tier is populated and seatTier exists.
+func TestLoad_TeamAccount(t *testing.T) {
 	getenv := writeConfig(t, `{
 	  "numStartups": 42,
 	  "projects": {"/a": {"allowedTools": []}},
@@ -33,7 +35,9 @@ func TestLoad(t *testing.T) {
 	    "displayName": "Dev User",
 	    "organizationName": "Example Inc",
 	    "organizationRole": "primary_owner",
+	    "organizationType": "claude_team",
 	    "userRateLimitTier": "default_claude_max_5x",
+	    "organizationRateLimitTier": "default_raven",
 	    "seatTier": "team_tier_1",
 	    "accountUuid": "ignored"
 	  },
@@ -49,11 +53,48 @@ func TestLoad(t *testing.T) {
 		DisplayName:  "Dev User",
 		Organization: "Example Inc",
 		Role:         "primary_owner",
-		Plan:         "default_claude_max_5x",
-		Seat:         "team_tier_1",
+		Type:         "claude_team",
+		// The user-scoped tier wins over the org-wide one.
+		Plan: "default_claude_max_5x",
+		Seat: "team_tier_1",
 	}
 	if *got != want {
 		t.Errorf("Load() = %+v, want %+v", *got, want)
+	}
+}
+
+// TestLoad_IndividualAccount covers an individual (Max) subscription, whose
+// oauthAccount carries JSON null for seatTier and userRateLimitTier and puts
+// the actual tier in organizationRateLimitTier. Before the fallback,
+// account-plan and account-seat both came out empty here, which is the bug
+// this pins.
+func TestLoad_IndividualAccount(t *testing.T) {
+	getenv := writeConfig(t, `{
+	  "oauthAccount": {
+	    "emailAddress": "dev@example.com",
+	    "displayName": "Dev User",
+	    "organizationName": "dev@example.com's Organization",
+	    "organizationRole": "admin",
+	    "organizationType": "claude_max",
+	    "userRateLimitTier": null,
+	    "organizationRateLimitTier": "default_claude_max_20x",
+	    "seatTier": null
+	  }
+	}`)
+
+	got := Load(getenv)
+	if got == nil {
+		t.Fatal("Load returned nil, want a profile")
+	}
+	if got.Plan != "default_claude_max_20x" {
+		t.Errorf("Plan = %q, want default_claude_max_20x (fallback to organizationRateLimitTier)", got.Plan)
+	}
+	if got.Type != "claude_max" {
+		t.Errorf("Type = %q, want claude_max", got.Type)
+	}
+	// An individual subscription genuinely has no seat; empty is correct.
+	if got.Seat != "" {
+		t.Errorf("Seat = %q, want empty", got.Seat)
 	}
 }
 

@@ -28,13 +28,19 @@ func Provider(getenv func(string) string) func() *schema.AccountProfile {
 // oauthAccount is the subset of .claude.json's oauthAccount object
 // statusloom surfaces. Unknown members are ignored, so Claude Code adding or
 // removing keys never breaks the read.
+// Every field is a pointer-free string: the JSON carries null for the keys an
+// account kind does not have (an individual subscription has no seatTier), and
+// encoding/json decodes null into the zero value, which is exactly the "field
+// renders empty" signal statusloom wants.
 type oauthAccount struct {
-	EmailAddress      string `json:"emailAddress"`
-	DisplayName       string `json:"displayName"`
-	OrganizationName  string `json:"organizationName"`
-	OrganizationRole  string `json:"organizationRole"`
-	UserRateLimitTier string `json:"userRateLimitTier"`
-	SeatTier          string `json:"seatTier"`
+	EmailAddress              string `json:"emailAddress"`
+	DisplayName               string `json:"displayName"`
+	OrganizationName          string `json:"organizationName"`
+	OrganizationRole          string `json:"organizationRole"`
+	OrganizationType          string `json:"organizationType"`
+	UserRateLimitTier         string `json:"userRateLimitTier"`
+	OrganizationRateLimitTier string `json:"organizationRateLimitTier"`
+	SeatTier                  string `json:"seatTier"`
 }
 
 // Load reads the logged-in account profile. It returns nil when the profile
@@ -54,12 +60,23 @@ func Load(getenv func(string) string) *schema.AccountProfile {
 	if !ok {
 		return nil
 	}
+	// Plan: Team accounts populate userRateLimitTier and leave
+	// organizationRateLimitTier as the org-wide default; individual (Max)
+	// accounts do the opposite - userRateLimitTier is null and the actual
+	// tier (e.g. "default_claude_max_20x") sits in
+	// organizationRateLimitTier. Prefer the user-scoped value and fall back,
+	// so account-plan resolves for both kinds.
+	plan := acct.UserRateLimitTier
+	if plan == "" {
+		plan = acct.OrganizationRateLimitTier
+	}
 	p := &schema.AccountProfile{
 		Email:        acct.EmailAddress,
 		DisplayName:  acct.DisplayName,
 		Organization: acct.OrganizationName,
 		Role:         acct.OrganizationRole,
-		Plan:         acct.UserRateLimitTier,
+		Type:         acct.OrganizationType,
+		Plan:         plan,
 		Seat:         acct.SeatTier,
 	}
 	// An oauthAccount present but empty of every surfaced key is

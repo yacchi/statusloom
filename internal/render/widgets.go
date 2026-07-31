@@ -210,7 +210,8 @@ func renderContent(spec config.WidgetSpec, snap schema.StatusSnapshot, cfg confi
 	// Account identity. Account.Profile is populated lazily via
 	// Options.Profile so a document without these fields never reads
 	// .claude.json; a nil profile (no file, logged out) renders empty.
-	case "account-email", "account-name", "account-org", "account-role", "account-plan", "account-seat":
+	case "account-email", "account-name", "account-org", "account-role",
+		"account-type", "account-plan", "account-seat":
 		return accountProfileWidget(spec.Type, opts)
 
 	case "env":
@@ -434,6 +435,8 @@ func accountProfileWidget(field string, opts Options) string {
 		return p.Organization
 	case "account-role":
 		return p.Role
+	case "account-type":
+		return p.Type
 	case "account-plan":
 		return p.Plan
 	case "account-seat":

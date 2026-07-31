@@ -293,6 +293,13 @@ var claudeCodeFields = []FieldDef{
 		Descriptions: Descriptions{EN: "The account's role in its organization, e.g. primary_owner.", JA: "組織内でのアカウントの役割です（例: primary_owner）。"},
 	},
 	{
+		Name: "account-type", Category: "claude", DisplayName: "Account Type", Formats: []string{"enum"},
+		Descriptions: Descriptions{
+			EN: "Whether this is a Team seat or an individual subscription: claude_team or claude_max.",
+			JA: "Teamシートか個人サブスクリプションかを示します（claude_team / claude_max）。",
+		},
+	},
+	{
 		Name: "account-plan", Category: "claude", DisplayName: "Account Plan", Formats: []string{"enum"},
 		Descriptions: Descriptions{EN: "The account's rate-limit tier, e.g. default_claude_max_5x.", JA: "アカウントのレート制限ティアです（例: default_claude_max_5x）。"},
 	},

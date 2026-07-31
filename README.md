@@ -336,8 +336,9 @@ which account the current session is using:
 | `account-name` | display name | `Dev User` |
 | `account-org` | organization name | `Example Inc` |
 | `account-role` | role within the organization | `primary_owner` |
+| `account-type` | Team seat vs. individual subscription | `claude_team` / `claude_max` |
 | `account-plan` | rate-limit tier | `default_claude_max_5x` |
-| `account-seat` | seat tier | `team_tier_1` |
+| `account-seat` | seat tier (Team only) | `team_tier_1` |
 
 ```xml
 <span prefix="as " optional="account-email">
@@ -353,6 +354,13 @@ stored, so `account-plan` reads `default_claude_max_5x` rather than
 there, and the file is only read when a document actually uses one of
 these fields.
 
+**If you use both a Team seat and an individual subscription**,
+`account-type` is the field that tells them apart — it's the only one
+populated on both (`claude_team` vs. `claude_max`). Note that an
+individual subscription has no seat, so `account-seat` is empty for it;
+`account-plan` still resolves, because statusloom falls back to the
+organization-scoped rate-limit tier that individual accounts use.
+
 ### Environment variables
 
 `<field name="env" var="...">` shows an environment variable, which is
@@ -366,7 +374,8 @@ profile, cluster, or deployment target this shell is pointed at:
 ```
 
 Use `optional="env:<NAME>"` (the variable name is part of the value) so
-the label disappears along with the field when the variable isn't set.
+the label disappears along with the field when the variable isn't set. A
+field with no `var` yet simply renders empty and reports nothing.
 
 **Credential-looking variables are masked.** A status line ends up in
 screenshots and screen shares, and shared Statusloom Room presets are

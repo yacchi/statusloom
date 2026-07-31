@@ -148,8 +148,18 @@ type AccountProfile struct {
 	DisplayName  string // oauthAccount.displayName
 	Organization string // oauthAccount.organizationName
 	Role         string // oauthAccount.organizationRole, e.g. "primary_owner"
-	Plan         string // oauthAccount.userRateLimitTier, e.g. "default_claude_max_5x"
-	Seat         string // oauthAccount.seatTier, e.g. "team_tier_1"
+	// Type is oauthAccount.organizationType: "claude_team" for a Team seat,
+	// "claude_max" for an individual subscription. It is the one field that
+	// distinguishes those two account kinds, and it is populated on both.
+	Type string
+	// Plan is the rate-limit tier, e.g. "default_claude_max_5x". Team
+	// accounts carry it in userRateLimitTier; individual accounts leave that
+	// null and put the tier in organizationRateLimitTier, so Load falls back
+	// (see there).
+	Plan string
+	// Seat is oauthAccount.seatTier, e.g. "team_tier_1". Individual accounts
+	// have no seat, so this is legitimately empty for them.
+	Seat string
 }
 
 // RateWindow describes usage within a rolling rate-limit window.

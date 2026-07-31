@@ -381,7 +381,7 @@ fieldが存在しない、または値が空の場合、field本体は空文字�
 <span prefix="k8s: " optional="env:KUBECONFIG"><field name="env" var="KUBECONFIG"/></span>
 ```
 
-* `var`が未指定のfieldは**空を返すだけ**で、validationはwarning（errorではない）。設定UIでパレットからドロップした直後は`var`が空なので、errorにすると編集途中の文書が保存不能になる
+* `var`が未指定のfieldは**空を返すだけ**で、診断は一切出さない。設定UIでパレットからドロップした直後は`var`が空になるため、errorだと編集途中の文書が保存不能になり、warningでも「単に空なだけのノード」のためにエージェントのstderrへ毎回描画ごとに出てしまう。データが無いfieldが黙って空になるのと同じ扱いにする
 * `var`が未設定の環境変数を指す場合も空。prefix/suffixは他のfieldと同じく出るので、消したい場合は`optional="env:<変数名>"`を使う（`optional`は変数名まで含めて指定する。「`optional`」節参照）
 * `var`に`=`を含む場合はvalidation error（環境変数名として成立しない）
 
@@ -397,13 +397,16 @@ fieldが存在しない、または値が空の場合、field本体は空文字�
 
 #### アカウントfield
 
-`account-email` / `account-name` / `account-org` / `account-role` / `account-plan` / `account-seat` は、いま**どのアカウントでログインしているか**を表示する。値はClaude Codeがローカルに持つ`.claude.json`の`oauthAccount`から読む（stdinにもネットワークにも依存しない。`internal/claudeaccount`）。読み取り先は`$CLAUDE_CONFIG_DIR`を尊重するため、プロファイルを切り替えて複数アカウントを使い分けている場合に「いまどのプロファイルか」が分かる。
+`account-email` / `account-name` / `account-org` / `account-role` / `account-type` / `account-plan` / `account-seat` は、いま**どのアカウントでログインしているか**を表示する。値はClaude Codeがローカルに持つ`.claude.json`の`oauthAccount`から読む（stdinにもネットワークにも依存しない。`internal/claudeaccount`）。読み取り先は`$CLAUDE_CONFIG_DIR`を尊重するため、プロファイルを切り替えて複数アカウントを使い分けている場合に「いまどのプロファイルか」が分かる。
 
 ```xml
 <span prefix="as " optional="account-email"><field name="account-email" color="bright-black"/></span>
 ```
 
 * 値は上流APIの生文字列をそのまま出す（例: `account-plan`は`default_claude_max_5x`、`account-seat`は`team_tier_1`）
+* **Team / 個人（Max）の併用**: `account-type`が`claude_team`（Teamシート）か`claude_max`（個人サブスクリプション）を返し、両方のアカウント種別で必ず値を持つため、どちらのアカウントで動いているかの判別に使える
+* `account-plan`は`userRateLimitTier`（Teamのみ設定される）→ 空なら`organizationRateLimitTier`（個人アカウントはこちらに実ティアが入る）にフォールバックする。この2段構えが無いと個人アカウントで常に空になる
+* `account-seat`は個人アカウントには存在しない（`seatTier`がnull）ので空になるのが正しい
 * ファイルが無い・ログインしていない・当該キーが無い（個人アカウントには組織名が無い）場合はすべて空
 * `.claude.json`の読み取りは**遅延**で、文書がアカウントfieldを使っていない場合は一切開かない
 
@@ -783,9 +786,9 @@ formatterの属性は、field definitionの型に応じてsemantic validationす
 
 field名・formatter対応・selfMetric・linkableは、宣言的なfield定義レジストリとしてGo側で一元管理する。現行はrenderの`switch`ハードコードと`webconfig/catalog.go`のハンドメンテが重複しているため、これを単一レジストリへ集約する。DSLのvalidation、Web UIのカタログ提供、rendererはこの単一の情報源を参照する。
 
-### コンテンツfield（現行61種）
+### コンテンツfield（現行62種）
 
-`model`、`model-id`、`output-style`、`session-id`、`thinking-enabled`、`git-branch`、`git-changes`、`tool-version`、`current-directory`、`project-directory`、`git-root`、`thinking-effort`、`context-length`、`context-window-size`、`context-remaining`、`context-output-tokens`、`current-input-tokens`、`current-output-tokens`、`cache-creation-tokens`、`cache-read-tokens`、`exceeds-200k`、`context-percentage`、`context-percentage-usable`、`session-cost`、`five-hour-usage`、`five-hour-reset`、`weekly-usage`、`weekly-reset`、`session-name`、`agent-name`、`vim-mode`、`pr-number`、`pr-review-state`、`repo-name`、`worktree`、`session-duration`、`api-duration`、`lines-changed`、`lines-added`、`lines-removed`、`cache-hit-rate`、`git-staged`、`git-unstaged`、`git-untracked`、`git-ahead`、`git-behind`、`git-clean`、`extra-usage-cost`、`extra-usage-limit`、`extra-usage-percent`、`weekly-usage-opus`、`weekly-usage-sonnet`、`weekly-reset-opus`、`weekly-reset-sonnet`、`account-email`、`account-name`、`account-org`、`account-role`、`account-plan`、`account-seat`、`env`
+`model`、`model-id`、`output-style`、`session-id`、`thinking-enabled`、`git-branch`、`git-changes`、`tool-version`、`current-directory`、`project-directory`、`git-root`、`thinking-effort`、`context-length`、`context-window-size`、`context-remaining`、`context-output-tokens`、`current-input-tokens`、`current-output-tokens`、`cache-creation-tokens`、`cache-read-tokens`、`exceeds-200k`、`context-percentage`、`context-percentage-usable`、`session-cost`、`five-hour-usage`、`five-hour-reset`、`weekly-usage`、`weekly-reset`、`session-name`、`agent-name`、`vim-mode`、`pr-number`、`pr-review-state`、`repo-name`、`worktree`、`session-duration`、`api-duration`、`lines-changed`、`lines-added`、`lines-removed`、`cache-hit-rate`、`git-staged`、`git-unstaged`、`git-untracked`、`git-ahead`、`git-behind`、`git-clean`、`extra-usage-cost`、`extra-usage-limit`、`extra-usage-percent`、`weekly-usage-opus`、`weekly-usage-sonnet`、`weekly-reset-opus`、`weekly-reset-sonnet`、`account-email`、`account-name`、`account-org`、`account-role`、`account-type`、`account-plan`、`account-seat`、`env`
 
 `separator`・`flex-separator`はノード（`role="separator"`の`text` / `<flex/>`）へ置き換わるため、fieldカタログには含めない。
 

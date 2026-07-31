@@ -222,10 +222,12 @@ func (v *validator) validateField(f *FieldNode, inSubagent bool) {
 // validateVar checks the `var` / `unmask` attribute pair against the field
 // definition (markup.md "env").
 //
-// A missing var on a var-taking field is a WARNING, not an error: the visual
-// editor inserts <field name="env"/> the moment the palette item is dropped
-// and the author fills the variable name in afterwards, so an error would make
-// the document unsavable mid-edit. Such a field simply renders empty.
+// A missing var is NOT diagnosed at all. The visual editor inserts <field
+// name="env"/> the moment the palette item is dropped, so an error would make
+// the document unsavable mid-edit - and a warning is just as wrong, because it
+// would then print to the agent's stderr on every single render for a node
+// that is merely empty. A var-less env field renders empty exactly like any
+// other field with no data available, which needs no diagnostic.
 func (v *validator) validateVar(f *FieldNode, def FieldDef) {
 	r := f.Meta.SourceRange
 	if !def.RequiresVar {
@@ -239,7 +241,8 @@ func (v *validator) validateVar(f *FieldNode, def FieldDef) {
 	}
 
 	if f.Var == "" {
-		v.warnf(r, "field %q has no var attribute and will render empty", f.Name)
+		// unmask alone is still an error: it is meaningless without a
+		// variable, so it can only be a mistake rather than a mid-edit state.
 		if f.Unmask {
 			v.errf(r, "unmask requires a var attribute")
 		}

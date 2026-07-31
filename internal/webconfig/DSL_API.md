@@ -287,8 +287,10 @@ are returned for the editor but never block the write.
 `requiresVar` marks a field parameterized by a `var` attribute (`env` is the
 only one today): the properties panel must render a variable-name input for it,
 and a `<field>` AST node for it carries `"var"` (string) and `"unmask"`
-(boolean, emitted only when true). Validation reports a missing `var` as a
-*warning*, not an error, so a freshly dropped palette item stays savable.
+(boolean, emitted only when true). A missing `var` produces no diagnostic at
+all - neither error nor warning - so a freshly dropped palette item stays
+savable and does not pollute the agent's stderr on every render; the field just
+renders empty.
 
 The field catalog for the palette, sourced entirely from the Go DSL registry
 (single source of truth): the session/account/git field set **plus** the

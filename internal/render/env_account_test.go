@@ -133,6 +133,7 @@ func TestAccountFields(t *testing.T) {
 		DisplayName:  "Dev User",
 		Organization: "Example Inc",
 		Role:         "primary_owner",
+		Type:         "claude_team",
 		Plan:         "default_claude_max_5x",
 		Seat:         "team_tier_1",
 	}
@@ -143,6 +144,7 @@ func TestAccountFields(t *testing.T) {
 		{"account-name", "Dev User"},
 		{"account-org", "Example Inc"},
 		{"account-role", "primary_owner"},
+		{"account-type", "claude_team"},
 		{"account-plan", "default_claude_max_5x"},
 		{"account-seat", "team_tier_1"},
 	}

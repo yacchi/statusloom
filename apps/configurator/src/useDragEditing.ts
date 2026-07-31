@@ -114,6 +114,37 @@ interface Rect {
     width: number;
 }
 
+// A measured droppable rect as the geometry resolver sees it. Row tracks soft-
+// wrap (a long line renders as several visual rows, see `.row-track` in
+// styles.css), so the resolver needs the vertical extent too: two chips can
+// share an X range while sitting on different visual rows. `top`/`height` are
+// optional — callers that predate wrapping (and the hook's own tests) pass
+// horizontal-only rects, and the resolver then behaves exactly as before.
+interface GeoRect extends Rect {
+    top?: number;
+    height?: number;
+}
+
+// Whether `r` sits entirely on a visual row ABOVE pointerY (so every chip in
+// it precedes the pointer in document order regardless of X). Undefined
+// geometry / a missing pointerY answers false, keeping the purely horizontal
+// behavior.
+function isAboveRow(r: GeoRect, pointerY: number | null): boolean {
+    if (pointerY === null || r.top === undefined || r.height === undefined) {
+        return false;
+    }
+    return r.top + r.height <= pointerY;
+}
+
+// The mirror of isAboveRow: `r` sits entirely BELOW the pointer's row, so it
+// follows the pointer in document order.
+function isBelowRow(r: GeoRect, pointerY: number | null): boolean {
+    if (pointerY === null || r.top === undefined || r.height === undefined) {
+        return false;
+    }
+    return r.top >= pointerY;
+}
+
 // The vertical counterpart of Rect, used ONLY by variant-card reordering,
 // which is a Y-axis drag (cards stack vertically and never move horizontally).
 // Kept separate so the chip resolvers (computeDropTarget / resolveGeometricTarget
@@ -240,27 +271,45 @@ function lineContainerOf(
     return null;
 }
 
-function rectContains(r: Rect, x: number): boolean {
-    return x >= r.left && x <= r.left + r.width;
+// Whether the pointer sits inside `r`. Vertical containment is only checked
+// when both the rect and the pointer carry Y information; a wrapped row can
+// stack two chips at the same X, and without the Y test the pointer would
+// "contain" into a span it is merely above or below.
+function rectContains(r: GeoRect, x: number, pointerY: number | null = null): boolean {
+    if (x < r.left || x > r.left + r.width) {
+        return false;
+    }
+    return !isAboveRow(r, pointerY) && !isBelowRow(r, pointerY);
 }
 
-// The insertion index within `childIds` nearest `pointerX`: the count of
-// children whose horizontal center sits left of the pointer, yielding 0
-// (before all) .. n (after all) with no snap-to-end for an interior gap.
-// Children render left-to-right in document order, so counting centers is a
-// stable ordering. An empty container is index 0. Returns null when any child
-// rect is missing (incomplete geometry) so the caller can fall back to the
-// legacy resolver rather than guess a caret.
+// The insertion index within `childIds` nearest the pointer: the count of
+// children that precede it in document order, yielding 0 (before all) .. n
+// (after all) with no snap-to-end for an interior gap. An empty container is
+// index 0. Returns null when any child rect is missing (incomplete geometry)
+// so the caller can fall back to the legacy resolver rather than guess a caret.
+//
+// Children flow left-to-right and, in a soft-wrapped row, top-to-bottom, so
+// "precedes" is reading order: a child on a visual row above the pointer
+// always precedes it, one on a row below never does, and only within the
+// pointer's own row does the horizontal center decide.
 function nearestGap(
     childIds: readonly string[],
-    rects: ReadonlyMap<string, Rect>,
+    rects: ReadonlyMap<string, GeoRect>,
     pointerX: number,
+    pointerY: number | null = null,
 ): number | null {
     let index = 0;
     for (const id of childIds) {
         const r = rects.get(id);
         if (!r) {
             return null;
+        }
+        if (isAboveRow(r, pointerY)) {
+            index += 1;
+            continue;
+        }
+        if (isBelowRow(r, pointerY)) {
+            continue;
         }
         if (r.left + r.width / 2 < pointerX) {
             index += 1;
@@ -309,12 +358,16 @@ function validateGeometric(
 // `rects` are viewport/client coords (dnd-kit droppableRects), consistent with
 // `pointerX` (activator clientX + delta). Reading them is pure: droppables are
 // stationary and the AST is frozen for the whole drag (see the #185 note).
+// `pointerY` (optional) makes the resolver wrap-aware: with it, chips are
+// ordered in reading order across a soft-wrapped row's visual rows; without it
+// the resolution is purely horizontal, as it was before rows could wrap.
 export function resolveGeometricTarget(
     containers: readonly ContainerView[],
     overId: string,
     payload: ChipDragPayload,
     pointerX: number,
-    rects: ReadonlyMap<string, { left: number; width: number }>,
+    rects: ReadonlyMap<string, GeoRect>,
+    pointerY: number | null = null,
 ): DropTarget | null | undefined {
     const line = lineContainerOf(containers, overId);
     if (!line) {
@@ -335,7 +388,7 @@ export function resolveGeometricTarget(
                 continue;
             }
             const r = rects.get(c.id);
-            if (!r || !rectContains(r, pointerX)) {
+            if (!r || !rectContains(r, pointerX, pointerY)) {
                 continue;
             }
             if (!acceptsCategory(c, payload)) {
@@ -382,7 +435,7 @@ export function resolveGeometricTarget(
                 const after = pointerX >= r.left + r.width - margin;
                 target = { containerId: parent.id, index: after ? idx + 1 : idx };
             } else {
-                const gap = nearestGap(S.childIds, rects, pointerX);
+                const gap = nearestGap(S.childIds, rects, pointerX, pointerY);
                 if (gap === null) {
                     return undefined;
                 }
@@ -390,7 +443,7 @@ export function resolveGeometricTarget(
             }
         }
     } else {
-        const gap = nearestGap(line.childIds, rects, pointerX);
+        const gap = nearestGap(line.childIds, rects, pointerX, pointerY);
         if (gap === null) {
             return undefined;
         }
@@ -404,7 +457,7 @@ export function resolveGeometricTarget(
     // Retry once at the line level (valid for flex and any non-self node), then
     // give up. This is the graceful degradation for e.g. dropping onto a span
     // that turned out to be the dragged node's own subtree.
-    const fallbackGap = nearestGap(line.childIds, rects, pointerX);
+    const fallbackGap = nearestGap(line.childIds, rects, pointerX, pointerY);
     if (fallbackGap === null) {
         return undefined;
     }
@@ -561,7 +614,7 @@ interface Args {
     // hook's own tests, or before the first collision pass). Drives the
     // geometry-based nearest-gap resolver; when absent the legacy hovered-chip
     // resolver is used, so existing behavior is unchanged.
-    getRects?: () => Map<string, { left: number; width: number }> | null;
+    getRects?: () => Map<string, GeoRect> | null;
     // Build the AST node (and overlay label) for a palette key
     // ("field:<name>" / "preset:<id>"); null cancels the drag.
     makePaletteNode: (key: string) => { node: LineChild; label: string } | null;
@@ -665,7 +718,14 @@ export function useDragEditing({
             // incomplete, and null/DropTarget when it resolved on its own.
             const rects = getRects();
             if (rects && pointerX !== null) {
-                const geo = resolveGeometricTarget(containers, overId, payload, pointerX, rects);
+                const geo = resolveGeometricTarget(
+                    containers,
+                    overId,
+                    payload,
+                    pointerX,
+                    rects,
+                    pointerY,
+                );
                 if (geo !== undefined) {
                     return geo;
                 }

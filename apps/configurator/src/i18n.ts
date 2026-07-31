@@ -81,6 +81,9 @@ const EN = {
     saveBlocked: "Cannot save: the document has errors.",
     // settings
     settingsTitle: "Git settings",
+    globalSettingsTitle: "Settings",
+    settingsAppSection: "Editor",
+    settingsLanguage: "Language",
     // help texts
     helpGit: "Git data collection settings (the optional <git/> element). Defaults apply when unset.",
     helpFlex:
@@ -221,6 +224,9 @@ const JA: Record<MessageKey, string> = {
     dslNoProblems: "問題はありません。",
     saveBlocked: "保存できません: ドキュメントにエラーがあります。",
     settingsTitle: "Git設定",
+    globalSettingsTitle: "設定",
+    settingsAppSection: "エディタ",
+    settingsLanguage: "言語",
     helpGit: "git 情報収集の設定です（省略可能な <git/> 要素）。未設定の項目は既定値が使われます。",
     helpFlex:
         "このフレックスノードが端末幅を埋める方法。full = 全幅まで埋める、full-minus-N = N 桁分を残して埋める。1 行に複数のフレックスノードがありサイズが異なる場合は、最小のターゲットが適用されます。",

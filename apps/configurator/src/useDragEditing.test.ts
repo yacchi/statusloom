@@ -104,3 +104,77 @@ describe("resolveGeometricTarget", () => {
         expect(target).toEqual({ containerId: "L0", index: 1 });
     });
 });
+
+// Row tracks soft-wrap, so one line can span several visual rows and two chips
+// can share an X range while sitting on different rows. With pointerY (and
+// top/height on the rects) the resolver must order chips in READING order, not
+// by X alone — otherwise dropping on the second visual row would resolve to a
+// caret near the start of the line.
+describe("resolveGeometricTarget on a soft-wrapped row", () => {
+    // Two chips per visual row, rows 30px apart and 20px tall:
+    //   row 1 (top 100): L0.0 [100,150), L0.1 [150,200)
+    //   row 2 (top 130): L0.2 [100,150), L0.3 [150,200)
+    const containers: ContainerView[] = [
+        { id: "L0", kind: "line", lineIndex: 0, childIds: ["L0.0", "L0.1", "L0.2", "L0.3"] },
+    ];
+    const wrapped = new Map([
+        ["L0.0", { left: 100, width: 50, top: 100, height: 20 }],
+        ["L0.1", { left: 150, width: 50, top: 100, height: 20 }],
+        ["L0.2", { left: 100, width: 50, top: 130, height: 20 }],
+        ["L0.3", { left: 150, width: 50, top: 130, height: 20 }],
+    ]);
+
+    it("counts the whole first visual row as preceding a pointer on the second row", () => {
+        // Left half of L0.2: index 2 (after both first-row chips, before L0.2).
+        expect(resolveGeometricTarget(containers, "line-0", PAYLOAD, 110, wrapped, 140)).toEqual({
+            containerId: "L0",
+            index: 2,
+        });
+    });
+
+    it("resolves the end of the line at the far right of the LAST visual row", () => {
+        expect(resolveGeometricTarget(containers, "line-0", PAYLOAD, 195, wrapped, 140)).toEqual({
+            containerId: "L0",
+            index: 4,
+        });
+    });
+
+    it("ignores chips on rows below the pointer", () => {
+        // Right half of L0.0 on the first row: index 1, even though two chips
+        // further down the document sit left of the pointer.
+        expect(resolveGeometricTarget(containers, "line-0", PAYLOAD, 140, wrapped, 110)).toEqual({
+            containerId: "L0",
+            index: 1,
+        });
+    });
+
+    it("falls back to purely horizontal ordering when no pointerY is given", () => {
+        // Without Y, the second row's chips are indistinguishable from the
+        // first's — the pre-wrap behavior, kept for callers without geometry.
+        expect(resolveGeometricTarget(containers, "line-0", PAYLOAD, 140, wrapped)).toEqual({
+            containerId: "L0",
+            index: 2,
+        });
+    });
+
+    it("does not resolve INTO a span the pointer is only vertically near", () => {
+        // A span occupying the first visual row only; the pointer is on the
+        // second row, inside the span's X range.
+        const withSpan: ContainerView[] = [
+            { id: "L0", kind: "line", lineIndex: 0, childIds: ["L0.0", "L0.1"] },
+            { id: "L0.0", kind: "span", childIds: ["L0.0.0"] },
+        ];
+        const r = new Map([
+            ["L0.0", { left: 100, width: 100, top: 100, height: 20 }],
+            ["L0.0.0", { left: 100, width: 100, top: 100, height: 20 }],
+            ["L0.1", { left: 100, width: 50, top: 130, height: 20 }],
+        ]);
+        // x=110 is inside the span's X range but on the row below it, and left
+        // of L0.1's center — so the caret lands before L0.1, in the LINE, and
+        // never inside the span.
+        expect(resolveGeometricTarget(withSpan, "line-0", PAYLOAD, 110, r, 140)).toEqual({
+            containerId: "L0",
+            index: 1,
+        });
+    });
+});

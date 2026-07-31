@@ -17,7 +17,6 @@ interface Props {
     canUndo: boolean;
     canRedo: boolean;
     lang: Lang;
-    onToggleLang: () => void;
     onUndo: () => void;
     onRedo: () => void;
     onSave: () => void;
@@ -39,7 +38,6 @@ export function Header({
     canUndo,
     canRedo,
     lang,
-    onToggleLang,
     onUndo,
     onRedo,
     onSave,
@@ -76,9 +74,6 @@ export function Header({
             ) : null}
             <div className="spacer" />
             <div className="toolbar">
-                <button onClick={onToggleLang} title="Language / 言語">
-                    {lang === "en" ? "日本語" : "EN"}
-                </button>
                 <button onClick={onUndo} disabled={!canUndo} title="Undo (Cmd/Ctrl+Z)">
                     Undo
                 </button>
@@ -88,8 +83,8 @@ export function Header({
                 <button
                     className="settings-button"
                     data-testid="settings-button"
-                    title={t(lang, "settingsTitle")}
-                    aria-label={t(lang, "settingsTitle")}
+                    title={t(lang, "globalSettingsTitle")}
+                    aria-label={t(lang, "globalSettingsTitle")}
                     onClick={onOpenSettings}
                 >
                     ⚙

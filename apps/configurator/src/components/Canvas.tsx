@@ -25,7 +25,13 @@
 // derived from the AST, which is frozen during a drag. See the regression
 // note in useDragEditing.
 
-import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
+import type {
+    CSSProperties,
+    PointerEvent as ReactPointerEvent,
+    ReactNode,
+    RefObject,
+} from "react";
 import { useDroppable } from "@dnd-kit/core";
 import {
     SortableContext,
@@ -588,8 +594,73 @@ function SortableChip({
                 displayName={displayName}
                 onSelect={(nodeId) => onSelect(nodeId, lineIndex)}
             />
+            {/* Soft-wrap marker, shown only while this chip happens to end a
+                visual row (useWrapMarks stamps data-wrap-end on the chip).
+                Always rendered so the marker can appear and disappear on
+                resize without a React re-render. */}
+            <span className="wrap-mark" aria-hidden="true">
+                ↩
+            </span>
         </span>
     );
+}
+
+// Soft-wrapped row tracks (`.row-track` wraps, see styles.css) render one
+// statusline line as several visual rows. This marks the last chip of every
+// visual row but the last with `data-wrap-end="true"`, which CSS turns into a
+// ↩ glyph, so it stays readable that the chips below continue the SAME line.
+//
+// The marking is done by writing the attribute directly on the DOM nodes
+// instead of through React state: it is derived purely from measured layout
+// (offsetTop), it is paint-only, and a state update here would re-render the
+// row on every resize — and, during a drag, feed exactly the measure/render
+// loop the #185 note in useDragEditing.ts warns about.
+// `chipKey` identifies the current chip list (ids joined): the observers are
+// rebuilt when the row's chips change, while a mere text/width change is
+// picked up by the ResizeObserver without re-subscribing.
+function useWrapMarks(trackRef: RefObject<HTMLDivElement | null>, chipKey: string): void {
+    const mark = useCallback(() => {
+        const track = trackRef.current;
+        if (!track) {
+            return;
+        }
+        const chips = Array.from(track.children).filter(
+            (el): el is HTMLElement =>
+                el instanceof HTMLElement && el.classList.contains("seg-chip"),
+        );
+        chips.forEach((chip, i) => {
+            const next = chips[i + 1];
+            // A chip ends a visual row when the following chip starts back at
+            // the left. offsetLeft is the reliable signal: chips only ever
+            // advance rightwards within a row, so a smaller left means the
+            // flex container wrapped. offsetTop must NOT be used for this —
+            // the track is `align-items: center`, so a taller chip (a span
+            // group) sits higher than its neighbours and every chip beside it
+            // would look like a wrap.
+            const wrapEnd = next !== undefined && next.offsetLeft < chip.offsetLeft;
+            if (wrapEnd) {
+                chip.dataset.wrapEnd = "true";
+            } else {
+                delete chip.dataset.wrapEnd;
+            }
+        });
+    }, [trackRef]);
+
+    useLayoutEffect(() => {
+        mark();
+        const track = trackRef.current;
+        if (!track || typeof ResizeObserver === "undefined") {
+            return;
+        }
+        // Re-measure when the track itself reflows (width change, a chip's
+        // preview text changing length, a chip added or removed).
+        const ro = new ResizeObserver(() => mark());
+        ro.observe(track);
+        for (const child of Array.from(track.children)) {
+            ro.observe(child);
+        }
+        return () => ro.disconnect();
+    }, [mark, trackRef, chipKey]);
 }
 
 interface CanvasRowProps {
@@ -652,6 +723,17 @@ function CanvasRow({
     const children = line.children;
     const segments = previewLine ? previewLine.segments : null;
     const ids = children.map((c, i) => (c.id !== "" ? c.id : `pending-${line.id || topIndex}-${i}`));
+    // The track element is needed twice: as dnd-kit's droppable ref and as the
+    // measurement target for the soft-wrap markers.
+    const trackRef = useRef<HTMLDivElement | null>(null);
+    const setTrackRef = useCallback(
+        (el: HTMLDivElement | null) => {
+            trackRef.current = el;
+            setNodeRef(el);
+        },
+        [setNodeRef],
+    );
+    useWrapMarks(trackRef, ids.join(","));
     const isDropLine = dropTarget?.containerId === line.id;
     const isPowerline = previewLine?.ansi.includes("\ue0b0") === true;
 
@@ -667,7 +749,7 @@ function CanvasRow({
             {rowLabel !== null ? <span className="row-label">{rowLabel}</span> : null}
             <SortableContext items={ids} strategy={horizontalListSortingStrategy}>
                 <div
-                    ref={setNodeRef}
+                    ref={setTrackRef}
                     className={
                         "row-track" +
                         (isPowerline ? " powerline-row" : "") +

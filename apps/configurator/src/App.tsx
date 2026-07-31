@@ -301,21 +301,35 @@ function Configurator({ token }: { token: string }) {
 
     // Snapshot of the current drag's droppable rects (viewport px), refreshed
     // on every collision pass. The geometry-based drop resolver reads it via
-    // getRects; collisionDetection is the only place with droppableRects.
-    const dragRectsRef = useRef<Map<string, { left: number; width: number }> | null>(null);
+    // getRects; collisionDetection is the only place with droppableRects. The
+    // vertical extent is part of the snapshot because row tracks soft-wrap: on
+    // a wrapped row the resolver orders chips in reading order, which needs to
+    // know which visual row each chip sits on.
+    const dragRectsRef = useRef<Map<
+        string,
+        { left: number; width: number; top: number; height: number }
+    > | null>(null);
 
     // Pointer-following collision detection: prefer the droppable actually
     // under the cursor so palette chips (whose dragged-overlay rect is offset
     // from the pointer) land where the user points. Falls back to
     // closest-corners for gaps — row spacing, padding — where the pointer sits
     // over no droppable. As a side effect it snapshots every droppable's
-    // rect (left/width) into dragRectsRef for the nearest-gap resolver; the
-    // returned collision set is unchanged from the previous behavior.
+    // rect into dragRectsRef for the nearest-gap resolver; the returned
+    // collision set is unchanged from the previous behavior.
     const collisionDetection = useCallback<CollisionDetection>((args) => {
-        const snapshot = new Map<string, { left: number; width: number }>();
+        const snapshot = new Map<
+            string,
+            { left: number; width: number; top: number; height: number }
+        >();
         for (const [id, rect] of args.droppableRects) {
             if (rect) {
-                snapshot.set(String(id), { left: rect.left, width: rect.width });
+                snapshot.set(String(id), {
+                    left: rect.left,
+                    width: rect.width,
+                    top: rect.top,
+                    height: rect.height,
+                });
             }
         }
         dragRectsRef.current = snapshot;
@@ -869,12 +883,11 @@ function Configurator({ token }: { token: string }) {
         void applyAstEdit(() => result.next, { select: result.select });
     }, [applyAstEdit]);
 
-    const toggleLang = useCallback(() => {
-        setLang((cur) => {
-            const next: Lang = cur === "en" ? "ja" : "en";
-            saveLang(next);
-            return next;
-        });
+    // The language lives in the global settings modal (SettingsModal); it is a
+    // local editor preference, persisted in localStorage, never in the document.
+    const changeLang = useCallback((next: Lang) => {
+        saveLang(next);
+        setLang(next);
     }, []);
 
     // ---- drag & drop ----
@@ -1565,7 +1578,6 @@ function Configurator({ token }: { token: string }) {
                 canUndo={canUndo(history)}
                 canRedo={canRedo(history)}
                 lang={lang}
-                onToggleLang={toggleLang}
                 onUndo={() => setHistory((h) => (h ? undo(h) : h))}
                 onRedo={() => setHistory((h) => (h ? redo(h) : h))}
                 onSave={doSave}
@@ -1866,6 +1878,7 @@ function Configurator({ token }: { token: string }) {
                     onPatchGit={(patch: AttrPatch) =>
                         applyAstEdit((root) => updateGitAttrs(root, patch))
                     }
+                    onChangeLang={changeLang}
                     onClose={() => setShowSettings(false)}
                 />
             ) : null}

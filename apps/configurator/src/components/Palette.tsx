@@ -26,6 +26,19 @@ const CATEGORY_LABEL: Record<string, string> = {
     subagent: "Subagent",
 };
 
+// Chips sit in a two-column grid, so a long name or a long preview value
+// (paths, emails, session ids) would be clipped to an ellipsis in one column.
+// Those chips opt out of the grid and span the full width instead, laying the
+// name and the sample out side by side (`.palette-chip.wide` in styles.css).
+// The thresholds are the number of characters that fit in one column at the
+// palette's 340px width: names render at 13px, samples at 11px monospace.
+const WIDE_NAME_CHARS = 18;
+const WIDE_SAMPLE_CHARS = 14;
+
+function isWideChip(label: string, sample: string): boolean {
+    return label.length > WIDE_NAME_CHARS || sample.length > WIDE_SAMPLE_CHARS;
+}
+
 function PaletteChip({
     paletteKey,
     label,
@@ -47,7 +60,11 @@ function PaletteChip({
             ref={setNodeRef}
             {...attributes}
             {...listeners}
-            className={"palette-chip" + (isDragging ? " dragging" : "")}
+            className={
+                "palette-chip" +
+                (isWideChip(label, sample) ? " wide" : "") +
+                (isDragging ? " dragging" : "")
+            }
             title={tip}
             data-testid={`palette-${paletteKey}`}
             onClick={() => onAdd(paletteKey)}

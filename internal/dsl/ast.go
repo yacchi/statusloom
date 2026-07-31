@@ -122,9 +122,16 @@ type ResponsiveNode struct {
 }
 
 // VariantNode is one <variant> rendering candidate inside a <responsive>. It
-// holds one or more <line> children and carries no attributes.
+// holds one or more <line> children and carries a single optional attribute,
+// `when`.
 type VariantNode struct {
-	Meta  NodeMeta
+	Meta NodeMeta
+	// When is the raw `when` attribute ("" = unconditional): a candidacy gate
+	// evaluated BEFORE the width first-fit, so a variant whose condition is
+	// false is not a candidate at any width (markup.md "responsive"). Unlike a
+	// drawable node's `when` it has no `self` metric to reference, since a
+	// <variant> is a container, not a field.
+	When  string
 	Lines []*LineNode
 	// Subagent is the optional <subagent> region rendered below this variant's
 	// lines (markup.md "subagent"). Each width breakpoint may carry its own

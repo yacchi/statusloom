@@ -67,6 +67,16 @@ type MetricDef struct {
 	// Percent marks a 0..100-scale percentage metric. The configurator uses
 	// it as a candidate filter for threshold-bar-driven color-rule setup.
 	Percent bool
+	// Text marks a STRING-valued metric (the account-* identity metrics).
+	// It is compared against a quoted string literal with eq/ne — the
+	// ordering operators (lt/le/gt/ge) are a type error on it — so the
+	// configurator offers a text/enum input instead of a numeric one.
+	Text bool
+	// Values lists the known values of a Text metric, when it is a closed
+	// enumeration (account-type is either claude_max or claude_team). The
+	// configurator offers them as suggestions; a value outside the list is
+	// still valid, since these strings come from Claude Code, not from us.
+	Values []string
 }
 
 // claudeCodeFields is the tool="claude-code" content field catalog
@@ -470,6 +480,38 @@ var claudeCodeMetrics = []MetricDef{
 	{
 		Name: "seven-day-sonnet-reset-minutes", DisplayName: "Weekly Reset Sonnet (minutes)",
 		Descriptions: Descriptions{EN: "Minutes until the Sonnet 7-day rate limit window resets.", JA: "Sonnetの7日間レート制限がリセットされるまでの分数です。"},
+	},
+	// Account identity metrics: the string counterparts of the account-*
+	// fields, so a document can BRANCH on which account it is running under
+	// (`when="account-type eq claude_team"`) instead of only displaying it.
+	// They resolve from the same lazily read .claude.json profile as the
+	// fields (render.Options.Profile), and an empty/absent key resolves to
+	// "missing" — a when-expression referencing it then fails, so the guarded
+	// content stays hidden rather than matching an empty string.
+	{
+		Name: "account-type", DisplayName: "Account Type", Text: true,
+		Values:       []string{"claude_max", "claude_team"},
+		Descriptions: Descriptions{EN: "Account kind of the logged-in account (claude_max = personal subscription, claude_team = team seat); usable in when= to branch by account.", JA: "ログイン中アカウントの種別（claude_max = 個人サブスク、claude_team = Teamシート）。when= でアカウントごとの出し分けに使えます。"},
+	},
+	{
+		Name: "account-plan", DisplayName: "Account Plan", Text: true,
+		Descriptions: Descriptions{EN: "Rate-limit tier of the logged-in account, e.g. default_claude_max_5x; usable in when=.", JA: "ログイン中アカウントのレート制限ティア（例: default_claude_max_5x）。when= で使えます。"},
+	},
+	{
+		Name: "account-seat", DisplayName: "Seat Tier", Text: true,
+		Descriptions: Descriptions{EN: "Seat tier of the logged-in account, e.g. team_tier_1; empty on a personal account.", JA: "ログイン中アカウントのシートティア（例: team_tier_1）。個人アカウントでは空です。"},
+	},
+	{
+		Name: "account-role", DisplayName: "Organization Role", Text: true,
+		Descriptions: Descriptions{EN: "The account's role in its organization, e.g. primary_owner.", JA: "組織内でのアカウントの役割です（例: primary_owner）。"},
+	},
+	{
+		Name: "account-org", DisplayName: "Organization", Text: true,
+		Descriptions: Descriptions{EN: "Organization name the logged-in account belongs to.", JA: "ログイン中アカウントが所属する組織名です。"},
+	},
+	{
+		Name: "account-email", DisplayName: "Account Email", Text: true,
+		Descriptions: Descriptions{EN: "Email address of the logged-in account.", JA: "ログイン中アカウントのメールアドレスです。"},
 	},
 	widthMetric,
 }

@@ -932,6 +932,8 @@ interface VariantCardProps {
     onAddLine: () => void;
     onDeleteVariant: () => void;
     onDuplicate: () => void;
+    // Sets (or clears, with "") this variant's `when` candidacy gate.
+    onPatchWhen: (when: string) => void;
     onAddSubagent: (containerId: string) => void;
     onDeleteSubagent: (containerId: string) => void;
     onFillSubagentDefault: (subagentLineId: string) => void;
@@ -966,6 +968,7 @@ function VariantCard({
     onAddLine,
     onDeleteVariant,
     onDuplicate,
+    onPatchWhen,
     onAddSubagent,
     onDeleteSubagent,
     onFillSubagentDefault,
@@ -1032,6 +1035,23 @@ function VariantCard({
                     ✕
                 </button>
             </div>
+            {/* The variant's `when` candidacy gate: free text, exactly like a
+                node's when in the properties panel. It is edited here rather
+                than in that panel because a <variant> is not a selectable
+                chip — the card IS its only representation. An empty value
+                clears the attribute (unconditional variant). */}
+            <label className="variant-when">
+                <span className="variant-when-label">{t(lang, "variantWhenLabel")}</span>
+                <input
+                    type="text"
+                    data-testid={`variant-when-${variant.id}`}
+                    value={variant.when ?? ""}
+                    placeholder={t(lang, "variantWhenPlaceholder")}
+                    disabled={readOnly}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => onPatchWhen(e.target.value)}
+                />
+            </label>
             <div className="variant-lines">
                 {variant.lines.map((line, j) => (
                     <CanvasRow
@@ -1108,6 +1128,7 @@ interface ResponsiveBlockProps {
     onAddVariant: (responsiveId: string) => void;
     onDeleteVariant: (variantId: string) => void;
     onDuplicateVariant: (variantId: string) => void;
+    onPatchVariantWhen: (variantId: string, when: string) => void;
     onAddSubagent: (containerId: string) => void;
     onDeleteSubagent: (containerId: string) => void;
     onFillSubagentDefault: (subagentLineId: string) => void;
@@ -1137,10 +1158,12 @@ function ResponsiveBlock({
     onAddVariant,
     onDeleteVariant,
     onDuplicateVariant,
+    onPatchVariantWhen,
     onAddSubagent,
     onDeleteSubagent,
     onFillSubagentDefault,
 }: ResponsiveBlockProps) {
+    const lang = useLang();
     const selectedVariant = match.selectedVariant.get(responsive.id) ?? null;
     const dragIds = responsive.variants.map((v, i) =>
         VARIANT_ID_PREFIX + (v.id !== "" ? v.id : `pending-variant-${topIndex}-${i}`),
@@ -1182,6 +1205,7 @@ function ResponsiveBlock({
                                 onAddLine={() => onAddLineToVariant(variant.id)}
                                 onDeleteVariant={() => onDeleteVariant(variant.id)}
                                 onDuplicate={() => onDuplicateVariant(variant.id)}
+                                onPatchWhen={(when) => onPatchVariantWhen(variant.id, when)}
                                 onAddSubagent={onAddSubagent}
                                 onDeleteSubagent={onDeleteSubagent}
                                 onFillSubagentDefault={onFillSubagentDefault}
@@ -1189,6 +1213,15 @@ function ResponsiveBlock({
                         ))}
                     </div>
                 </SortableContext>
+                {/* -1 is the backend's "no candidate": every variant's `when`
+                    evaluated false, so the block renders nothing at all. Without
+                    this note the canvas would just show no selected badge, which
+                    reads like a preview glitch. */}
+                {selectedVariant === -1 ? (
+                    <p className="hint" data-testid={`responsive-no-candidate-${responsive.id}`}>
+                        {t(lang, "responsiveNoCandidate")}
+                    </p>
+                ) : null}
                 <button
                     className="variant-add"
                     data-testid={`responsive-add-variant-${responsive.id}`}
@@ -1252,6 +1285,7 @@ interface CanvasProps {
     onAddVariant: (responsiveId: string) => void;
     onDeleteVariant: (variantId: string) => void;
     onDuplicateVariant: (variantId: string) => void;
+    onPatchVariantWhen: (variantId: string, when: string) => void;
     onAddSubagent: (containerId: string) => void;
     onDeleteSubagent: (containerId: string) => void;
     onFillSubagentDefault: (subagentLineId: string) => void;
@@ -1296,6 +1330,7 @@ export function Canvas({
     onAddVariant,
     onDeleteVariant,
     onDuplicateVariant,
+    onPatchVariantWhen,
     onAddSubagent,
     onDeleteSubagent,
     onFillSubagentDefault,
@@ -1505,6 +1540,7 @@ export function Canvas({
                                         onAddVariant={onAddVariant}
                                         onDeleteVariant={onDeleteVariant}
                                         onDuplicateVariant={onDuplicateVariant}
+                                        onPatchVariantWhen={onPatchVariantWhen}
                                         onAddSubagent={onAddSubagent}
                                         onDeleteSubagent={onDeleteSubagent}
                                         onFillSubagentDefault={onFillSubagentDefault}

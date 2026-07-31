@@ -43,6 +43,7 @@ Claude Code等コーディングエージェント向けステータスライン
 - UIはTUI的操作禁止（ドロップダウン追加・移動ボタン等は不可）。パレット + dnd-kit DnD + プレビュー直接操作のみ。選択状態でチップ幅が変わる装飾は禁止
 - dnd-kitの `onDragOver` 中にドキュメント構造を変更すると React #185 無限ループを起こす。`apps/configurator/src/useDragEditing.ts` 参照。ドラッグ中は不変にし、drop時のみ変更すること
 - i18n: 説明・ヘルプのみ日英翻訳（カタログの `descriptions` は `{en, ja}`）。Widget名・ボタンラベルは英語のまま
+- **条件付き`variant`（確定・markup.md「条件付きvariant」が正）**: `<variant when="...">` は**候補ゲート**で、幅first-fitより**前**に評価する。順序を入れ替えないこと（幅fallbackの「最後のvariant」も候補内の最後を指す）。`when`省略＝無条件。`variant`は自fieldを持たないので`self`はvalidation error。候補ゼロならその`responsive`は行を一切出さず、`render.docEval.selectedVariantIndex` は **-1** を返す（`/api/dsl/preview` の `selectedVariants` も -1。設定UIは「候補なし」注記を出す）。用途の中心はMax/Teamの出し分けで、そのための**文字列メトリック**として `account-type`（`claude_max`/`claude_team`）/`account-plan`/`account-seat`/`account-role`/`account-org`/`account-email` を`dsl.MetricDef{Text:true}`で公開済み（同名fieldと同じ`render.Options.Profile`から遅延解決。未設定・ログアウト時は**未解決**＝当該`when`は偽。比較は`eq`/`ne`のみ）。UIはvariantカード上の`when`入力（variantはチップとして選択できないためPropertiesPanelには出さない）
 - **subagent統合（`plans/subagent-region-dsl.md`で確定・覆さない）**: `subagentStatusLine`（1タスク=1行のサブエージェントパネル）用に`claude-code-subagent`という独立tool/独立ドキュメントは持たない。`claude-code`ドキュメント内の`<subagent>`要素（幅選択コンテナ＝`layout`/`variant`の子、コンテナごとに最大1つ、単一`<line>`、`Category:"subagent"`のtask-*フィールド専用スコープ）に統合済み。設定UIも別タブではなく、メインエディタ内の各コンテナにSubagent領域を表示する
 
 ## 主要契約（フロント・バック境界。破壊的変更時は両側を同一変更内で更新）

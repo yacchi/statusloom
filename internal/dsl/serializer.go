@@ -287,12 +287,16 @@ func serializeResponsive(b *strings.Builder, depth int, n *ResponsiveNode) {
 	b.WriteString("</responsive>\n")
 }
 
-// serializeVariant emits a <variant>: its <line> children and any interleaved
-// comments, in source-position order.
+// serializeVariant emits a <variant>: its optional `when` candidacy gate, its
+// <line> children, and any interleaved comments, in source-position order.
 func serializeVariant(b *strings.Builder, depth int, n *VariantNode) {
 	ind := indentStr(depth)
 	b.WriteString(ind)
-	b.WriteString("<variant>\n")
+	b.WriteString("<variant")
+	if n.When != "" {
+		writeAttr(b, "when", n.When)
+	}
+	b.WriteString(">\n")
 
 	var items []serItem
 	for _, l := range n.Lines {

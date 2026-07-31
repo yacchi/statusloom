@@ -176,11 +176,13 @@ git情報収集の設定。rootの直下に0または1個だけ置ける。省�
 
 選択ルール:
 
+* `variant`は`when`（後述「条件付きvariant」）を満たすものだけが**候補**になる。以下の幅ルールは候補に絞ったあとに適用する
 * レンダラは各`variant`の全`line`の自然幅（natural width）を実測し、**全`line`が端末幅（`COLUMNS`）に収まる最初の`variant`**を採用する
 * `variant`が収まる ⟺ その`variant`の**全`line`が収まる**。`line`が収まる ⟺ その`line`の自然幅 ≤ 端末幅
 * 自然幅 = gate（`optional`/`when`）とseparator折りたたみ適用後の、可視なcontent/separatorの表示幅の合算。**`flex`は幅0として扱う**（`flex`は残余を埋めるだけなので、固定部が幅内なら必ず満たせる）
-* どの`variant`も収まらない場合は**最後の`variant`**（＝最も詰めたfallback）を採用する
-* 端末幅が不明（`COLUMNS`未設定など）の場合は**先頭`variant`**（最も広い候補）を採用する（width-unbounded時と一貫）
+* どの`variant`も収まらない場合は**最後の候補**（＝最も詰めたfallback。`when`で候補外になった`variant`は選ばれない）を採用する
+* 端末幅が不明（`COLUMNS`未設定など）の場合は**先頭の候補**（最も広い候補）を採用する（width-unbounded時と一貫）
+* 候補が1つも無い場合（すべての`variant`が`when`で外れた場合）、その`responsive`は**行を一切出力しない**（内容が全て非表示の`line`と同じ扱い）
 
 配置・入れ子ルール:
 
@@ -188,10 +190,34 @@ git情報収集の設定。rootの直下に0または1個だけ置ける。省�
 * `responsive`の子は`variant`のみ（1個以上必須。0個はvalidation error）
 * `variant`の子は`line`のみ（1個以上必須。0個はvalidation error）
 * `responsive`の入れ子は禁止（`variant`内や`responsive`直下に`responsive`を置くとvalidation error）
-* `responsive`/`variant`は装飾属性を持たない
+* `responsive`/`variant`は装飾属性を持たない（`variant`の唯一の属性は後述の`when`）
 * activeなlayoutは常にちょうど1つ、というルールは不変（`responsive`はその内側）
 
 compactとの関係: `compact-threshold`によるcompact変換は`responsive`と当面併存する（compactは全体の閾値、`responsive`はコンテナ単位の表現切替）。自然幅の計測はその時点のcompact状態で行う。
+
+#### 条件付き`variant`（`when`）
+
+`variant`は`when`属性を1つだけ持てる。式の文法は通常の`when`（「条件表示」節）と同じで、**候補になるかどうか**を決めるゲートとして幅first-fitより前に評価される。用途は幅以外の軸での出し分け——特にアカウント種別（個人Max / Team）による切り替え。
+
+```xml
+<responsive>
+  <variant when="account-type eq &quot;claude_team&quot;">   <!-- Teamシートのときだけ候補 -->
+    <line>
+      <field name="account-seat"/>
+      <text role="separator" padding="1">|</text>
+      <field name="context-percentage"/>
+    </line>
+  </variant>
+  <variant>                                                 <!-- 条件なし = 常に候補 -->
+    <line><field name="five-hour-usage" prefix="5h: "/></line>
+  </variant>
+</responsive>
+```
+
+* `when`省略 = 無条件（常に候補）
+* `variant`は自身のfieldを持たないため`self`は参照できない（`line`/`span`と同じ扱いでvalidation error）
+* メトリックが解決できない場合（例: `.claude.json`が読めずアカウント情報が無い）は式が偽と同じ扱いになり、その`variant`は候補外になる。**無条件の`variant`を最後に1つ置いておく**のが安全
+* アカウント種別で分けるには文字列メトリック `account-type`（`claude_max` / `claude_team`）を使う。ほかに `account-plan` / `account-seat` / `account-role` / `account-org` / `account-email` も文字列メトリックとして使える（付録のメトリクス一覧を参照）。文字列メトリックは`eq` / `ne`のみ（順序比較は型エラー）
 
 ### `subagent`
 
@@ -1400,5 +1426,6 @@ Model: Opus-4.8 | Context: 42%
 `when` / `color-rule`で参照したいが、現行メトリクス一覧に存在しないもの。実装時に新設を検討する。
 
 * `git-dirty`（boolean） — 作業ツリーに変更があるか。本書の`<text when="git-dirty eq true">●</text>`例で使用。現行の`git.dirty`のようなドット記法は廃止し、kebab-caseの名前付きメトリクスとして新設する
+* アカウントidentityメトリクス（**文字列**。実装済み） — `account-type`（`claude_max` / `claude_team`）/ `account-plan` / `account-seat` / `account-role` / `account-org` / `account-email`。同名のfieldと同じ`.claude.json`の`oauthAccount`から遅延解決する。ログアウト時・キーが無いとき（個人アカウントの`account-seat`など）は**未解決**になり、それを参照する`when`は偽になる（空文字列とは一致しない）。比較は`eq` / `ne`のみ（順序比較は型エラー）。主用途は条件付き`variant`によるMax/Teamの出し分け
 
 （新設メトリクスもfieldレジストリと同じ単一の情報源で定義し、when/color-ruleのvalidationが参照できるようにする。）

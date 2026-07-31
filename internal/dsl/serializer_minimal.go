@@ -381,7 +381,11 @@ func emitMinimalVariant(b *strings.Builder, depth int, n *VariantNode, src strin
 	}
 	ind := indentStr(depth)
 	b.WriteString(ind)
-	b.WriteString("<variant>\n")
+	b.WriteString("<variant")
+	if n.When != "" {
+		writeAttr(b, "when", n.When)
+	}
+	b.WriteString(">\n")
 
 	var items []serItem
 	for _, l := range n.Lines {

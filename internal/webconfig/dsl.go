@@ -730,6 +730,11 @@ type dslMetricEntry struct {
 	// Percent marks a 0..100-scale percentage metric (dsl.MetricDef.Percent);
 	// omitted (false) for non-percent metrics.
 	Percent bool `json:"percent,omitempty"`
+	// Text marks a string-valued metric compared with eq/ne against a quoted
+	// literal (dsl.MetricDef.Text); Values lists its known values when it is a
+	// closed enumeration. Both are omitted for the numeric metrics.
+	Text   bool     `json:"text,omitempty"`
+	Values []string `json:"values,omitempty"`
 }
 
 // handleDSLMetrics handles GET /api/dsl/metrics?tool=: the named-metric catalog
@@ -748,6 +753,8 @@ func (s *server) handleDSLMetrics(w http.ResponseWriter, r *http.Request) {
 			DisplayName:  m.DisplayName,
 			Descriptions: dslDescriptions{EN: m.Descriptions.EN, JA: m.Descriptions.JA},
 			Percent:      m.Percent,
+			Text:         m.Text,
+			Values:       m.Values,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"metrics": out})

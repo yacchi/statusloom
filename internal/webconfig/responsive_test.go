@@ -224,3 +224,81 @@ func TestPreviewDSL_AllVariantsRendersEveryVariant(t *testing.T) {
 		t.Errorf("narrow selectedVariants[L0.1] = %d, want 1: %v", narrowSelected["L0.1"], narrowSelected)
 	}
 }
+
+// A <variant>'s `when` gate must survive the parse -> serialize API round trip,
+// and a document whose every variant is gated out must report selectedVariants
+// = -1 (the "no candidate" signal the canvas renders a note for) while still
+// previewing every variant's lines under allVariants.
+func TestVariantWhen_ParseSerializeAndNoCandidatePreview(t *testing.T) {
+	t.Setenv("STATUSLOOM_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	// account-type resolves from Claude Code's .claude.json, so without this
+	// the gates below would be evaluated against the DEVELOPER's real account
+	// (on a claude_team account the first variant becomes a candidate and the
+	// "no candidate" assertion fails).
+	isolateClaudeConfig(t)
+	ts := startTestServer(t, time.Hour)
+
+	// account-type is unresolvable in the test environment (no account
+	// profile), so both gates are false and no variant is a candidate.
+	src := `<statusloom version="1" tool="claude-code">
+  <layout name="a" active="true">
+    <line><field name="model"/></line>
+    <responsive>
+      <variant when="account-type eq &quot;claude_team&quot;"><line><field name="account-seat"/></line></variant>
+      <variant when="account-type eq &quot;claude_max&quot;"><line><field name="model"/></line></variant>
+    </responsive>
+  </layout>
+</statusloom>`
+
+	// parse exposes the gate on the variant node ...
+	resp := putPOST(t, ts, "/api/dsl/parse", map[string]any{"tool": "claude-code", "source": src})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("parse status = %d, want 200", resp.StatusCode)
+	}
+	var parsed struct {
+		AST struct {
+			Layouts []struct {
+				Children []struct {
+					Kind     string `json:"kind"`
+					Variants []struct {
+						ID   string `json:"id"`
+						When string `json:"when"`
+					} `json:"variants"`
+				} `json:"children"`
+			} `json:"layouts"`
+		} `json:"ast"`
+	}
+	if err := decodeJSON(resp.Body, &parsed); err != nil {
+		t.Fatalf("decode parse: %v", err)
+	}
+	responsive := parsed.AST.Layouts[0].Children[1]
+	if responsive.Kind != "responsive" {
+		t.Fatalf("child 1 kind = %q, want responsive", responsive.Kind)
+	}
+	if got := responsive.Variants[0].When; got != `account-type eq "claude_team"` {
+		t.Errorf("variant 0 when = %q", got)
+	}
+	if got := responsive.Variants[1].When; got != `account-type eq "claude_max"` {
+		t.Errorf("variant 1 when = %q", got)
+	}
+
+	// ... and the preview reports "no candidate" for the whole container.
+	pv := putPOST(t, ts, "/api/dsl/preview", map[string]any{
+		"tool": "claude-code", "source": src, "width": 200, "sample": "full",
+		"allVariants": true,
+	})
+	defer pv.Body.Close()
+	if pv.StatusCode != http.StatusOK {
+		t.Fatalf("preview status = %d, want 200", pv.StatusCode)
+	}
+	var preview struct {
+		SelectedVariants map[string]int `json:"selectedVariants"`
+	}
+	if err := decodeJSON(pv.Body, &preview); err != nil {
+		t.Fatalf("decode preview: %v", err)
+	}
+	if got, ok := preview.SelectedVariants["L0.1"]; !ok || got != -1 {
+		t.Errorf("selectedVariants[L0.1] = %d (present=%v), want -1", got, ok)
+	}
+}

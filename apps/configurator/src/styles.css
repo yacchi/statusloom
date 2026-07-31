@@ -928,6 +928,30 @@ input[type="number"] {
     color: var(--danger);
 }
 
+/* The variant's `when` candidacy gate, on its own row under the card header.
+   Full-width input so a real expression is readable without truncation. */
+.variant-when {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 2px 0 4px;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.variant-when-label {
+    flex: none;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.variant-when input {
+    flex: 1;
+    min-width: 0;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+}
+
 /* Contains a variant's own residual overflow (an allVariants preview renders
    every variant at the simulated width, so a wide non-selected variant's
    chips can overflow its card) without letting it blow out the canvas's

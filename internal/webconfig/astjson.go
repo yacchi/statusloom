@@ -287,10 +287,13 @@ func (b *astBuilder) responsive(r *dsl.ResponsiveNode, id string) map[string]any
 	return m
 }
 
-// variant emits a <variant> node: kind "variant" with a "lines" array (and
-// optional interleaved "comments").
+// variant emits a <variant> node: kind "variant" with a "lines" array, its
+// optional `when` candidacy gate, and optional interleaved "comments".
 func (b *astBuilder) variant(vr *dsl.VariantNode, id string) map[string]any {
 	m := map[string]any{"id": id, "kind": "variant", "range": rangeJSON(vr.Meta.SourceRange)}
+	if vr.When != "" {
+		m["when"] = vr.When
+	}
 	lines := make([]any, 0, len(vr.Lines))
 	for j, ln := range vr.Lines {
 		lines = append(lines, b.line(ln, fmt.Sprintf("%s.%d", id, j)))
@@ -631,7 +634,9 @@ func jsonToResponsive(j astNodeJSON) *dsl.ResponsiveNode {
 }
 
 func jsonToVariant(j astNodeJSON) *dsl.VariantNode {
-	vr := &dsl.VariantNode{Meta: metaJSON(j)}
+	// `when` is the variant's only attribute (its candidacy gate); it shares
+	// the astNodeJSON "when" field with the drawable nodes' condition.
+	vr := &dsl.VariantNode{Meta: metaJSON(j), When: j.When}
 	for _, linej := range j.Lines {
 		vr.Lines = append(vr.Lines, jsonToLine(linej))
 	}

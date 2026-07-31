@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/yacchi/statusloom/internal/dsl"
+	"github.com/yacchi/statusloom/internal/schema"
 )
 
 // respFitDoc has one <responsive> with three single-line variants of natural
@@ -178,5 +179,99 @@ func TestRenderDocumentPreview_AllVariantsWithSelection(t *testing.T) {
 	renderWant := renderDocStr(t, src, fullSnapshot(), opts)
 	if renderWant != want[idx] {
 		t.Fatalf("sanity: RenderDocument picked %q, preview map points at %q", renderWant, want[idx])
+	}
+}
+
+// respWhenDoc gates its two wide variants on the account type; the last
+// variant is unconditional, so there is always at least one candidate.
+const respWhenDoc = `<statusloom version="1" tool="claude-code" color-level="none">
+  <layout name="a" active="true">
+    <responsive>
+      <variant when="account-type eq &#34;claude_team&#34;"><line><text>TEAM</text></line></variant>
+      <variant when="account-type eq &#34;claude_max&#34;"><line><text>MAX</text></line></variant>
+      <variant><line><text>ANY</text></line></variant>
+    </responsive>
+  </layout>
+</statusloom>`
+
+func accountOpts(width int, accountType string) Options {
+	opts := Options{Width: width, Now: fixedNow}
+	if accountType != "" {
+		opts.Profile = func() *schema.AccountProfile {
+			return &schema.AccountProfile{Type: accountType}
+		}
+	}
+	return opts
+}
+
+// A variant's `when` decides CANDIDACY: only the variants whose condition
+// holds take part in the width first-fit, and an unresolvable metric (no
+// account profile at all) gates the variant out rather than matching.
+func TestRenderResponsive_WhenGatesCandidacy(t *testing.T) {
+	cases := []struct {
+		name        string
+		accountType string
+		want        string
+	}{
+		{"team account picks the team variant", "claude_team", "TEAM"},
+		{"max account skips team and picks max", "claude_max", "MAX"},
+		{"unknown account value falls through to the unconditional variant", "claude_other", "ANY"},
+		{"no profile at all falls through to the unconditional variant", "", "ANY"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := renderDocStr(t, respWhenDoc, fullSnapshot(), accountOpts(80, tc.accountType))
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The width fallback ("no candidate fits -> the last one") must pick the last
+// ELIGIBLE variant, never a gated-out one.
+func TestRenderResponsive_WhenGatedVariantNeverUsedAsWidthFallback(t *testing.T) {
+	src := `<statusloom version="1" tool="claude-code" color-level="none">
+  <layout name="a" active="true">
+    <responsive>
+      <variant><line><text>AAAAAAAAAAAAAAA</text></line></variant>
+      <variant when="account-type eq &#34;claude_team&#34;"><line><text>TTTTTTTTTT</text></line></variant>
+    </responsive>
+  </layout>
+</statusloom>`
+	// Width 5: neither variant fits. On a max account the team variant is not a
+	// candidate, so the fallback is variant 0.
+	if got := renderDocStr(t, src, fullSnapshot(), accountOpts(5, "claude_max")); got != "AAAAAAAAAAAAAAA" {
+		t.Errorf("max account: got %q, want the unconditional variant", got)
+	}
+	// On a team account it is a candidate, and being last it becomes the
+	// fallback.
+	if got := renderDocStr(t, src, fullSnapshot(), accountOpts(5, "claude_team")); got != "TTTTTTTTTT" {
+		t.Errorf("team account: got %q, want the gated variant", got)
+	}
+}
+
+// Every variant gated out: the <responsive> contributes no lines at all, so
+// the document falls back exactly as it would with no visible content.
+func TestRenderResponsive_AllVariantsGatedOut(t *testing.T) {
+	src := `<statusloom version="1" tool="claude-code" color-level="none">
+  <layout name="a" active="true">
+    <responsive>
+      <variant when="account-type eq &#34;claude_team&#34;"><line><text>TEAM</text></line></variant>
+    </responsive>
+  </layout>
+</statusloom>`
+	lines := RenderDocument(fullSnapshot(), parseDoc(t, src), accountOpts(80, "claude_max"))
+	if len(lines) != 0 {
+		t.Fatalf("lines = %v, want none (every variant gated out)", lines)
+	}
+}
+
+// The unknown-width path (Width <= 0) must also respect the gate: it picks the
+// first ELIGIBLE variant, not simply variant 0.
+func TestRenderResponsive_WhenGateAppliesAtUnknownWidth(t *testing.T) {
+	got := renderDocStr(t, respWhenDoc, fullSnapshot(), accountOpts(0, "claude_max"))
+	if want := "MAX"; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

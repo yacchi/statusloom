@@ -55,6 +55,10 @@ const EN = {
         "Width-adaptive container: picks the first variant (widest first) whose lines all fit the current width, or the last variant when none fit.",
     variantLabel: "Variant",
     variantSelectedBadge: "selected at this width",
+    variantWhenLabel: "Show when",
+    variantWhenPlaceholder: 'always (e.g. account-type eq "claude_team")',
+    responsiveNoCandidate:
+        "No variant is a candidate here: every one of them has a when condition that is currently false, so this block renders nothing.",
     // layout tabs
     layoutTabHint: "Click to edit this layout; double-click to rename.",
     layoutActive: "● active",
@@ -195,6 +199,10 @@ const JA: Record<MessageKey, string> = {
         "幅に応じて表示を切り替えるコンテナです。全行が収まる最初のバリアント（広い順）を採用し、どれも収まらない場合は最後のバリアントを使います。",
     variantLabel: "Variant",
     variantSelectedBadge: "この幅で選択中",
+    variantWhenLabel: "表示条件",
+    variantWhenPlaceholder: '常に候補（例: account-type eq "claude_team"）',
+    responsiveNoCandidate:
+        "候補となるvariantがありません: すべてのvariantのwhen条件が現在偽のため、このブロックは何も表示されません。",
     layoutTabHint: "クリックでこのレイアウトを編集、ダブルクリックで名前変更。",
     layoutActive: "● active",
     layoutSetActive: "○ set active",

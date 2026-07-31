@@ -50,8 +50,11 @@ A parsed document is represented as a tree of node objects. Every node has:
 A `layout` node's `children` is an ordered mix of `line` and `responsive`
 nodes (the layout's rendered rows and its width-adaptive containers). A
 `responsive` node has a `variants` array (widest first); each `variant` has a
-`lines` array. The renderer picks the first variant all of whose lines fit the
-terminal width (unknown width → first/widest variant, none fit → last variant).
+`lines` array and an optional `when` (its candidacy gate). The renderer first
+drops the variants whose `when` is false, then picks the first remaining one
+all of whose lines fit the terminal width (unknown width → first/widest
+candidate, none fit → last candidate). When EVERY variant is gated out the
+responsive renders no lines at all, and `selectedVariants` reports `-1` for it.
 By default `/api/dsl/preview` emits segments only for this width-selected
 variant's lines, matching what the real statusline renders. With
 `allVariants: true` it instead emits every variant's lines (each rendered as
@@ -82,7 +85,7 @@ per responsive in the response's `selectedVariants` map — see
 | `git` | `cache-ttl-ms`, `timeout-ms`, `include-untracked`, `collect-numstat` | — |
 | `layout` | `name`, `active` | `children[]` (ordered `line` \| `responsive`), `subagent?`, `comments[]?` |
 | `responsive` | — | `variants[]`, `comments[]?` |
-| `variant` | — | `lines[]`, `subagent?`, `comments[]?` |
+| `variant` | `when?` | `lines[]`, `subagent?`, `comments[]?` |
 | `subagent` | — | `line?` (its single `<line>`), `comments[]?` |
 | `line` | *common* | `children[]` |
 | `span` | *common* | `children[]`, `colorRules[]?` |
@@ -241,7 +244,8 @@ are returned for the editor but never block the write.
   `width` as if it were selected, and the response additionally includes
   `selectedVariants`: a map from each `<responsive>`'s AST node ID
   (`"L{i}.{p}"`) to the variant index that width would actually select
-  (e.g. `{ "L0.1": 0 }`). This is what the config editor's canvas uses so
+  (e.g. `{ "L0.1": 0 }`), or `-1` when every variant is gated out by its
+  `when` and the responsive renders nothing. This is what the config editor's canvas uses so
   every variant card shows real values with the active one marked, instead
   of falling back to placeholder text for the others; the field is present
   (possibly `{}`) whenever `allVariants` was requested, and absent otherwise.
@@ -314,7 +318,7 @@ for `"subagent-effort"` yet, so a `capability`-tagged field with no matching
 probe should be hidden unconditionally until one exists.
 
 ### `GET /api/dsl/metrics?tool=claude-code`
-→ `200 { "metrics": [ { "name", "displayName", "descriptions": {"en","ja"}, "percent" } ] }`
+→ `200 { "metrics": [ { "name", "displayName", "descriptions": {"en","ja"}, "percent", "text", "values" } ] }`
 
 The named-metric catalog for `when` / `color-rule` editing, from the DSL
 registry: the session/account metrics plus the `task-*` self-metrics backing
@@ -325,6 +329,15 @@ unbounded so a width condition never hides content. `percent` (boolean,
 optional, omitted when `false`) marks a 0..100-scale percentage metric (e.g.
 `five-hour-percent`, `context-percent`); the configurator uses it to surface
 percentage metrics as threshold-bar-driven color-rule candidates.
+
+`text` (boolean, optional, omitted when `false`) marks a STRING-valued metric —
+the `account-*` identity metrics (`account-type`, `account-plan`,
+`account-seat`, `account-role`, `account-org`, `account-email`). They compare
+with `eq` / `ne` against a quoted string literal only (an ordering operator is a
+type error), and `values` (optional) lists the known values when the metric is a
+closed enumeration (`account-type`: `claude_max` / `claude_team`); a value
+outside that list is still valid, since the strings come from Claude Code. Their
+main use is a conditional `<variant when="account-type eq &quot;claude_team&quot;">`.
 
 ### `GET /api/usage/probe`
 → `200 { "available": bool, "reason": "ok" | "no-token" | "unauthorized" | "rate-limited" | "error", "extraUsageEnabled": bool }`

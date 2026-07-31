@@ -293,6 +293,7 @@ describe("canvas drop indicators (standalone)", () => {
                         onAddVariant={noop}
                         onDeleteVariant={noop}
                         onDuplicateVariant={noop}
+                        onPatchVariantWhen={noop}
                         onAddSubagent={noop}
                         onDeleteSubagent={noop}
                         onFillSubagentDefault={noop}
@@ -397,6 +398,31 @@ describe("canvas responsive / variant editing", () => {
         fireEvent.click(screen.getByTestId("variant-delete-L0.1.v2"));
         await waitFor(() => expect(screen.queryByTestId("variant-L0.1.v2")).toBeNull(), {
             timeout: 3000,
+        });
+    });
+
+    it("edits a variant's when gate and clears it again, round-tripping through serialize", async () => {
+        server = installFakeDslServer(responsiveTestDoc());
+        await renderApp();
+        const box = (await waitFor(() => screen.getByTestId("variant-when-L0.1.v0"), {
+            timeout: 3000,
+        })) as HTMLInputElement;
+        // An unconditional variant starts empty (no `when` attribute at all).
+        expect(box.value).toBe("");
+
+        fireEvent.change(box, { target: { value: 'account-type eq "claude_team"' } });
+        await waitFor(() => {
+            const last = server.putDraftBodies[server.putDraftBodies.length - 1] ?? "";
+            expect(JSON.parse(last).layouts[0].children[1].variants[0].when).toBe(
+                'account-type eq "claude_team"',
+            );
+        });
+
+        // Emptying the box clears the attribute rather than storing "".
+        fireEvent.change(screen.getByTestId("variant-when-L0.1.v0"), { target: { value: "" } });
+        await waitFor(() => {
+            const last = server.putDraftBodies[server.putDraftBodies.length - 1] ?? "";
+            expect(JSON.parse(last).layouts[0].children[1].variants[0].when).toBeUndefined();
         });
     });
 

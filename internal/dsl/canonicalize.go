@@ -43,11 +43,19 @@ func normalizeStatusloomWhen(n *StatusloomNode) {
 				normalizeLineWhen(c)
 			case *ResponsiveNode:
 				for _, vr := range c.Variants {
+					// The variant's own candidacy gate, then its lines.
+					vr.When = normalizeWhen(vr.When)
 					for _, ln := range vr.Lines {
 						normalizeLineWhen(ln)
 					}
+					if vr.Subagent != nil && vr.Subagent.Line != nil {
+						normalizeLineWhen(vr.Subagent.Line)
+					}
 				}
 			}
+		}
+		if l.Subagent != nil && l.Subagent.Line != nil {
+			normalizeLineWhen(l.Subagent.Line)
 		}
 	}
 }

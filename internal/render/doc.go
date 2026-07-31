@@ -105,30 +105,57 @@ func RenderDocumentPreview(snap schema.StatusSnapshot, doc *dsl.Document, opts O
 // A variant with no lines cannot occur after validation; an empty container
 // yields no lines.
 func (e *docEval) selectVariant(r *dsl.ResponsiveNode) []*dsl.LineNode {
-	if len(r.Variants) == 0 {
+	i := e.selectedVariantIndex(r)
+	if i < 0 {
 		return nil
 	}
-	return r.Variants[e.selectedVariantIndex(r)].Lines
+	return r.Variants[i].Lines
 }
 
-// selectedVariantIndex computes the index selectVariant would choose,
-// without indexing r.Variants itself — this is the shared decision both
-// RenderDocument (selectVariant) and RenderDocumentPreview (which needs the
-// index even though it renders every variant's lines) rely on. Callers with
-// an empty r.Variants must guard themselves; this returns 0 in that case.
+// variantEligible reports whether a variant is a CANDIDATE at all: its `when`
+// gate (markup.md "responsive") is evaluated before any width fitting, so a
+// variant gated on e.g. account-type is simply not considered on another
+// account. An unconditional variant is always eligible; an expression that
+// fails to evaluate (an unresolvable metric — no account profile, say) makes
+// the variant ineligible, the same "no data -> hidden" rule a node's `when`
+// follows.
+func (e *docEval) variantEligible(vr *dsl.VariantNode) bool {
+	if vr.When == "" {
+		return true
+	}
+	return e.condTrue(vr.When, "")
+}
+
+// selectedVariantIndex computes the index selectVariant would choose —
+// the shared decision both RenderDocument (selectVariant) and
+// RenderDocumentPreview (which needs the index even though it renders every
+// variant's lines) rely on.
+//
+// It returns -1 for "no variant at all": either the container has none, or
+// every one of them is gated out by its `when`. The <responsive> then
+// contributes no lines, exactly like a line whose content is all hidden.
+//
+// Ordering: `when` gating comes first (it decides candidacy), then the width
+// first-fit runs over the candidates only, so the "no candidate fits -> use
+// the last (most compact) one" fallback also picks the last ELIGIBLE variant,
+// never a gated-out one.
 func (e *docEval) selectedVariantIndex(r *dsl.ResponsiveNode) int {
-	if len(r.Variants) == 0 {
-		return 0
-	}
-	if e.opts.Width <= 0 {
-		return 0
-	}
+	last := -1
 	for i, vr := range r.Variants {
+		if !e.variantEligible(vr) {
+			continue
+		}
+		if e.opts.Width <= 0 {
+			// Unknown width: the first (widest) candidate, consistent with
+			// width-unbounded rendering.
+			return i
+		}
 		if e.variantFits(vr) {
 			return i
 		}
+		last = i
 	}
-	return len(r.Variants) - 1
+	return last
 }
 
 // variantFits reports whether every line of a variant fits the terminal width,
@@ -645,17 +672,23 @@ func (e *docEval) gate(c dsl.CommonAttributes, self string) bool {
 	if c.Optional != "" && !e.fieldExists(c.Optional) {
 		return false
 	}
-	if c.When != "" {
-		expr, err := dsl.ParseCondition(c.When)
-		if err != nil {
-			return false
-		}
-		ok, err := expr.Eval(docResolver{snap: e.snap, cfg: e.cfg, opts: e.opts, self: self})
-		if err != nil || !ok {
-			return false
-		}
+	if c.When != "" && !e.condTrue(c.When, self) {
+		return false
 	}
 	return true
+}
+
+// condTrue parses and evaluates a when expression, answering false on a parse
+// error, an eval error, or an unresolvable metric — the "no data -> hidden"
+// rule of markup.md "条件表示". self is the owning field's self metric ("" where
+// `self` cannot resolve: span/text/line, and a <variant>'s candidacy gate).
+func (e *docEval) condTrue(expr string, self string) bool {
+	parsed, err := dsl.ParseCondition(expr)
+	if err != nil {
+		return false
+	}
+	ok, err := parsed.Eval(docResolver{snap: e.snap, cfg: e.cfg, opts: e.opts, self: self})
+	return err == nil && ok
 }
 
 // fieldExists reports whether the field an `optional` attribute names

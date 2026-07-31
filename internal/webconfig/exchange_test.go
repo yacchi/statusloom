@@ -153,6 +153,10 @@ func TestExchange_Export_ReturnsCurrentAsMarkdown(t *testing.T) {
 }
 
 func TestExchange_Export_NoCurrentIs404(t *testing.T) {
+	// STATUSLOOM_CONFIG must point at an empty temp store: without it the
+	// server reads the developer's REAL config, which has a current revision,
+	// and the "no current" case never happens.
+	t.Setenv("STATUSLOOM_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 	ts := startTestServer(t, time.Hour)
 
@@ -164,6 +168,7 @@ func TestExchange_Export_NoCurrentIs404(t *testing.T) {
 }
 
 func TestExchange_Export_UnknownToolIs400(t *testing.T) {
+	t.Setenv("STATUSLOOM_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 	ts := startTestServer(t, time.Hour)
 

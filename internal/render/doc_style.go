@@ -140,6 +140,16 @@ func (r docResolver) ResolveMetric(name string) (dsl.Value, bool) {
 		}
 		name = r.self
 	}
+	// Account identity metrics are STRINGS, resolved from the same lazily read
+	// profile as the account-* fields. An absent profile or an empty key stays
+	// unresolved (not an empty string), so a when-expression on it fails and
+	// the guarded content is hidden instead of matching "".
+	if strings.HasPrefix(name, "account-") {
+		if s := accountProfileWidget(name, r.opts); s != "" {
+			return dsl.Value{Kind: dsl.ValueString, Str: s}, true
+		}
+		return dsl.Value{}, false
+	}
 	if name == "git-dirty" || name == "git-clean" || name == "thinking-enabled" || name == "exceeds-200k" {
 		if name == "thinking-enabled" {
 			if r.snap.Session.ThinkingEnabled == nil {

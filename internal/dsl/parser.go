@@ -315,6 +315,10 @@ func (p *parser) parseVariant(se xml.StartElement, start int) *VariantNode {
 	tagRange := SourceRange{Start: start, End: openEnd}
 	n := &VariantNode{}
 	for _, a := range se.Attr {
+		if a.Name.Local == "when" {
+			n.When = a.Value
+			continue
+		}
 		p.errf(tagRange, "unknown attribute %q on <variant>", a.Name.Local)
 	}
 	for {

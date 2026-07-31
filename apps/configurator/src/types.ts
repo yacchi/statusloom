@@ -152,9 +152,14 @@ export interface SubagentNode extends AstBase {
 export type LayoutChild = LineNode | ResponsiveNode;
 
 // <variant> — one rendering candidate inside a <responsive>. Never appears
-// outside a ResponsiveNode's `variants`; carries no attributes of its own.
+// outside a ResponsiveNode's `variants`; `when` is its only attribute.
 export interface VariantNode extends AstBase {
     kind: "variant";
+    // Candidacy gate (markup.md "条件付きvariant"): evaluated BEFORE the width
+    // first-fit, so a variant whose condition is false is no candidate at any
+    // width. Absent/empty = unconditional. A <variant> has no field of its own,
+    // so `self` cannot appear in it.
+    when?: string;
     lines: LineNode[];
     // Optional <subagent> region rendered below this variant's lines.
     subagent?: SubagentNode;
@@ -162,9 +167,10 @@ export interface VariantNode extends AstBase {
 }
 
 // <responsive> — a layout-child-only, width-adaptive container: the renderer
-// picks the first variant (widest first) all of whose lines fit the terminal
-// width, falling back to the last variant when none fit (unknown width ->
-// the first/widest variant). Carries no attributes of its own.
+// drops the variants gated out by their `when`, then picks the first remaining
+// one (widest first) all of whose lines fit the terminal width, falling back to
+// the last candidate when none fit (unknown width -> the first/widest
+// candidate). Carries no attributes of its own.
 export interface ResponsiveNode extends AstBase {
     kind: "responsive";
     variants: VariantNode[];
@@ -370,6 +376,13 @@ export interface Metric {
     // True for a 0..100 percent-typed metric (e.g. seven-day-percent). Used to
     // filter the color-rule threshold bar's source-metric selector.
     percent?: boolean;
+    // True for a STRING-valued metric (the account-* identity metrics): it
+    // compares with eq/ne against a quoted literal, never with lt/gt.
+    text?: boolean;
+    // Known values of a `text` metric that is a closed enumeration
+    // (account-type: claude_max / claude_team). Offered as suggestions; a value
+    // outside the list is still valid.
+    values?: string[];
 }
 
 // GET /api/tools entry: one document (tool) the configurator can edit. The

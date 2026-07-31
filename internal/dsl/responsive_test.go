@@ -201,3 +201,98 @@ func TestCanonicalizeResponsive_NormalizesVariantWhen(t *testing.T) {
 		t.Errorf("variant-line when not normalized to word form:\n%s", out)
 	}
 }
+
+// A <variant>'s own `when` (its candidacy gate) must survive parse, validate,
+// and a full round trip, and must be normalized to word form by Canonicalize
+// exactly like a node's when.
+func TestVariantWhen_ParseValidateRoundTrip(t *testing.T) {
+	src := `<statusloom version="1" tool="claude-code">
+  <layout name="a" active="true">
+    <responsive>
+      <variant when="account-type eq &#34;claude_team&#34;">
+        <line>
+          <field name="account-seat"/>
+        </line>
+      </variant>
+      <variant>
+        <line>
+          <field name="model"/>
+        </line>
+      </variant>
+    </responsive>
+  </layout>
+</statusloom>
+`
+	doc := parseClean(t, src)
+	r := doc.Root.Layouts[0].Children[0].(*ResponsiveNode)
+	if got := r.Variants[0].When; got != `account-type eq "claude_team"` {
+		t.Errorf("variant[0].When = %q", got)
+	}
+	if got := r.Variants[1].When; got != "" {
+		t.Errorf("variant[1].When = %q, want empty (unconditional)", got)
+	}
+	if diags := Validate(doc); HasErrors(diags) {
+		t.Errorf("unexpected validation errors: %v", diags)
+	}
+	out := Serialize(doc)
+	if !strings.Contains(out, `<variant when="account-type eq &quot;claude_team&quot;">`) {
+		t.Errorf("serialized output lost the variant when:\n%s", out)
+	}
+	// Re-parsing the serialized form yields the same gate (idempotent).
+	again := parseClean(t, out)
+	r2 := again.Root.Layouts[0].Children[0].(*ResponsiveNode)
+	if r2.Variants[0].When != r.Variants[0].When {
+		t.Errorf("round trip changed the gate: %q -> %q", r.Variants[0].When, r2.Variants[0].When)
+	}
+}
+
+func TestVariantWhen_CanonicalizeNormalizesToWordForm(t *testing.T) {
+	src := `<statusloom version="1" tool="claude-code"><layout name="a" active="true"><responsive><variant when="width &gt;= 80"><line><field name="model"/></line></variant></responsive></layout></statusloom>`
+	out := Canonicalize(parseClean(t, src))
+	if !strings.Contains(out, `<variant when="width ge 80">`) {
+		t.Errorf("variant when not normalized to word form:\n%s", out)
+	}
+}
+
+// A <variant> has no field of its own, so `self` cannot resolve in its gate,
+// and an unknown metric / a syntax error are errors just as elsewhere.
+func TestVariantWhen_InvalidExpressions(t *testing.T) {
+	cases := []struct {
+		name string
+		when string
+		want string
+	}{
+		{"self is unavailable", "self ge 80", "self is not available here"},
+		{"unknown metric", "no-such-metric eq 1", `unknown metric "no-such-metric"`},
+		{"syntax error", "account-type eq", "invalid when expression"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `<statusloom version="1" tool="claude-code"><layout name="a" active="true"><responsive><variant when="` + tc.when + `"><line><field name="model"/></line></variant></responsive></layout></statusloom>`
+			doc, diags := Parse(src)
+			if HasErrors(diags) {
+				t.Fatalf("parse errors: %v", diags)
+			}
+			diags = Validate(doc)
+			if !HasErrors(diags) {
+				t.Fatalf("expected a validation error for when=%q", tc.when)
+			}
+			var joined strings.Builder
+			for _, d := range diags {
+				joined.WriteString(d.Message)
+				joined.WriteString("\n")
+			}
+			if !strings.Contains(joined.String(), tc.want) {
+				t.Errorf("diagnostics %q do not mention %q", joined.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestVariantWhen_UnknownAttributeStillRejected(t *testing.T) {
+	src := `<statusloom version="1" tool="claude-code"><layout name="a" active="true"><responsive><variant nope="1"><line><field name="model"/></line></variant></responsive></layout></statusloom>`
+	_, diags := Parse(src)
+	if !HasErrors(diags) {
+		t.Fatal("expected an unknown-attribute error on <variant>")
+	}
+}

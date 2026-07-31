@@ -140,6 +140,12 @@ func (v *validator) validateResponsive(r *ResponsiveNode) {
 		if len(vr.Lines) == 0 {
 			v.errf(vr.Meta.SourceRange, "<variant> requires at least one <line>")
 		}
+		if vr.When != "" {
+			// A <variant> is a container with no field of its own, so it has
+			// no self metric: passing "" makes a `self` reference an error,
+			// exactly as on a <line> or <span>.
+			v.validateCondition(vr.When, vr.Meta.SourceRange, "")
+		}
 		for _, ln := range vr.Lines {
 			v.validateLineNode(ln, false)
 		}

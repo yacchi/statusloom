@@ -202,6 +202,23 @@ describe("api.getFields / api.getMetrics", () => {
         expect(await api.getFields("claude-code")).toEqual(fields);
     });
 
+    it("passes through requiresVar for var-taking fields", async () => {
+        const fields = [
+            {
+                name: "env",
+                displayName: "Environment Variable",
+                descriptions: { en: "e", ja: "j" },
+                category: "common",
+                requiresVar: true,
+                preview: { text: "", ansi: "" },
+            },
+        ];
+        vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ fields })));
+        const api = createApi(TOKEN);
+        const got = await api.getFields("claude-code");
+        expect(got[0]?.requiresVar).toBe(true);
+    });
+
     it("unwraps the metrics array (empty default)", async () => {
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             expect(String(input)).toBe("/api/dsl/metrics?tool=claude-code");

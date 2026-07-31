@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/yacchi/statusloom/internal/config"
+	"github.com/yacchi/statusloom/internal/dsl"
 	"github.com/yacchi/statusloom/internal/schema"
 )
 
@@ -206,6 +207,15 @@ func renderContent(spec config.WidgetSpec, snap schema.StatusSnapshot, cfg confi
 	case "weekly-reset-sonnet":
 		return resetWidget(snap.Account.SevenDaySonnet, opts.Now)
 
+	// Account identity. Account.Profile is populated lazily via
+	// Options.Profile so a document without these fields never reads
+	// .claude.json; a nil profile (no file, logged out) renders empty.
+	case "account-email", "account-name", "account-org", "account-role", "account-plan", "account-seat":
+		return accountProfileWidget(spec.Type, opts)
+
+	case "env":
+		return envWidget(spec, opts)
+
 	case "session-name":
 		if sess.Name == nil || *sess.Name == "" {
 			return ""
@@ -403,6 +413,56 @@ func cacheHitRate(ctx *schema.ContextUsage) (float64, bool) {
 		return 0, false
 	}
 	return float64(c.CacheRead) / float64(denom) * 100, true
+}
+
+// accountProfileWidget renders one account-* field from the lazily resolved
+// account profile. An unavailable profile (no .claude.json, no account block)
+// and an absent key (a personal account has no organization) both render
+// empty, so the field disappears via optional/separator collapsing rather
+// than printing a placeholder.
+func accountProfileWidget(field string, opts Options) string {
+	p := opts.profile()
+	if p == nil {
+		return ""
+	}
+	switch field {
+	case "account-email":
+		return p.Email
+	case "account-name":
+		return p.DisplayName
+	case "account-org":
+		return p.Organization
+	case "account-role":
+		return p.Role
+	case "account-plan":
+		return p.Plan
+	case "account-seat":
+		return p.Seat
+	}
+	return ""
+}
+
+// envWidget renders the `env` field: the value of the environment variable
+// named by spec.Var. An empty var name (the state a freshly dropped palette
+// item is in) and an unset variable both render empty.
+//
+// A variable whose NAME looks like a credential renders as dsl.SecretMask
+// instead of its value, because a status line ends up in screenshots and
+// screen shares and Room presets come from strangers. spec.Unmask is the
+// author's explicit opt-out. Masking is driven by the name alone - never by
+// inspecting the value - so it is stable regardless of what is stored.
+func envWidget(spec config.WidgetSpec, opts Options) string {
+	if spec.Var == "" {
+		return ""
+	}
+	v := opts.env(spec.Var)
+	if v == "" {
+		return ""
+	}
+	if !spec.Unmask && dsl.IsSecretEnvName(spec.Var) {
+		return dsl.SecretMask
+	}
+	return v
 }
 
 // usageWidget renders a rate-window usage percentage as a bare value,

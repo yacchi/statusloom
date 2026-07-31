@@ -1,5 +1,7 @@
 package dsl
 
+import "strings"
+
 // This file is the single-source-of-truth field/metric catalog for the
 // DSL, per markup.md "fieldカタログ": DSL validation, the Web UI catalog
 // endpoints (GET /api/dsl/fields, GET /api/dsl/metrics), and the renderer's
@@ -40,6 +42,11 @@ type FieldDef struct {
 	// Category groups fields in the UI: "common" (tool-agnostic) or
 	// "claude" (claude-code specific).
 	Category string
+	// RequiresVar marks a field parameterized by the `var` attribute (only
+	// "env" is, today): validation requires var on it and rejects var on
+	// every other field, and the configurator renders a var text input in
+	// the properties panel for it.
+	RequiresVar bool
 	// Capability, when non-empty, names a runtime capability the field
 	// depends on (e.g. "oauth-usage" fields need the authenticated usage
 	// API to be reachable). The configurator hides such fields from the
@@ -259,6 +266,52 @@ var claudeCodeFields = []FieldDef{
 		Name: "weekly-reset-sonnet", Category: "claude", Capability: "oauth-usage", SelfMetric: "seven-day-sonnet-reset-minutes", Formats: []string{"countdown"},
 		DisplayName:  "Weekly Reset (Sonnet)",
 		Descriptions: Descriptions{EN: "Countdown until the Sonnet 7-day rate limit window resets.", JA: "Sonnetの7日間レート制限がリセットされるまでの残り時間です。"},
+	},
+
+	// Account identity (markup.md "アカウントfield"). These are read from
+	// the local .claude.json Claude Code maintains, not from stdin or the
+	// network, so they answer "which account / profile am I on right now" -
+	// useful when switching between logins via CLAUDE_CONFIG_DIR. They carry
+	// no Capability: the file is either there or the field renders empty,
+	// which needs no probe. Values are raw upstream strings, so the closed
+	// enumerations (role/plan/seat) accept the pass-through "enum" format
+	// like output-style and vim-mode do.
+	{
+		Name: "account-email", Category: "claude", DisplayName: "Account Email",
+		Descriptions: Descriptions{EN: "Email address of the logged-in Claude Code account.", JA: "ログイン中のClaude Codeアカウントのメールアドレスです。"},
+	},
+	{
+		Name: "account-name", Category: "claude", DisplayName: "Account Name",
+		Descriptions: Descriptions{EN: "Display name of the logged-in Claude Code account.", JA: "ログイン中のClaude Codeアカウントの表示名です。"},
+	},
+	{
+		Name: "account-org", Category: "claude", DisplayName: "Organization",
+		Descriptions: Descriptions{EN: "Organization the logged-in account belongs to.", JA: "ログイン中のアカウントが所属する組織名です。"},
+	},
+	{
+		Name: "account-role", Category: "claude", DisplayName: "Organization Role", Formats: []string{"enum"},
+		Descriptions: Descriptions{EN: "The account's role in its organization, e.g. primary_owner.", JA: "組織内でのアカウントの役割です（例: primary_owner）。"},
+	},
+	{
+		Name: "account-plan", Category: "claude", DisplayName: "Account Plan", Formats: []string{"enum"},
+		Descriptions: Descriptions{EN: "The account's rate-limit tier, e.g. default_claude_max_5x.", JA: "アカウントのレート制限ティアです（例: default_claude_max_5x）。"},
+	},
+	{
+		Name: "account-seat", Category: "claude", DisplayName: "Seat Tier", Formats: []string{"enum"},
+		Descriptions: Descriptions{EN: "The account's seat tier, e.g. team_tier_1.", JA: "アカウントのシートティアです（例: team_tier_1）。"},
+	},
+
+	// env is the one field whose value comes from outside any snapshot: it
+	// reads the process environment statusloom was invoked with, selected by
+	// the required `var` attribute (RequiresVar). Values whose variable name
+	// looks like a credential render masked; see IsSecretEnvName and the
+	// `unmask` attribute.
+	{
+		Name: "env", Category: "common", DisplayName: "Environment Variable", RequiresVar: true,
+		Descriptions: Descriptions{
+			EN: "Value of the environment variable named by the var attribute. Credential-looking names render as *** unless unmask is set.",
+			JA: "var属性で指定した環境変数の値です。秘匿情報に見える変数名はunmaskを付けない限り***で隠されます。",
+		},
 	},
 }
 
@@ -565,6 +618,18 @@ var toolCatalogs = map[string]toolCatalog{
 		fields:  concatFields(claudeCodeFields, claudeCodeSubagentFields),
 		metrics: concatMetrics(claudeCodeMetrics, claudeCodeSubagentMetrics),
 	},
+}
+
+// ParseOptional splits an `optional` attribute value into the field name and,
+// for a var-taking field (FieldDef.RequiresVar), the variable name after the
+// first colon: "env:AWS_PROFILE" yields ("env", "AWS_PROFILE"), while
+// "five-hour-usage" yields ("five-hour-usage", ""). A trailing colon with
+// nothing after it yields an empty variable name, which validation rejects.
+func ParseOptional(value string) (field, varName string) {
+	if i := strings.IndexByte(value, ':'); i >= 0 {
+		return value[:i], value[i+1:]
+	}
+	return value, ""
 }
 
 // FieldByName looks up a field definition by tool and field name.

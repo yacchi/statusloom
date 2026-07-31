@@ -95,6 +95,10 @@ const EN = {
     helpRawValue: "Output the raw value without label or formatting (also skips compact mode).",
     helpHyperlink:
         "Wrap this field in a terminal hyperlink (OSC 8) so supporting terminals make it clickable.",
+    helpEnvVar:
+        "Name of the environment variable to display, e.g. AWS_PROFILE. The field renders empty while this is blank or the variable is unset.",
+    helpEnvUnmask:
+        "Show the value even though the variable name looks like a credential. Statusloom masks such values as *** by default because a status line appears in screenshots and screen shares.",
     helpPrefixSuffix:
         "Fixed text rendered before/after this node's content, in the node's own style. Not inherited by children.",
     helpPadding:
@@ -226,6 +230,10 @@ const JA: Record<MessageKey, string> = {
     helpRawValue: "ラベルや整形なしの生値を出力します（コンパクト表示もスキップされます）。",
     helpHyperlink:
         "このフィールドを端末ハイパーリンク（OSC 8）で囲み、対応端末でクリック可能にします。",
+    helpEnvVar:
+        "表示する環境変数の名前です（例: AWS_PROFILE）。未入力の間、および変数が未設定の場合はフィールドが空になります。",
+    helpEnvUnmask:
+        "変数名が秘匿情報に見える場合でも値を表示します。ステータスラインはスクリーンショットや画面共有に写るため、既定では *** で隠します。",
     helpPrefixSuffix:
         "このノードの内容の前後に付く固定テキストです。ノード自身のスタイルで描画され、子には継承されません。",
     helpPadding:

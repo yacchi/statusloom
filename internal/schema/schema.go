@@ -130,6 +130,28 @@ type AccountSnapshot struct {
 	Stale          bool // true when values came from shared cache, not stdin
 }
 
+// AccountProfile identifies the account Claude Code is currently logged in
+// as. It is read from the local .claude.json Claude Code maintains (see
+// internal/claudeaccount), never from the network, and is nil when that file
+// is absent or carries no account block (e.g. a fresh install, or an
+// enterprise setup that authenticates differently).
+//
+// It deliberately does NOT hang off AccountSnapshot: resolving it means
+// reading a large file, so it is resolved lazily at render time through
+// render.Options.Profile and only when an account-* field is present.
+//
+// Every field is the raw string Claude Code stored; statusloom does not
+// prettify or map these values, so a DSL author sees exactly what the
+// upstream API reported (e.g. Plan "default_claude_max_5x").
+type AccountProfile struct {
+	Email        string // oauthAccount.emailAddress
+	DisplayName  string // oauthAccount.displayName
+	Organization string // oauthAccount.organizationName
+	Role         string // oauthAccount.organizationRole, e.g. "primary_owner"
+	Plan         string // oauthAccount.userRateLimitTier, e.g. "default_claude_max_5x"
+	Seat         string // oauthAccount.seatTier, e.g. "team_tier_1"
+}
+
 // RateWindow describes usage within a rolling rate-limit window.
 type RateWindow struct {
 	UsedPercentage float64

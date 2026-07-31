@@ -37,4 +37,9 @@ type ContextConfig struct {
 type WidgetSpec struct {
 	Type     string `json:"type"`
 	RawValue bool   `json:"rawValue,omitempty"`
+	// Var parameterizes a var-taking field (Type "env"): the name of the
+	// environment variable to read.
+	Var string `json:"var,omitempty"`
+	// Unmask disables credential masking for Type "env".
+	Unmask bool `json:"unmask,omitempty"`
 }

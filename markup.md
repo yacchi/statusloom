@@ -332,6 +332,8 @@ Claude Codeの`subagentStatusLine`（実行中subagentタスクのパネル。**
 * `precision` — 小数桁など
 * `raw` — `true`でラベル・装飾を剥がした生値を出す（後述）
 * `hyperlink` — `true`でOSC 8ハイパーリンクを出力（linkableなfieldのみ）
+* `var` — 読み取る環境変数名（`name="env"`専用。後述）
+* `unmask` — `true`で`env`の秘匿マスクを解除（`name="env"`専用。後述）
 * `min-width` — フィールドの整形済み値を最低N桁までパディングする（後述）
 * `align` — `min-width`のパディング方向（後述）
 * `prefix`
@@ -369,6 +371,41 @@ fieldが存在しない、または値が空の場合、field本体は空文字�
 <field name="task-tokens" prefix=" · ↓ " format="compact-number" min-width="6" align="right"/>
 <!-- "8.2k"(4桁) -> " · ↓   8.2k" / "146.3k"(6桁) -> " · ↓ 146.3k"（桁が揃う） -->
 ```
+
+#### `env`（`var`/`unmask`属性）
+
+`name="env"`は唯一スナップショット外から値を取るfieldで、statusloomを起動したプロセスの環境変数を読む。読む変数は必須属性`var`で指定する。
+
+```xml
+<field name="env" var="AWS_PROFILE"/>
+<span prefix="k8s: " optional="env:KUBECONFIG"><field name="env" var="KUBECONFIG"/></span>
+```
+
+* `var`が未指定のfieldは**空を返すだけ**で、validationはwarning（errorではない）。設定UIでパレットからドロップした直後は`var`が空なので、errorにすると編集途中の文書が保存不能になる
+* `var`が未設定の環境変数を指す場合も空。prefix/suffixは他のfieldと同じく出るので、消したい場合は`optional="env:<変数名>"`を使う（`optional`は変数名まで含めて指定する。「`optional`」節参照）
+* `var`に`=`を含む場合はvalidation error（環境変数名として成立しない）
+
+**秘匿値のマスク**: ステータスラインはスクリーンショットや画面共有に写り、Statusloom Roomのpresetは第三者が書く。そのため**変数名**が秘匿情報に見える場合、値は`***`に置き換わる（値の中身は一切見ない）。判定は大文字小文字を無視した部分一致で、`TOKEN` / `SECRET` / `KEY` / `PASSWORD` / `PASSWD` / `CREDENTIAL` / `AUTH` / `SESSION` / `COOKIE` / `PRIVATE` / `SIGNATURE` のいずれかを含む名前が対象。
+
+判定は意図的に**fail-closed**（過剰マッチ）で、`KEYBOARD_LAYOUT`や`SSH_AUTH_SOCK`もマスクされる。マスクされた非秘匿値は見た目の問題にとどまるが、マスク漏れは資格情報の漏洩になるため。誤検知した場合は`unmask="true"`で明示的に解除する（この場合、値が平文で表示される旨のwarningが出る）。
+
+```xml
+<field name="env" var="KEYBOARD_LAYOUT" unmask="true"/>
+```
+
+`unmask`は`var`を伴わない場合validation error。`var`/`unmask`を`env`以外のfieldに付けた場合もvalidation error。
+
+#### アカウントfield
+
+`account-email` / `account-name` / `account-org` / `account-role` / `account-plan` / `account-seat` は、いま**どのアカウントでログインしているか**を表示する。値はClaude Codeがローカルに持つ`.claude.json`の`oauthAccount`から読む（stdinにもネットワークにも依存しない。`internal/claudeaccount`）。読み取り先は`$CLAUDE_CONFIG_DIR`を尊重するため、プロファイルを切り替えて複数アカウントを使い分けている場合に「いまどのプロファイルか」が分かる。
+
+```xml
+<span prefix="as " optional="account-email"><field name="account-email" color="bright-black"/></span>
+```
+
+* 値は上流APIの生文字列をそのまま出す（例: `account-plan`は`default_claude_max_5x`、`account-seat`は`team_tier_1`）
+* ファイルが無い・ログインしていない・当該キーが無い（個人アカウントには組織名が無い）場合はすべて空
+* `.claude.json`の読み取りは**遅延**で、文書がアカウントfieldを使っていない場合は一切開かない
 
 ### `flex`
 
@@ -541,6 +578,16 @@ padding、prefix、suffixは、その属性を持つノード自身の文字装�
 
 * 数値`0`
 * boolean `false`
+
+`var`を取るfield（現行は`env`のみ）を参照する場合は、`<field>`名だけでは対象が決まらないため、`<field名>:<変数名>`の形で変数名まで指定する。
+
+```xml
+<span prefix="aws: " optional="env:AWS_PROFILE">
+  <field name="env" var="AWS_PROFILE"/>
+</span>
+```
+
+`env`に変数名を付けない（`optional="env"`）、逆に`var`を取らないfieldへ変数名を付ける（`optional="model:X"`）のはいずれもvalidation error。マスクされた値は空ではないので、存在判定は`unmask`の有無に依存しない。
 
 #### `when`
 
@@ -736,9 +783,9 @@ formatterの属性は、field definitionの型に応じてsemantic validationす
 
 field名・formatter対応・selfMetric・linkableは、宣言的なfield定義レジストリとしてGo側で一元管理する。現行はrenderの`switch`ハードコードと`webconfig/catalog.go`のハンドメンテが重複しているため、これを単一レジストリへ集約する。DSLのvalidation、Web UIのカタログ提供、rendererはこの単一の情報源を参照する。
 
-### コンテンツfield（現行54種）
+### コンテンツfield（現行61種）
 
-`model`、`model-id`、`output-style`、`session-id`、`thinking-enabled`、`git-branch`、`git-changes`、`tool-version`、`current-directory`、`project-directory`、`git-root`、`thinking-effort`、`context-length`、`context-window-size`、`context-remaining`、`context-output-tokens`、`current-input-tokens`、`current-output-tokens`、`cache-creation-tokens`、`cache-read-tokens`、`exceeds-200k`、`context-percentage`、`context-percentage-usable`、`session-cost`、`five-hour-usage`、`five-hour-reset`、`weekly-usage`、`weekly-reset`、`session-name`、`agent-name`、`vim-mode`、`pr-number`、`pr-review-state`、`repo-name`、`worktree`、`session-duration`、`api-duration`、`lines-changed`、`lines-added`、`lines-removed`、`cache-hit-rate`、`git-staged`、`git-unstaged`、`git-untracked`、`git-ahead`、`git-behind`、`git-clean`、`extra-usage-cost`、`extra-usage-limit`、`extra-usage-percent`、`weekly-usage-opus`、`weekly-usage-sonnet`、`weekly-reset-opus`、`weekly-reset-sonnet`
+`model`、`model-id`、`output-style`、`session-id`、`thinking-enabled`、`git-branch`、`git-changes`、`tool-version`、`current-directory`、`project-directory`、`git-root`、`thinking-effort`、`context-length`、`context-window-size`、`context-remaining`、`context-output-tokens`、`current-input-tokens`、`current-output-tokens`、`cache-creation-tokens`、`cache-read-tokens`、`exceeds-200k`、`context-percentage`、`context-percentage-usable`、`session-cost`、`five-hour-usage`、`five-hour-reset`、`weekly-usage`、`weekly-reset`、`session-name`、`agent-name`、`vim-mode`、`pr-number`、`pr-review-state`、`repo-name`、`worktree`、`session-duration`、`api-duration`、`lines-changed`、`lines-added`、`lines-removed`、`cache-hit-rate`、`git-staged`、`git-unstaged`、`git-untracked`、`git-ahead`、`git-behind`、`git-clean`、`extra-usage-cost`、`extra-usage-limit`、`extra-usage-percent`、`weekly-usage-opus`、`weekly-usage-sonnet`、`weekly-reset-opus`、`weekly-reset-sonnet`、`account-email`、`account-name`、`account-org`、`account-role`、`account-plan`、`account-seat`、`env`
 
 `separator`・`flex-separator`はノード（`role="separator"`の`text` / `<flex/>`）へ置き換わるため、fieldカタログには含めない。
 
@@ -765,6 +812,12 @@ Claude Codeのpay-as-you-go overage（サブスクリプション上限超過後
 `extra-usage-cost`は、usage creditsを有効化しかつサブスクリプション上限を超過した場合のみ値を持つ（`optional="extra-usage-cost"`で自動非表示になる）。上限内のユーザーでは常に空。`session-cost`とは独立（`session-cost`はセッション単位の見積り、`extra-usage-cost`は課金期間単位のmetered実費）。
 
 これらのfieldは`internal/dsl`レジストリ上でcapability `oauth-usage` を持ち（→「Capability」参照）、認証済みusage APIに到達できない環境では値を返さない。
+
+#### アカウントfield / `env` field
+
+`account-*`（ログイン中アカウントの識別情報）と`env`（環境変数の表示）は、他のfieldと違いスナップショット由来ではない。詳細は「`field`」節の「`env`（`var`/`unmask`属性）」「アカウントfield」を参照。
+
+`env`は`var`属性を要する唯一のfieldで、レジストリ上は`RequiresVar`で表現する（validationと設定UIの入力欄がこれを見る）。`account-*`はcapabilityを持たない（ローカルファイルの有無だけなのでprobe不要で、無ければ空を返す）。
 
 ### メトリクス名（when / color-ruleで参照可能）
 

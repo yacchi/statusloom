@@ -13,10 +13,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/yacchi/statusloom/internal/cache"
+	"github.com/yacchi/statusloom/internal/claudeaccount"
 	"github.com/yacchi/statusloom/internal/config"
 	"github.com/yacchi/statusloom/internal/dsl"
 	"github.com/yacchi/statusloom/internal/render"
@@ -349,7 +351,16 @@ func (s *server) handlePreviewDSL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := render.Options{Width: clampPreviewWidth(req.Width), Now: time.Now()}
+	opts := render.Options{
+		Width: clampPreviewWidth(req.Width),
+		Now:   time.Now(),
+		// The configurator runs on the user's own machine, so previews show
+		// their real environment and logged-in account rather than
+		// placeholders. Credential-looking env vars are still masked by
+		// envWidget.
+		Env:     os.Getenv,
+		Profile: claudeaccount.Provider(os.Getenv),
+	}
 	_, ids := buildAST(doc)
 
 	if req.Section == "subagent" {
@@ -643,6 +654,7 @@ type dslFieldEntry struct {
 	Descriptions dslDescriptions `json:"descriptions"`
 	Category     string          `json:"category"`
 	Linkable     bool            `json:"linkable,omitempty"`
+	RequiresVar  bool            `json:"requiresVar,omitempty"`
 	SelfMetric   string          `json:"selfMetric,omitempty"`
 	Formats      []string        `json:"formats,omitempty"`
 	Capability   string          `json:"capability,omitempty"`
@@ -673,6 +685,7 @@ func (s *server) handleDSLFields(w http.ResponseWriter, r *http.Request) {
 			Descriptions: dslDescriptions{EN: f.Descriptions.EN, JA: f.Descriptions.JA},
 			Category:     f.Category,
 			Linkable:     f.Linkable,
+			RequiresVar:  f.RequiresVar,
 			SelfMetric:   f.SelfMetric,
 			Formats:      f.Formats,
 			Capability:   f.Capability,

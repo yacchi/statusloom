@@ -31,10 +31,11 @@ func TestFieldByName_UnknownTool(t *testing.T) {
 }
 
 func TestFields_Count(t *testing.T) {
-	// 67 base claude-code fields + 9 merged subagent task-* fields.
+	// 74 base claude-code fields (67 + 6 account-* + env) + 9 merged
+	// subagent task-* fields.
 	fields := Fields("claude-code")
-	if len(fields) != 76 {
-		t.Errorf("Fields count = %d, want 76", len(fields))
+	if len(fields) != 83 {
+		t.Errorf("Fields count = %d, want 83", len(fields))
 	}
 }
 

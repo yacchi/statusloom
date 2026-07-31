@@ -630,6 +630,12 @@ func (p *parser) parseField(se xml.StartElement, start int) *FieldNode {
 			if b := p.parseBoolAttr("hyperlink", a.Value, tagRange); b != nil {
 				n.Hyperlink = *b
 			}
+		case "var":
+			n.Var = a.Value
+		case "unmask":
+			if b := p.parseBoolAttr("unmask", a.Value, tagRange); b != nil {
+				n.Unmask = *b
+			}
 		case "min-width":
 			n.MinWidth = p.parsePositiveIntAttr("min-width", a.Value, tagRange)
 		case "align":

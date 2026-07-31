@@ -658,12 +658,18 @@ func (e *docEval) gate(c dsl.CommonAttributes, self string) bool {
 	return true
 }
 
-// fieldExists reports whether a named field currently has data: its default
-// (non-compact, non-raw) display text is non-empty. A numeric zero that
-// still renders a non-empty string (e.g. "$0.00") counts as present
-// (markup.md "optional").
-func (e *docEval) fieldExists(name string) bool {
-	spec := config.WidgetSpec{Type: name}
+// fieldExists reports whether the field an `optional` attribute names
+// currently has data: its default (non-compact, non-raw) display text is
+// non-empty. A numeric zero that still renders a non-empty string (e.g.
+// "$0.00") counts as present (markup.md "optional").
+//
+// ref is the raw attribute value, so it carries the variable name for a
+// var-taking field: optional="env:AWS_PROFILE" gates on that variable being
+// set. Masking is irrelevant here - a masked value is still non-empty - so
+// existence does not depend on the unmask setting.
+func (e *docEval) fieldExists(ref string) bool {
+	name, varName := dsl.ParseOptional(ref)
+	spec := config.WidgetSpec{Type: name, Var: varName}
 	return renderContent(spec, e.snap, e.cfg, e.opts, false) != ""
 }
 
@@ -672,7 +678,7 @@ func (e *docEval) fieldExists(name string) bool {
 // self metric when one applies (markup.md item 4). raw takes precedence over
 // a formatter, matching its precedence over compact.
 func (e *docEval) fieldText(f *dsl.FieldNode) string {
-	spec := config.WidgetSpec{Type: f.Name, RawValue: f.Raw}
+	spec := config.WidgetSpec{Type: f.Name, RawValue: f.Raw, Var: f.Var, Unmask: f.Unmask}
 	txt := renderContent(spec, e.snap, e.cfg, e.opts, e.compact)
 	if !f.Raw && f.Formatter.Name != "" {
 		if formatted, ok := e.applyFormat(f); ok {

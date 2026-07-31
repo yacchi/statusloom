@@ -11,6 +11,7 @@ import (
 
 	"github.com/yacchi/statusloom/internal/adapters/claude"
 	"github.com/yacchi/statusloom/internal/cache"
+	"github.com/yacchi/statusloom/internal/claudeaccount"
 	"github.com/yacchi/statusloom/internal/config"
 	"github.com/yacchi/statusloom/internal/detect"
 	"github.com/yacchi/statusloom/internal/dsl"
@@ -97,7 +98,12 @@ func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool strin
 	maybeStartRefresh(raw, now)
 
 	width := parseWidth(getenv("COLUMNS"))
-	out := render.RenderDocumentString(snap, doc, render.Options{Width: width, Now: now})
+	out := render.RenderDocumentString(snap, doc, render.Options{
+		Width:   width,
+		Now:     now,
+		Env:     getenv,
+		Profile: claudeaccount.Provider(getenv),
+	})
 	if out == "" {
 		return nil, nil
 	}

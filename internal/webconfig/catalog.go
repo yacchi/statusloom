@@ -5,9 +5,11 @@ package webconfig
 // registry (the single source of truth); only the rendered sample lives here.
 
 import (
+	"os"
 	"strings"
 	"time"
 
+	"github.com/yacchi/statusloom/internal/claudeaccount"
 	"github.com/yacchi/statusloom/internal/dsl"
 	"github.com/yacchi/statusloom/internal/render"
 	"github.com/yacchi/statusloom/internal/schema"
@@ -46,7 +48,12 @@ func previewFor(tool, fieldName string, snap schema.StatusSnapshot, now time.Tim
 	if doc == nil || doc.Root == nil || dsl.HasErrors(diags) {
 		return widgetPreview{Text: previewFallback, ANSI: previewFallback}
 	}
-	lines := render.RenderDocument(snap, doc, render.Options{Width: previewWidth, Now: now})
+	lines := render.RenderDocument(snap, doc, render.Options{
+		Width:   previewWidth,
+		Now:     now,
+		Env:     os.Getenv,
+		Profile: claudeaccount.Provider(os.Getenv),
+	})
 	if len(lines) == 1 && !lines[0].Omitted {
 		var text, ansi strings.Builder
 		for _, seg := range lines[0].Segments {

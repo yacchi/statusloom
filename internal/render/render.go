@@ -30,6 +30,7 @@
 package render
 
 import (
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +44,32 @@ import (
 type Options struct {
 	Width int       // terminal columns (resolved from COLUMNS); 0 = unknown
 	Now   time.Time // injected clock for countdown widgets (testability)
+	// Env resolves the `env` field's variable lookups. nil means os.Getenv.
+	Env func(string) string
+	// Profile lazily resolves the logged-in Claude Code account for the
+	// account-* fields. It is called at most once per render and only when
+	// such a field is actually present in the document, so documents that
+	// use none never touch .claude.json; callers should memoize (see
+	// sync.OnceValue). nil means "no account data available".
+	Profile func() *schema.AccountProfile
+}
+
+// env resolves an environment variable through Options.Env, defaulting to the
+// real process environment.
+func (o Options) env(name string) string {
+	if o.Env != nil {
+		return o.Env(name)
+	}
+	return os.Getenv(name)
+}
+
+// profile resolves the logged-in account profile through Options.Profile,
+// returning nil when no provider was supplied or it found nothing.
+func (o Options) profile() *schema.AccountProfile {
+	if o.Profile == nil {
+		return nil
+	}
+	return o.Profile()
 }
 
 // widthUnbounded is the value the "width" metric reports when the terminal

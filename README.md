@@ -325,6 +325,63 @@ Like other countdown fields, `weekly-reset-opus` and
 `--refresh-interval` (see [Setup](#setup)) so they keep counting down
 during idle sessions.
 
+### Which account am I logged in as?
+
+If you switch between logins with `CLAUDE_CONFIG_DIR`, these fields show
+which account the current session is using:
+
+| field | shows | example |
+|---|---|---|
+| `account-email` | email address of the logged-in account | `dev@example.com` |
+| `account-name` | display name | `Dev User` |
+| `account-org` | organization name | `Example Inc` |
+| `account-role` | role within the organization | `primary_owner` |
+| `account-plan` | rate-limit tier | `default_claude_max_5x` |
+| `account-seat` | seat tier | `team_tier_1` |
+
+```xml
+<span prefix="as " optional="account-email">
+    <field name="account-email" color="bright-black"/>
+</span>
+```
+
+These read Claude Code's own local `.claude.json` (honoring
+`CLAUDE_CONFIG_DIR`), so no network call is involved and the values track
+whichever profile is active. Values are the raw strings Claude Code
+stored, so `account-plan` reads `default_claude_max_5x` rather than
+"Max 5x". Every field is empty when you're logged out or the file isn't
+there, and the file is only read when a document actually uses one of
+these fields.
+
+### Environment variables
+
+`<field name="env" var="...">` shows an environment variable, which is
+handy for things the status line can't otherwise know — which cloud
+profile, cluster, or deployment target this shell is pointed at:
+
+```xml
+<span prefix="aws: " optional="env:AWS_PROFILE">
+    <field name="env" var="AWS_PROFILE" color="yellow"/>
+</span>
+```
+
+Use `optional="env:<NAME>"` (the variable name is part of the value) so
+the label disappears along with the field when the variable isn't set.
+
+**Credential-looking variables are masked.** A status line ends up in
+screenshots and screen shares, and shared Statusloom Room presets are
+written by strangers, so if the variable *name* contains `TOKEN`,
+`SECRET`, `KEY`, `PASSWORD`, `PASSWD`, `CREDENTIAL`, `AUTH`, `SESSION`,
+`COOKIE`, `PRIVATE`, or `SIGNATURE`, statusloom renders `***` instead of
+the value. The check looks only at the name, never the value, and it
+deliberately over-matches — `KEYBOARD_LAYOUT` and `SSH_AUTH_SOCK` are
+masked too. Add `unmask="true"` when you actually want such a variable
+shown:
+
+```xml
+<field name="env" var="KEYBOARD_LAYOUT" unmask="true"/>
+```
+
 ## Configuration
 
 Statusloom is configured with an XML markup document per tool. For Claude

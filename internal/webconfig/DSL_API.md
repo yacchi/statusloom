@@ -282,7 +282,13 @@ are returned for the editor but never block the write.
     requires).
 
 ### `GET /api/dsl/fields?tool=claude-code`
-→ `200 { "fields": [ { "name", "displayName", "descriptions": {"en","ja"}, "category", "linkable"?, "selfMetric"?, "formats"?, "capability"?, "preview": {"text","ansi"} } ] }`
+→ `200 { "fields": [ { "name", "displayName", "descriptions": {"en","ja"}, "category", "linkable"?, "requiresVar"?, "selfMetric"?, "formats"?, "capability"?, "preview": {"text","ansi"} } ] }`
+
+`requiresVar` marks a field parameterized by a `var` attribute (`env` is the
+only one today): the properties panel must render a variable-name input for it,
+and a `<field>` AST node for it carries `"var"` (string) and `"unmask"`
+(boolean, emitted only when true). Validation reports a missing `var` as a
+*warning*, not an error, so a freshly dropped palette item stays savable.
 
 The field catalog for the palette, sourced entirely from the Go DSL registry
 (single source of truth): the session/account/git field set **plus** the

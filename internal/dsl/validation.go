@@ -54,6 +54,10 @@ func (v *validator) errf(r SourceRange, format string, args ...any) {
 	v.diags = append(v.diags, Errorf(r, format, args...))
 }
 
+func (v *validator) warnf(r SourceRange, format string, args ...any) {
+	v.diags = append(v.diags, Warnf(r, format, args...))
+}
+
 var validColorLevels = map[string]bool{"none": true, "ansi16": true, "ansi256": true, "truecolor": true}
 var validContextModes = map[string]bool{"raw": true, "usable": true, "both": true}
 
@@ -206,12 +210,53 @@ func (v *validator) validateField(f *FieldNode, inSubagent bool) {
 			if f.Hyperlink && !def.Linkable {
 				v.errf(f.Meta.SourceRange, "field %q does not support hyperlink", f.Name)
 			}
+			v.validateVar(f, def)
 			v.diags = append(v.diags, ValidateFormatter(def, f.Formatter, f.Meta.SourceRange)...)
 		} else {
 			v.errf(f.Meta.SourceRange, "unknown field %q for tool %q", f.Name, v.tool)
 		}
 	}
 	v.validateCommon(f.Common, f.Meta.SourceRange, selfMetric)
+}
+
+// validateVar checks the `var` / `unmask` attribute pair against the field
+// definition (markup.md "env").
+//
+// A missing var on a var-taking field is a WARNING, not an error: the visual
+// editor inserts <field name="env"/> the moment the palette item is dropped
+// and the author fills the variable name in afterwards, so an error would make
+// the document unsavable mid-edit. Such a field simply renders empty.
+func (v *validator) validateVar(f *FieldNode, def FieldDef) {
+	r := f.Meta.SourceRange
+	if !def.RequiresVar {
+		if f.Var != "" {
+			v.errf(r, "field %q does not take a var attribute", f.Name)
+		}
+		if f.Unmask {
+			v.errf(r, "field %q does not take an unmask attribute", f.Name)
+		}
+		return
+	}
+
+	if f.Var == "" {
+		v.warnf(r, "field %q has no var attribute and will render empty", f.Name)
+		if f.Unmask {
+			v.errf(r, "unmask requires a var attribute")
+		}
+		return
+	}
+	// An environment variable name cannot contain "=" (the separator in the
+	// underlying environ) or a NUL, so such a var can never resolve.
+	if strings.ContainsAny(f.Var, "=\x00") {
+		v.errf(r, "invalid var %q: an environment variable name may not contain %q", f.Var, "=")
+		return
+	}
+	switch {
+	case f.Unmask && IsSecretEnvName(f.Var):
+		v.warnf(r, "var %q looks like a credential and unmask renders it in clear text; it will be visible in screenshots and screen shares", f.Var)
+	case IsSecretEnvName(f.Var):
+		v.warnf(r, "var %q looks like a credential, so its value renders as %q; add unmask to show it anyway", f.Var, SecretMask)
+	}
 }
 
 func (v *validator) validateFlex(f *FlexNode) {
@@ -240,8 +285,15 @@ func (v *validator) validateCommon(c CommonAttributes, nodeRange SourceRange, se
 		v.errf(nodeRange, "invalid background color %q", c.Style.Background)
 	}
 	if c.Optional != "" && v.toolKnown {
-		if _, ok := FieldByName(v.tool, c.Optional); !ok {
-			v.errf(nodeRange, "optional references unknown field %q", c.Optional)
+		name, varName := ParseOptional(c.Optional)
+		def, ok := FieldByName(v.tool, name)
+		switch {
+		case !ok:
+			v.errf(nodeRange, "optional references unknown field %q", name)
+		case varName != "" && !def.RequiresVar:
+			v.errf(nodeRange, "optional %q: field %q does not take a var", c.Optional, name)
+		case varName == "" && def.RequiresVar:
+			v.errf(nodeRange, "optional %q requires a variable name, as in optional=%q", c.Optional, name+":VAR_NAME")
 		}
 	}
 	if c.When != "" {

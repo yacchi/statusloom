@@ -439,6 +439,9 @@ func serializeField(b *strings.Builder, depth int, n *FieldNode) {
 	if n.Name != "" {
 		writeAttr(b, "name", n.Name)
 	}
+	if n.Var != "" {
+		writeAttr(b, "var", n.Var)
+	}
 	if n.Formatter.Name != "" {
 		writeAttr(b, "format", n.Formatter.Name)
 	}
@@ -450,6 +453,7 @@ func serializeField(b *strings.Builder, depth int, n *FieldNode) {
 	}
 	writeTrueAttr(b, "raw", n.Raw)
 	writeTrueAttr(b, "hyperlink", n.Hyperlink)
+	writeTrueAttr(b, "unmask", n.Unmask)
 	writeIntAttr(b, "min-width", n.MinWidth)
 	if n.Align != "" {
 		writeAttr(b, "align", n.Align)

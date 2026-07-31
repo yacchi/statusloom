@@ -362,6 +362,12 @@ func (b *astBuilder) node(n dsl.Node, id string) map[string]any {
 		if t.Hyperlink {
 			m["hyperlink"] = true
 		}
+		if t.Var != "" {
+			m["var"] = t.Var
+		}
+		if t.Unmask {
+			m["unmask"] = true
+		}
 		if t.MinWidth != nil {
 			m["min-width"] = *t.MinWidth
 		}
@@ -522,6 +528,8 @@ type astNodeJSON struct {
 	Currency  string `json:"currency"`
 	Raw       *bool  `json:"raw"`
 	Hyperlink *bool  `json:"hyperlink"`
+	Var       string `json:"var"`
+	Unmask    *bool  `json:"unmask"`
 	MinWidth  *int   `json:"min-width"`
 	Align     string `json:"align"`
 
@@ -672,6 +680,10 @@ func jsonToNode(j astNodeJSON) dsl.Node {
 		}
 		if j.Hyperlink != nil {
 			n.Hyperlink = *j.Hyperlink
+		}
+		n.Var = j.Var
+		if j.Unmask != nil {
+			n.Unmask = *j.Unmask
 		}
 		n.MinWidth = j.MinWidth
 		n.Align = j.Align

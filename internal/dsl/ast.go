@@ -200,6 +200,12 @@ type FieldNode struct {
 	Formatter FormatterConfig // raw format/precision/currency attribute values
 	Raw       bool
 	Hyperlink bool
+	// Var is the raw `var` attribute: the environment variable name for
+	// name="env" (the only field that takes it, FieldDef.RequiresVar).
+	Var string
+	// Unmask opts a name="env" field out of the credential masking
+	// IsSecretEnvName applies (markup.md "env").
+	Unmask bool
 	// MinWidth is the raw `min-width` attribute (nil = unspecified). When
 	// set, the field's formatted value (outside prefix/suffix) is padded
 	// with spaces to at least this many display columns; a longer value is

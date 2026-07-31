@@ -516,6 +516,40 @@ function FieldSection({
     const formats = entry?.formats ?? [];
     return (
         <>
+            {entry?.requiresVar ? (
+                <>
+                    <TextAttr
+                        label="Variable"
+                        value={node.var}
+                        helpKey="helpEnvVar"
+                        testid="attr-var"
+                        placeholder="AWS_PROFILE"
+                        onChange={(v) =>
+                            onPatch({
+                                var: v,
+                                // unmask is meaningless without a variable and
+                                // is rejected by validation on its own.
+                                ...(v === undefined && { unmask: undefined }),
+                            })
+                        }
+                    />
+                    {node.var ? (
+                        <div className="field">
+                            <label>
+                                Unmask <HelpTip k="helpEnvUnmask" />
+                            </label>
+                            <input
+                                type="checkbox"
+                                data-testid="attr-unmask"
+                                checked={node.unmask === true}
+                                onChange={(e) =>
+                                    onPatch({ unmask: e.target.checked ? true : undefined })
+                                }
+                            />
+                        </div>
+                    ) : null}
+                </>
+            ) : null}
             {formats.length > 0 ? (
                 <div className="field">
                     <label>

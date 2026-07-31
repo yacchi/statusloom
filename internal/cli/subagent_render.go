@@ -6,10 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/yacchi/statusloom/internal/adapters/claude"
+	"github.com/yacchi/statusloom/internal/claudeaccount"
 	"github.com/yacchi/statusloom/internal/render"
 	"github.com/yacchi/statusloom/internal/schema"
 )
@@ -144,7 +146,12 @@ func runSubagentRender(args []string, stdin io.Reader, stdout, stderr io.Writer)
 
 	tool := string(schema.ToolClaudeCode)
 	doc := resolveRenderDocument(tool, *draft, stderr)
-	opts := render.Options{Width: columns, Now: time.Now()}
+	opts := render.Options{
+		Width:   columns,
+		Now:     time.Now(),
+		Env:     os.Getenv,
+		Profile: claudeaccount.Provider(os.Getenv),
+	}
 
 	w := bufio.NewWriter(stdout)
 	defer w.Flush()

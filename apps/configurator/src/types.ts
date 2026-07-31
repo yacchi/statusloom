@@ -80,6 +80,12 @@ export interface FieldNode extends AstBase, CommonAttrs {
     // Emitted only when true.
     raw?: boolean;
     hyperlink?: boolean;
+    // Environment variable name for name="env" (the only field taking it,
+    // FieldCatalogEntry.requiresVar).
+    var?: string;
+    // Opts a name="env" field out of credential masking. Emitted only when
+    // true.
+    unmask?: boolean;
     colorRules?: ColorRuleNode[];
 }
 
@@ -331,6 +337,9 @@ export interface FieldCatalogEntry {
     category: string; // "common" | "claude"
     // True when this field supports the `hyperlink` attribute.
     linkable?: boolean;
+    // True when this field is parameterized by a `var` attribute (name="env"):
+    // the properties panel shows a variable-name input for it.
+    requiresVar?: boolean;
     // The metric this field exposes as "self" in when/color-rule conditions.
     selfMetric?: string;
     // Formatter names applicable to this field (absent = no formatter).

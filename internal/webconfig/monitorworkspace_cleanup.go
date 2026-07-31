@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/yacchi/statusloom/internal/claudecfg"
 )
 
 // oldMonitorDirPrefix is the base-name prefix of the historical random
@@ -16,18 +18,11 @@ import (
 // match this prefix, so the janitor can never touch it.
 const oldMonitorDirPrefix = "statusloom-monitor-"
 
-// claudeConfigPath resolves ~/.claude.json. It honors $HOME first (so tests
-// can redirect it) and falls back to os.UserHomeDir. It returns "" when the
-// home directory cannot be determined.
+// claudeConfigPath resolves Claude Code's .claude.json ($CLAUDE_CONFIG_DIR
+// aware; see claudecfg.GlobalConfigPath). It returns "" when the location
+// cannot be determined.
 func claudeConfigPath() string {
-	if h := os.Getenv("HOME"); h != "" {
-		return filepath.Join(h, ".claude.json")
-	}
-	h, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(h, ".claude.json")
+	return claudecfg.GlobalConfigPath(os.Getenv)
 }
 
 // cleanupDeadMonitorEntries is a best-effort janitor that removes DEAD project

@@ -112,9 +112,19 @@ func TestPruneDeadMonitorEntries_OnlyDeleteDead(t *testing.T) {
 	}
 }
 
-func TestCleanupDeadMonitorEntries_IOWrapper(t *testing.T) {
+// isolateClaudeConfig redirects Claude Code's .claude.json to a fresh temp
+// HOME and clears $CLAUDE_CONFIG_DIR (which would otherwise win over HOME and
+// point the janitor at the developer's real config). Returns the temp home.
+func isolateClaudeConfig(t *testing.T) string {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	return home
+}
+
+func TestCleanupDeadMonitorEntries_IOWrapper(t *testing.T) {
+	home := isolateClaudeConfig(t)
 
 	// A live and a dead monitor entry. The live dir must exist on disk.
 	liveDir := filepath.Join(home, "statusloom-monitor-live")
@@ -150,10 +160,44 @@ func TestCleanupDeadMonitorEntries_IOWrapper(t *testing.T) {
 }
 
 func TestCleanupDeadMonitorEntries_MissingFileNoOp(t *testing.T) {
-	t.Setenv("HOME", t.TempDir()) // no ~/.claude.json present
+	home := isolateClaudeConfig(t) // no ~/.claude.json present
 	// Must not panic or create anything.
 	cleanupDeadMonitorEntries()
-	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".claude.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, ".claude.json")); !os.IsNotExist(err) {
 		t.Errorf("janitor created ~/.claude.json (stat err = %v), want no-op", err)
+	}
+}
+
+// TestCleanupDeadMonitorEntries_ClaudeConfigDir pins that the janitor follows
+// $CLAUDE_CONFIG_DIR rather than $HOME/.claude.json when the profile env var
+// is set.
+func TestCleanupDeadMonitorEntries_ClaudeConfigDir(t *testing.T) {
+	home := isolateClaudeConfig(t)
+	profile := filepath.Join(home, "profiles", "max")
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		t.Fatalf("mkdir profile: %v", err)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", profile)
+
+	deadDir := filepath.Join(home, "statusloom-monitor-dead")
+	doc := map[string]any{"projects": map[string]any{deadDir: map[string]any{}}}
+	b, _ := json.MarshalIndent(doc, "", "  ")
+	cfg := filepath.Join(profile, ".claude.json")
+	if err := os.WriteFile(cfg, b, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cleanupDeadMonitorEntries()
+
+	raw, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(raw), "statusloom-monitor-dead") {
+		t.Error("dead entry not removed from $CLAUDE_CONFIG_DIR/.claude.json")
+	}
+	// The HOME-relative path must be left alone entirely.
+	if _, err := os.Stat(filepath.Join(home, ".claude.json")); !os.IsNotExist(err) {
+		t.Errorf("janitor touched $HOME/.claude.json (stat err = %v), want untouched", err)
 	}
 }

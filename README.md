@@ -65,7 +65,10 @@ statusloom setup claude-code
 ```
 
 This writes `statusLine.command` into `~/.claude/settings.json` for
-you (see [Usage](#usage) below for the equivalent manual JSON).
+you (see [Usage](#usage) below for the equivalent manual JSON). If you
+use profiles via `CLAUDE_CONFIG_DIR`, statusloom follows it and writes
+`$CLAUDE_CONFIG_DIR/settings.json` instead; `--settings <path>` always
+overrides both.
 
 ## Usage
 
@@ -303,7 +306,9 @@ never makes network calls.
 The refresh subprocess reads your Claude Code OAuth token **read-only**
 (never refreshed, never logged), checked in this order: the
 `CLAUDE_CODE_OAUTH_TOKEN` environment variable, then
-`~/.claude/.credentials.json`, then, on macOS, the login Keychain entry
+`~/.claude/.credentials.json` (or
+`$CLAUDE_CONFIG_DIR/.credentials.json` when that variable is set), then,
+on macOS, the login Keychain entry
 named `Claude Code-credentials` (read via the Apple-signed
 `/usr/bin/security` binary, so this doesn't trigger a Keychain access
 prompt or require statusloom to be code-signed). Set

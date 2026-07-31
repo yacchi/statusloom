@@ -163,3 +163,15 @@ func TestCredentialsPathDefault_UsesHomeEnv(t *testing.T) {
 		t.Errorf("credentialsPath = %q, want %q", got, want)
 	}
 }
+
+func TestCredentialsPathDefault_HonorsClaudeConfigDir(t *testing.T) {
+	getenv := fakeGetenv(map[string]string{
+		"CLAUDE_CONFIG_DIR": "/profiles/max",
+		"HOME":              "/home/testuser",
+	})
+	got := credentialsPath(getenv)
+	want := filepath.Join("/profiles/max", ".credentials.json")
+	if got != want {
+		t.Errorf("credentialsPath = %q, want %q", got, want)
+	}
+}

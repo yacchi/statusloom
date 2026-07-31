@@ -37,7 +37,7 @@ func provisionViaLiveSession(t *testing.T, ts *testServer) string {
 
 func TestProvision_StatusLineHasDraftFlag(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir()) // isolate the ~/.claude.json janitor
+	isolateClaudeConfig(t) // keep the ~/.claude.json janitor off the real config
 	ts := startTestServer(t, time.Hour)
 	tmp := provisionViaLiveSession(t, ts)
 
@@ -66,7 +66,7 @@ func TestProvision_StatusLineHasDraftFlag(t *testing.T) {
 // <subagent> region.
 func TestProvision_SubagentStatusLineRegistered(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir()) // isolate the ~/.claude.json janitor
+	isolateClaudeConfig(t) // keep the ~/.claude.json janitor off the real config
 	ts := startTestServer(t, time.Hour)
 	tmp := provisionViaLiveSession(t, ts)
 
@@ -98,7 +98,7 @@ func TestProvision_SubagentStatusLineRegistered(t *testing.T) {
 
 func TestProvision_WritesWorkspaceDocs(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir()) // isolate the ~/.claude.json janitor
+	isolateClaudeConfig(t) // keep the ~/.claude.json janitor off the real config
 	ts := startTestServer(t, time.Hour)
 	tmp := provisionViaLiveSession(t, ts)
 
@@ -143,7 +143,7 @@ func TestProvision_WritesWorkspaceDocs(t *testing.T) {
 func TestProvision_StableReusedDir(t *testing.T) {
 	cacheDir := t.TempDir()
 	t.Setenv("STATUSLOOM_CACHE_DIR", cacheDir)
-	t.Setenv("HOME", t.TempDir()) // isolate the ~/.claude.json janitor
+	isolateClaudeConfig(t) // keep the ~/.claude.json janitor off the real config
 
 	s := newServer("test-token", 0, time.Hour)
 	t.Cleanup(s.stopIdleTimer)
@@ -175,7 +175,7 @@ func TestProvision_StableReusedDir(t *testing.T) {
 
 func TestProvision_GitInitBestEffort(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir()) // isolate the ~/.claude.json janitor
+	isolateClaudeConfig(t) // keep the ~/.claude.json janitor off the real config
 	ts := startTestServer(t, time.Hour)
 	tmp := provisionViaLiveSession(t, ts)
 

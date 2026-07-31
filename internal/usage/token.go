@@ -3,21 +3,14 @@ package usage
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
+
+	"github.com/yacchi/statusloom/internal/claudecfg"
 )
 
 // credentialsPath resolves the path to Claude Code's stored OAuth
 // credentials file. It is an unexported var (rather than a plain
 // function) so tests can override it.
-var credentialsPath = func(getenv func(string) string) string {
-	home := getenv("HOME")
-	if home == "" {
-		if h, err := os.UserHomeDir(); err == nil {
-			home = h
-		}
-	}
-	return filepath.Join(home, ".claude", ".credentials.json")
-}
+var credentialsPath = claudecfg.CredentialsPath
 
 // credentialsFile is the minimal shape of Claude Code's
 // .credentials.json needed to extract the OAuth access token. Other

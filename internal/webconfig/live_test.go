@@ -177,7 +177,7 @@ func createLiveSession(t *testing.T, ts *testServer) liveSessionResp {
 
 func TestLiveSession_CreatesTmpDirAndSettings(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir()) // isolate the ~/.claude.json janitor
+	isolateClaudeConfig(t) // keep the ~/.claude.json janitor off the real config
 	ts := startTestServer(t, time.Hour)
 
 	body := createLiveSession(t, ts)
@@ -221,7 +221,7 @@ func TestLiveSession_CreatesTmpDirAndSettings(t *testing.T) {
 
 func TestLive_ShutdownKeepsWorkspace(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir()) // isolate the ~/.claude.json janitor
+	isolateClaudeConfig(t) // keep the ~/.claude.json janitor off the real config
 	ts := startTestServer(t, time.Hour)
 
 	body := createLiveSession(t, ts)

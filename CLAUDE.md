@@ -9,7 +9,7 @@ Claude Code等コーディングエージェント向けステータスライン
 
 - ツールチェーンは `mise.toml` でpin（Go 1.26.5 / Node 22 / pnpm 10）。`mise install` を先に実行
 - Go標準ライブラリのみ使用（例外: webconfigのWebSocketに限り `github.com/coder/websocket`、webconfigの埋め込み端末に限り `github.com/creack/pty` を許可）。フロントの外部UI依存はdnd-kitのみ許可
-- モノレポ構成: `cmd/statusloom`, `internal/{adapters,cache,cli,config,detect,gitstatus,render,schema,webconfig}`, `apps/configurator`（React設定UI）。詳細は計画書 4章
+- モノレポ構成: `cmd/statusloom`, `internal/{adapters,cache,claudecfg,cli,config,detect,gitstatus,render,samples,schema,webconfig}`, `apps/configurator`（React設定UI）, `packages/ansi`（ANSI→span共有パッケージ）。詳細は計画書 4章
 - 動作確認:
   - `go run ./cmd/statusloom config`（設定UI起動。`mise run config`）
   - `./statusloom claude < fixtures/claude/full.json`（描画確認。`mise run render`）
@@ -30,7 +30,8 @@ Claude Code等コーディングエージェント向けステータスライン
 
 ## 確定済み設計判断（覆さない・再議論不要）
 
-- `statusloom refresh --once` は単発サブプロセス（daemonではない・single-lease・レンダーパスから機会的にspawn）としてOAuth usage API（`GET https://api.anthropic.com/api/oauth/usage`。Claude Codeの`/usage`が使う未公開エンドポイント）も叩き、`extra_usage`とper-model weekly window（Opus/Sonnet）をaccountキャッシュへ書く。**レンダーパス自体は引き続きnetwork-free**（networkが発生するのはrefreshサブプロセス内のみ）。five_hour/seven_dayのデフォルト表示windowの取得元は引き続きstdinのみ（usage APIはper-model weekly + extra_usageを追加提供し、それらwindowのauthoritativeなfallbackも兼ねる）。tokenはread-only（リフレッシュ・ログ出力しない）で、`CLAUDE_CODE_OAUTH_TOKEN`環境変数 → `~/.claude/.credentials.json`（`.claudeAiOauth.accessToken`）→ macOS Keychain（`/usr/bin/security find-generic-password -s "Claude Code-credentials" -w`）の順に解決する。fetch cadenceはデフォルト5分間隔＋失敗/429時exponential backoff（最大60分）。kill switchは`STATUSLOOM_NO_USAGE_API=1`（設定時は該当fieldが単に空のまま）
+- `statusloom refresh --once` は単発サブプロセス（daemonではない・single-lease・レンダーパスから機会的にspawn）としてOAuth usage API（`GET https://api.anthropic.com/api/oauth/usage`。Claude Codeの`/usage`が使う未公開エンドポイント）も叩き、`extra_usage`とper-model weekly window（Opus/Sonnet）をaccountキャッシュへ書く。**レンダーパス自体は引き続きnetwork-free**（networkが発生するのはrefreshサブプロセス内のみ）。five_hour/seven_dayのデフォルト表示windowの取得元は引き続きstdinのみ（usage APIはper-model weekly + extra_usageを追加提供し、それらwindowのauthoritativeなfallbackも兼ねる）。tokenはread-only（リフレッシュ・ログ出力しない）で、`CLAUDE_CODE_OAUTH_TOKEN`環境変数 → Claude Code設定ディレクトリの`.credentials.json`（`.claudeAiOauth.accessToken`。ディレクトリ解決は`internal/claudecfg`）→ macOS Keychain（`/usr/bin/security find-generic-password -s "Claude Code-credentials" -w`）の順に解決する。fetch cadenceはデフォルト5分間隔＋失敗/429時exponential backoff（最大60分）。kill switchは`STATUSLOOM_NO_USAGE_API=1`（設定時は該当fieldが単に空のまま）
+- **Claude Code側の設定パス解決は `internal/claudecfg` が単一の情報源**（`Dir`/`SettingsPath`/`CredentialsPath`/`GlobalConfigPath`。`$CLAUDE_CONFIG_DIR` → `$HOME/.claude` の順で解決し、`getenv`注入でテスト可能）。`~/.claude` をハードコードしないこと。`.claude.json` だけは非対称（`$CLAUDE_CONFIG_DIR`設定時はその中、既定では`$HOME/.claude.json`＝`.claude`の兄弟）でClaude Code本体の挙動に合わせている。webconfigのテストは `isolateClaudeConfig(t)` で必ずHOME差し替え＋`CLAUDE_CONFIG_DIR`クリアの両方を行う（HOMEだけではjanitorが実configを触る）
 - accountキャッシュキーは固定文字列 `default`。キャッシュ補完時、`ResetsAt` が過去のwindowは使わない。lock/leaseなし（atomic write + last-writer-wins）
 - `ExtraUsage`（従量課金クレジット）はrate window envelopeの6h失効（`StaleUntil`）から切り離し、独立した長期寿命（`extraUsageRetentionTTL`=30日、`usageFreshTTL`=15分でStale）で保持する（`cache.LoadExtraUsage`）。月内で単調増加のためextra_usageを欠いたpollでも直前値をObservedAtごとcarry-forwardし（`internal/cli/refresh.go`）、取得が長期途絶えても最後の値を使い回す
 - パスはmacOSでもXDG流（`~/.config/statusloom`, `~/.cache/statusloom`）。テスト/検証は env `STATUSLOOM_CONFIG` / `STATUSLOOM_CACHE_DIR` で必ず隔離する

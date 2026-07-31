@@ -26,8 +26,8 @@ func newTerminalTestServer(t *testing.T) (*server, *httptest.Server) {
 	t.Helper()
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 	// Isolate the ~/.claude.json janitor (run once on first provision) from the
-	// developer's real home dir.
-	t.Setenv("HOME", t.TempDir())
+	// developer's real config, wherever $CLAUDE_CONFIG_DIR points it.
+	isolateClaudeConfig(t)
 
 	s := newServer("test-token", 0, time.Hour)
 	hs := httptest.NewServer(s.routes())

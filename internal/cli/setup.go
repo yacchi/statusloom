@@ -8,9 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
+
+	"github.com/yacchi/statusloom/internal/claudecfg"
 )
 
 // desiredStatusLine builds the statusLine object statusloom wants written
@@ -140,11 +141,11 @@ func claudeSettingsPath(override string) (string, error) {
 	if override != "" {
 		return override, nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	p := claudecfg.SettingsPath(os.Getenv)
+	if p == "" {
+		return "", errors.New("cannot determine Claude Code config dir: set $CLAUDE_CONFIG_DIR or $HOME")
 	}
-	return filepath.Join(home, ".claude", "settings.json"), nil
+	return p, nil
 }
 
 func printStatusLineDiff(w io.Writer, before, desired any) {

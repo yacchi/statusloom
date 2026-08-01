@@ -1018,25 +1018,85 @@ input[type="number"] {
 /* The variant's `when` candidacy gate, on its own row under the card header.
    Full-width input so a real expression is readable without truncation. */
 .variant-when {
-    display: flex;
-    align-items: center;
-    gap: 6px;
     margin: 2px 0 4px;
     font-size: 11px;
     color: var(--text-dim);
 }
 
-.variant-when-label {
+/* Collapsed state: most variants are unconditional, so all that shows is this
+   button (WhenBuilder). Deliberately quiet — it must not compete with the
+   card's own controls. */
+.when-add {
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 11px;
+    opacity: 0.7;
+}
+
+.when-add:hover {
+    opacity: 1;
+    border-color: var(--accent);
+}
+
+/* Expanded state: metric / operator / value pickers on one wrapping row. */
+.when-builder {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.when-label {
     flex: none;
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
 
-.variant-when input {
-    flex: 1;
-    min-width: 0;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+.when-builder select,
+.when-builder input {
     font-size: 11px;
+    min-width: 0;
+}
+
+.when-metric {
+    flex: 1 1 auto;
+}
+
+.when-op {
+    flex: none;
+}
+
+.when-value {
+    flex: 1 1 6em;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* The text fallback for an expression the pickers cannot represent. */
+.when-raw {
+    flex: 1 1 100%;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.when-advanced-note {
+    flex: 1 1 100%;
+    opacity: 0.7;
+}
+
+.when-clear {
+    flex: none;
+    padding: 0 4px;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 11px;
+    opacity: 0.5;
+}
+
+.when-clear:hover {
+    opacity: 1;
+    color: var(--danger);
 }
 
 /* No scroll box of its own: row tracks soft-wrap now (`.row-track`), so a

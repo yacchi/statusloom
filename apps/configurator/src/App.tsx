@@ -1749,9 +1749,10 @@ function Configurator({ token }: { token: string }) {
                                 onDuplicateVariant={(variantId) => {
                                     applyAstEdit((root) => duplicateVariant(root, variantId));
                                 }}
+                                metrics={metrics}
                                 onPatchVariantWhen={(variantId, when) => {
-                                    // An empty box clears the attribute, making
-                                    // the variant unconditional again.
+                                    // An empty condition clears the attribute,
+                                    // making the variant unconditional again.
                                     applyAstEdit((root) =>
                                         updateAttrs(root, variantId, {
                                             when: when === "" ? undefined : when,

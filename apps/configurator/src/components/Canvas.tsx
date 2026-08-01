@@ -57,6 +57,7 @@ import type {
     LayoutChild,
     LineChild,
     LineNode,
+    Metric,
     PreviewLine,
     PreviewResponse,
     PreviewSegment,
@@ -69,6 +70,7 @@ import type {
     VariantNode,
 } from "../types.ts";
 import { HelpTip } from "./HelpTip.tsx";
+import { WhenBuilder } from "./WhenBuilder.tsx";
 
 // The subagent-region samples the subagent preview toggle picks between.
 type SubagentSample = "subagent-running" | "subagent-completed";
@@ -1016,6 +1018,8 @@ interface VariantCardProps {
     onDuplicate: () => void;
     // Sets (or clears, with "") this variant's `when` candidacy gate.
     onPatchWhen: (when: string) => void;
+    // Metric catalog (GET /api/dsl/metrics), for the when-condition builder.
+    metrics: Metric[];
     onAddSubagent: (containerId: string) => void;
     onDeleteSubagent: (containerId: string) => void;
     onFillSubagentDefault: (subagentLineId: string) => void;
@@ -1051,6 +1055,7 @@ function VariantCard({
     onDeleteVariant,
     onDuplicate,
     onPatchWhen,
+    metrics,
     onAddSubagent,
     onDeleteSubagent,
     onFillSubagentDefault,
@@ -1117,23 +1122,21 @@ function VariantCard({
                     ✕
                 </button>
             </div>
-            {/* The variant's `when` candidacy gate: free text, exactly like a
-                node's when in the properties panel. It is edited here rather
-                than in that panel because a <variant> is not a selectable
-                chip — the card IS its only representation. An empty value
-                clears the attribute (unconditional variant). */}
-            <label className="variant-when">
-                <span className="variant-when-label">{t(lang, "variantWhenLabel")}</span>
-                <input
-                    type="text"
-                    data-testid={`variant-when-${variant.id}`}
-                    value={variant.when ?? ""}
-                    placeholder={t(lang, "variantWhenPlaceholder")}
-                    disabled={readOnly}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => onPatchWhen(e.target.value)}
+            {/* The variant's `when` candidacy gate. It is edited here rather
+                than in the properties panel because a <variant> is not a
+                selectable chip — the card IS its only representation. Most
+                variants are unconditional, so WhenBuilder shows nothing but an
+                "add" button until there is a condition to see. The click guard
+                keeps operating the pickers from also selecting the card. */}
+            <div className="variant-when" onClick={(e) => e.stopPropagation()}>
+                <WhenBuilder
+                    value={variant.when}
+                    metrics={metrics}
+                    readOnly={readOnly}
+                    testidPrefix={`variant-when-${variant.id}`}
+                    onChange={onPatchWhen}
                 />
-            </label>
+            </div>
             <div className="variant-lines">
                 {variant.lines.map((line, j) => (
                     <CanvasRow
@@ -1211,6 +1214,7 @@ interface ResponsiveBlockProps {
     onDeleteVariant: (variantId: string) => void;
     onDuplicateVariant: (variantId: string) => void;
     onPatchVariantWhen: (variantId: string, when: string) => void;
+    metrics: Metric[];
     onAddSubagent: (containerId: string) => void;
     onDeleteSubagent: (containerId: string) => void;
     onFillSubagentDefault: (subagentLineId: string) => void;
@@ -1241,6 +1245,7 @@ function ResponsiveBlock({
     onDeleteVariant,
     onDuplicateVariant,
     onPatchVariantWhen,
+    metrics,
     onAddSubagent,
     onDeleteSubagent,
     onFillSubagentDefault,
@@ -1288,6 +1293,7 @@ function ResponsiveBlock({
                                 onDeleteVariant={() => onDeleteVariant(variant.id)}
                                 onDuplicate={() => onDuplicateVariant(variant.id)}
                                 onPatchWhen={(when) => onPatchVariantWhen(variant.id, when)}
+                                metrics={metrics}
                                 onAddSubagent={onAddSubagent}
                                 onDeleteSubagent={onDeleteSubagent}
                                 onFillSubagentDefault={onFillSubagentDefault}
@@ -1368,6 +1374,7 @@ interface CanvasProps {
     onDeleteVariant: (variantId: string) => void;
     onDuplicateVariant: (variantId: string) => void;
     onPatchVariantWhen: (variantId: string, when: string) => void;
+    metrics: Metric[];
     onAddSubagent: (containerId: string) => void;
     onDeleteSubagent: (containerId: string) => void;
     onFillSubagentDefault: (subagentLineId: string) => void;
@@ -1413,6 +1420,7 @@ export function Canvas({
     onDeleteVariant,
     onDuplicateVariant,
     onPatchVariantWhen,
+    metrics,
     onAddSubagent,
     onDeleteSubagent,
     onFillSubagentDefault,
@@ -1623,6 +1631,7 @@ export function Canvas({
                                         onDeleteVariant={onDeleteVariant}
                                         onDuplicateVariant={onDuplicateVariant}
                                         onPatchVariantWhen={onPatchVariantWhen}
+                                        metrics={metrics}
                                         onAddSubagent={onAddSubagent}
                                         onDeleteSubagent={onDeleteSubagent}
                                         onFillSubagentDefault={onFillSubagentDefault}

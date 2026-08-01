@@ -53,9 +53,14 @@ export function ln(children: LineChild[]): LineNode {
 }
 
 // One <variant> candidate inside a <responsive> (widest-first order is the
-// caller's responsibility, matching the DSL).
-export function variant(lines: LineNode[]): VariantNode {
-    return { id: "", kind: "variant", lines };
+// caller's responsibility, matching the DSL). `when` sets its candidacy gate;
+// omit it for an unconditional variant.
+export function variant(lines: LineNode[], attrs?: { when?: string }): VariantNode {
+    const v: VariantNode = { id: "", kind: "variant", lines };
+    if (attrs?.when !== undefined) {
+        v.when = attrs.when;
+    }
+    return v;
 }
 
 // A <responsive> width-adaptive container, widest variant first.
@@ -637,6 +642,16 @@ export function installFakeDslServer(initial: StatusloomNode): FakeServer {
                             name: "five-hour-percent",
                             displayName: "5-Hour Usage (%)",
                             descriptions: { en: "5h percent", ja: "5時間%" },
+                            percent: true,
+                        },
+                        // A string metric with a closed value set: what the
+                        // when-condition builder offers a <select> for.
+                        {
+                            name: "account-type",
+                            displayName: "Account Type",
+                            descriptions: { en: "account kind", ja: "アカウント種別" },
+                            text: true,
+                            values: ["claude_max", "claude_team"],
                         },
                     ],
                 });

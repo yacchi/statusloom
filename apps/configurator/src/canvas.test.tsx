@@ -264,6 +264,7 @@ describe("canvas drop indicators (standalone)", () => {
                         children={children}
                         layoutId="L0"
                         layoutSubagent={ast.layouts[0].subagent}
+                        metrics={[]}
                         previewLines={null}
                         selectedVariants={null}
                         subagentPreview={null}
@@ -401,16 +402,42 @@ describe("canvas responsive / variant editing", () => {
         });
     });
 
-    it("edits a variant's when gate and clears it again, round-tripping through serialize", async () => {
+    it("builds a variant's when gate from pickers and clears it again, round-tripping through serialize", async () => {
         server = installFakeDslServer(responsiveTestDoc());
         await renderApp();
-        const box = (await waitFor(() => screen.getByTestId("variant-when-L0.1.v0"), {
-            timeout: 3000,
-        })) as HTMLInputElement;
-        // An unconditional variant starts empty (no `when` attribute at all).
-        expect(box.value).toBe("");
 
-        fireEvent.change(box, { target: { value: 'account-type eq "claude_team"' } });
+        // An unconditional variant (the common case) shows only the add button:
+        // no pickers take up room until asked for.
+        const add = await waitFor(() => screen.getByTestId("variant-when-L0.1.v0-add"), {
+            timeout: 3000,
+        });
+        expect(screen.queryByTestId("variant-when-L0.1.v0-metric")).toBeNull();
+
+        fireEvent.click(add);
+        const metric = (await waitFor(() =>
+            screen.getByTestId("variant-when-L0.1.v0-metric"),
+        )) as HTMLSelectElement;
+        // Nothing is written while the condition is still incomplete.
+        expect(metric.value).toBe("");
+
+        // Picking the string metric seeds its first known value, which is
+        // already a complete condition — quoted, because the metric is text.
+        fireEvent.change(metric, { target: { value: "account-type" } });
+        await waitFor(() => {
+            const last = server.putDraftBodies[server.putDraftBodies.length - 1] ?? "";
+            expect(JSON.parse(last).layouts[0].children[1].variants[0].when).toBe(
+                'account-type eq "claude_max"',
+            );
+        });
+
+        // A closed value set is a <select>, and only eq/ne are offered for it.
+        const value = screen.getByTestId("variant-when-L0.1.v0-value") as HTMLSelectElement;
+        expect(value.tagName).toBe("SELECT");
+        expect([...(screen.getByTestId("variant-when-L0.1.v0-op") as HTMLSelectElement).options].map(
+            (o) => o.value,
+        )).toEqual(["eq", "ne"]);
+
+        fireEvent.change(value, { target: { value: "claude_team" } });
         await waitFor(() => {
             const last = server.putDraftBodies[server.putDraftBodies.length - 1] ?? "";
             expect(JSON.parse(last).layouts[0].children[1].variants[0].when).toBe(
@@ -418,11 +445,114 @@ describe("canvas responsive / variant editing", () => {
             );
         });
 
-        // Emptying the box clears the attribute rather than storing "".
-        fireEvent.change(screen.getByTestId("variant-when-L0.1.v0"), { target: { value: "" } });
+        // Clearing removes the attribute rather than storing "", and collapses
+        // the builder back to the add button.
+        fireEvent.click(screen.getByTestId("variant-when-L0.1.v0-clear"));
         await waitFor(() => {
             const last = server.putDraftBodies[server.putDraftBodies.length - 1] ?? "";
             expect(JSON.parse(last).layouts[0].children[1].variants[0].when).toBeUndefined();
+        });
+        await waitFor(() =>
+            expect(screen.getByTestId("variant-when-L0.1.v0-add")).toBeTruthy(),
+        );
+    });
+
+    it("keeps a half-built condition on screen instead of writing it (metric with no known values)", async () => {
+        // Regression: the pickers render from the document, and an incomplete
+        // condition has no valid DSL form. Writing "" for it round-tripped as
+        // "no condition" and instantly reset the metric the user had just
+        // picked, which made the selects look broken. It must stay local until
+        // the value makes it complete.
+        server = installFakeDslServer(responsiveTestDoc());
+        await renderApp();
+        fireEvent.click(
+            await waitFor(() => screen.getByTestId("variant-when-L0.1.v0-add"), { timeout: 3000 }),
+        );
+
+        const metric = (await waitFor(() =>
+            screen.getByTestId("variant-when-L0.1.v0-metric"),
+        )) as HTMLSelectElement;
+        const before = server.putDraftBodies.length;
+
+        // five-hour-percent declares no `values`, so picking it leaves the
+        // value empty — the condition is not yet complete.
+        fireEvent.change(metric, { target: { value: "five-hour-percent" } });
+
+        // The choice sticks, and its value box is a text input (no value set).
+        await waitFor(() =>
+            expect(
+                (screen.getByTestId("variant-when-L0.1.v0-metric") as HTMLSelectElement).value,
+            ).toBe("five-hour-percent"),
+        );
+        const value = screen.getByTestId("variant-when-L0.1.v0-value") as HTMLInputElement;
+        expect(value.tagName).toBe("INPUT");
+        expect(server.putDraftBodies.length).toBe(before); // nothing written yet
+
+        // Typing the value completes it, and only then is it written — bare,
+        // since the metric is numeric rather than a string.
+        fireEvent.change(value, { target: { value: "80" } });
+        await waitFor(() => {
+            const last = server.putDraftBodies[server.putDraftBodies.length - 1] ?? "";
+            expect(JSON.parse(last).layouts[0].children[1].variants[0].when).toBe(
+                "five-hour-percent eq 80",
+            );
+        });
+
+        // The operator remains editable afterwards.
+        fireEvent.change(screen.getByTestId("variant-when-L0.1.v0-op"), {
+            target: { value: "ge" },
+        });
+        await waitFor(() => {
+            const last = server.putDraftBodies[server.putDraftBodies.length - 1] ?? "";
+            expect(JSON.parse(last).layouts[0].children[1].variants[0].when).toBe(
+                "five-hour-percent ge 80",
+            );
+        });
+    });
+
+    it("keeps an expression the pickers cannot represent editable as text", async () => {
+        // and/or, not, parentheses: outside the builder's single-comparison
+        // shape, so it must be shown as raw text and never silently rewritten.
+        server = installFakeDslServer(
+            doc([
+                lay(
+                    "Default",
+                    [
+                        ln([fld("model")]),
+                        resp([
+                            variant([ln([fld("model")])], {
+                                when: 'account-type eq "claude_team" and five-hour-percent ge 50',
+                            }),
+                            variant([ln([fld("model")])]),
+                        ]),
+                    ],
+                    true,
+                ),
+            ]),
+        );
+        await renderApp();
+
+        const raw = (await waitFor(() => screen.getByTestId("variant-when-L0.1.v0-raw"), {
+            timeout: 3000,
+        })) as HTMLInputElement;
+        expect(raw.value).toBe('account-type eq "claude_team" and five-hour-percent ge 50');
+        expect(screen.queryByTestId("variant-when-L0.1.v0-metric")).toBeNull();
+
+        // Committed on blur, not per keystroke: the intermediate states of
+        // typing an expression are invalid DSL, and applyAstEdit latches on the
+        // first invalid document.
+        const before = server.putDraftBodies.length;
+        fireEvent.change(raw, {
+            target: { value: 'account-type eq "claude_max" or five-hour-percent ge 90' },
+        });
+        expect(server.putDraftBodies.length).toBe(before); // not yet
+
+        fireEvent.blur(raw);
+        await waitFor(() => {
+            const last = server.putDraftBodies[server.putDraftBodies.length - 1] ?? "";
+            expect(JSON.parse(last).layouts[0].children[1].variants[0].when).toBe(
+                'account-type eq "claude_max" or five-hour-percent ge 90',
+            );
         });
     });
 

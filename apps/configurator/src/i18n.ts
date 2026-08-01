@@ -55,8 +55,16 @@ const EN = {
         "Width-adaptive container: picks the first variant (widest first) whose lines all fit the current width, or the last variant when none fit.",
     variantLabel: "Variant",
     variantSelectedBadge: "selected at this width",
-    variantWhenLabel: "Show when",
-    variantWhenPlaceholder: 'always (e.g. account-type eq "claude_team")',
+    // when-condition builder (WhenBuilder)
+    whenAdd: "Condition",
+    whenLabel: "Show when",
+    whenClear: "Remove condition",
+    whenPickMetric: "(pick a metric)",
+    whenValueText: "value",
+    whenValueNumber: "e.g. 80",
+    whenAdvancedCommit: "advanced expression — edited as text (Enter or leave the box to apply)",
+    helpWhenVariant:
+        'Condition for this variant to be a candidate at all, e.g. account-type eq "claude_team". It is evaluated BEFORE the width fit, and a metric that cannot be resolved (no account profile, say) makes it false. The pickers build one comparison; a combined condition (and/or/not, parentheses) is valid DSL but has no builder here — write it in the DSL editor, and an existing one stays editable as text.',
     responsiveNoCandidate:
         "No variant is a candidate here: every one of them has a when condition that is currently false, so this block renders nothing.",
     // layout tabs
@@ -202,8 +210,15 @@ const JA: Record<MessageKey, string> = {
         "幅に応じて表示を切り替えるコンテナです。全行が収まる最初のバリアント（広い順）を採用し、どれも収まらない場合は最後のバリアントを使います。",
     variantLabel: "Variant",
     variantSelectedBadge: "この幅で選択中",
-    variantWhenLabel: "表示条件",
-    variantWhenPlaceholder: '常に候補（例: account-type eq "claude_team"）',
+    whenAdd: "条件",
+    whenLabel: "表示条件",
+    whenClear: "条件を削除",
+    whenPickMetric: "（メトリクスを選択）",
+    whenValueText: "値",
+    whenValueNumber: "例: 80",
+    whenAdvancedCommit: "複合式のためテキストで編集します（Enterまたはフォーカスを外すと反映）",
+    helpWhenVariant:
+        'このvariantが候補になる条件です（例: account-type eq "claude_team"）。幅の判定より前に評価され、解決できないメトリクス（アカウント情報が無い等）は偽になります。ここで組み立てられるのは1つの比較です。複合条件（and/or/not・括弧）はDSLとしては有効ですが入力欄はありません — DSLエディタで記述してください（既存の複合式はテキストで編集できます）。',
     responsiveNoCandidate:
         "候補となるvariantがありません: すべてのvariantのwhen条件が現在偽のため、このブロックは何も表示されません。",
     layoutTabHint: "クリックでこのレイアウトを編集、ダブルクリックで名前変更。",

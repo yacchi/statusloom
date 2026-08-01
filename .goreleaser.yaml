@@ -2,12 +2,11 @@
 #
 # NOTE on `--skip=validate`: the release workflow runs this with
 # `--skip=validate` because the `before.hooks` step below (build-web.sh)
-# builds apps/configurator and copies its output into
-# internal/webconfig/dist, which intentionally leaves the git tree dirty
-# (that directory only carries a placeholder index.html in version
-# control; see CLAUDE.md / scripts/clean-web.sh). GoReleaser's validate
-# step rejects a dirty tree, so we skip it deliberately rather than
-# reordering the embed step after the build.
+# runs `pnpm install`, which can touch tracked files (pnpm-lock.yaml) and
+# leave the git tree dirty; GoReleaser's validate step rejects a dirty tree.
+# The embedded frontend itself no longer contributes: internal/webconfig/dist
+# is git-ignored in full (see internal/webconfig/assets.go), so building it
+# is invisible to git.
 version: 2
 project_name: statusloom
 

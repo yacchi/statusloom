@@ -48,7 +48,7 @@ the configurator UI, then runs `go install ./cmd/statusloom`. Because it
 builds from the local working tree, the freshly built UI in
 `internal/webconfig/dist` is embedded into the binary. (This is why
 cloning works but `go install ...@latest` does not: the embedded assets
-are never committed — see `scripts/clean-web.sh` and `CLAUDE.md`.) This
+are git-ignored and never committed — see `CLAUDE.md`.) This
 works on Windows too, though running Claude Code itself on Windows is not
 yet well supported.
 
@@ -476,9 +476,11 @@ pnpm --filter @statusloom/configurator test      # run the configurator frontend
 mise tasks bundle these steps; run `mise tasks ls` for the full list
 (`mise run check` runs the pre-commit gate: lint + frontend build + tests).
 
-`scripts/build-web.sh` produces built assets that must not be committed;
-run `scripts/clean-web.sh` to restore the placeholder
-`internal/webconfig/dist/index.html` before committing.
+`scripts/build-web.sh` writes into `internal/webconfig/dist`, which is
+git-ignored in full (`internal/webconfig/dist/.gitignore` is its only
+tracked entry), so there is no clean-up step before committing. A binary
+built without running it serves a "run scripts/build-web.sh" page instead
+of the UI.
 
 ## License
 

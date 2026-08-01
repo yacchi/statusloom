@@ -1,0 +1,11 @@
+# Build output of scripts/build-web.sh. Nothing in here is ever committed —
+# this file is the ONLY tracked entry, and it exists solely so the directory
+# survives a fresh clone: //go:embed all:dist in ../assets.go fails to compile
+# against a missing directory.
+#
+# There is deliberately no placeholder index.html: assets.go detects the
+# not-yet-built case at runtime and serves a "run scripts/build-web.sh" page,
+# so there is no build artifact to accidentally commit and no clean-up step
+# to remember before committing.
+*
+!.gitignore

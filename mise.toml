@@ -5,7 +5,7 @@ pnpm = "10"
 goreleaser = "latest"
 
 [tasks.build-web]
-description = "Build the configurator frontend and embed it into internal/webconfig/dist, skipping when inputs are unchanged (build output must NOT be committed; run clean-web before committing)"
+description = "Build the configurator frontend and embed it into internal/webconfig/dist, skipping when inputs are unchanged (the output is git-ignored, so there is nothing to clean up before committing)"
 run = "scripts/build-web.sh"
 sources = [
     "apps/configurator/src/**/*",
@@ -23,10 +23,6 @@ sources = [
     "scripts/build-web.sh",
 ]
 outputs = ["internal/webconfig/dist/**/*"]
-
-[tasks.clean-web]
-description = "Restore internal/webconfig/dist to the placeholder index.html (run before committing)"
-run = "scripts/clean-web.sh"
 
 [tasks.build]
 description = "Build the statusloom binary, auto-building the embedded web UI first and skipping when inputs are unchanged"
@@ -66,7 +62,7 @@ description = "Build the configurator frontend (apps/configurator/dist) without 
 run = "pnpm --filter @statusloom/configurator build"
 
 [tasks.check]
-description = "Pre-commit gate: gofmt/vet + frontend build + Go and frontend test suites (does not run build-web, which would leave uncommittable embedded assets)"
+description = "Pre-commit gate: gofmt/vet + frontend build + Go and frontend test suites"
 depends = ["lint", "web-build", "test"]
 
 [tasks.release-check]
@@ -78,5 +74,5 @@ description = "Validate .goreleaser.yaml without building or publishing anything
 run = 'out=$(goreleaser check 2>&1) || true; echo "$out"; echo "$out" | grep -q "configuration is valid" || exit 1'
 
 [tasks.release-snapshot]
-description = "Build a local snapshot release (all platforms, no publish) to sanity-check the GoReleaser pipeline; runs build-web via the before-hook, which leaves internal/webconfig/dist dirty (run clean-web before committing)"
+description = "Build a local snapshot release (all platforms, no publish) to sanity-check the GoReleaser pipeline; runs build-web via the before-hook"
 run = "goreleaser release --snapshot --clean --skip=validate"

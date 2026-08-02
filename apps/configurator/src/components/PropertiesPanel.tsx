@@ -756,8 +756,11 @@ export function PropertiesPanel({
     const lang = useLang();
 
     if (!node || !(node.kind in KIND_TITLES)) {
+        // Nothing selected: this panel has no content to hold, so it recedes
+        // (panel-empty) instead of reserving a full-size empty box under the
+        // preview — the preview is what the user should be looking at.
         return (
-            <div className="panel">
+            <div className="panel panel-empty">
                 <h2>Properties</h2>
                 <p className="hint">{t(lang, "propertiesEmptyHint")}</p>
             </div>

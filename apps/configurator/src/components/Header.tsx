@@ -74,12 +74,16 @@ export function Header({
             ) : null}
             <div className="spacer" />
             <div className="toolbar">
-                <button onClick={onUndo} disabled={!canUndo} title="Undo (Cmd/Ctrl+Z)">
-                    Undo
-                </button>
-                <button onClick={onRedo} disabled={!canRedo} title="Redo (Shift+Cmd/Ctrl+Z)">
-                    Redo
-                </button>
+                {/* Undo and Redo are one unit: grouped so they sit tighter to
+                    each other than to the neighboring tools (.toolbar-group). */}
+                <span className="toolbar-group">
+                    <button onClick={onUndo} disabled={!canUndo} title="Undo (Cmd/Ctrl+Z)">
+                        Undo
+                    </button>
+                    <button onClick={onRedo} disabled={!canRedo} title="Redo (Shift+Cmd/Ctrl+Z)">
+                        Redo
+                    </button>
+                </span>
                 <button
                     className="settings-button"
                     data-testid="settings-button"

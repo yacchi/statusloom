@@ -231,6 +231,69 @@ Git・Claude Code のセットアップを検査します — カウントダウ
 （`five-hour-reset`・`weekly-reset`）が設定されているのに `refreshInterval`
 が未設定かどうかも含みます。
 
+### エディタやエージェントから draft を編集する
+
+```
+statusloom draft pull [file]     # 設定UIの未保存draftをファイルに書き出す
+statusloom draft push [file]     # 編集したファイルをdraftとして戻す
+```
+
+設定 UI の未保存の編集は共有 draft に置かれており、この 2 コマンドはその
+ファイル側の口です。pull して自分のエディタで編集（あるいはコーディング
+エージェントに渡し）、push すれば、開いている設定 UI がその変更を拾います
+— プレビューまで含めて、誰も保存する必要はありません。埋め込み端末の
+ワークスペースが使っているのもこれです。HTTP API ではなくローカルのストア
+を経由するのでトークンは不要です。
+
+`statusloom claude --draft` は保存済みではなく draft を描画するので、実際の
+Claude Code セッションを作業中の内容に向けることもできます。
+
+### CLI からの変更履歴操作
+
+```
+statusloom history list
+statusloom history show <id>
+statusloom history diff <id> [<id2>]
+statusloom history restore <id> [--force]
+```
+
+History パネルが見せているのと同じリビジョンです。`restore` は、現在の
+ドキュメントと異なる未保存 draft を捨てることになる場合、`--force` が
+なければ拒否します。
+
+### ドキュメントの共有: Markdown 交換フォーマット
+
+```
+statusloom export [-o file]      # *.sloom.md を出力（既定はstdout）
+statusloom import <file>         # 新しいリビジョンとして取り込む（"-" はstdin）
+```
+
+`*.sloom.md` は frontmatter ＋ `xml` フェンスブロックです。それ自体が読める
+ドキュメントであり、そのまま取り込めます。プリセットが機械や人の間を移動する
+経路になります:
+
+```sh
+statusloom export -o my-layout.sloom.md
+# … 別のマシンで
+statusloom import my-layout.sloom.md
+```
+
+import は設定 UI からの保存とまったく同じ Parse+Validate 境界を通るので、
+取り込めたドキュメントは描画できるドキュメントです。
+
+### ライブプレビューと描画
+
+```
+statusloom monitor --emit-url URL --token TOK
+statusloom render [--tool ID]
+statusloom version
+```
+
+`monitor` は `statusloom claude` と同じように描画しつつ、ペイロードを動作中の
+設定 UI へ転送します。これが前述のライブモニタを駆動しています — 貼り付ける
+コマンドは設定 UI が表示します。`render` はツール非依存の入口で、`--tool` を
+省略すると stdin のペイロードからツールを判定します。
+
 ## フィールド
 
 Statusloom は Claude Code 向けに、モデル・コンテキスト使用量・コスト・Git の
@@ -268,6 +331,88 @@ Statusloom は Claude Code 向けに、モデル・コンテキスト使用量�
 `task-duration`。`task-effort` も登録されていますが、Claude Code の
 `subagentStatusLine` プロトコルがサブエージェントごとの reasoning effort を
 公開していないため、現状は常に利用不能です。
+
+### `<span>` によるグループ化
+
+`<span>` は複数の子要素を包み、それらを 1 つのものとして扱います。この 1 つの
+考え方が、「値を出す」以外にステータスラインが必要とすることの大半を覆います:
+
+```xml
+<span prefix="5h: " suffix=" left" padding="1"
+      color="cyan" optional="five-hour-usage">
+    <field name="five-hour-usage" format="percent"/>
+    <text> / </text>
+    <field name="five-hour-reset" format="countdown"/>
+</span>
+```
+
+- **グループ全体に 1 つの装飾。** `color`・`background`・`bold`・`dim`・
+  `italic`・`underline`・`strikethrough` は中のすべてに継承されます
+  （近い方が勝つ）。中の各フィールドに書くのではなく、グループに 1 回書けば
+  済みます。
+- **グループに属するラベル。** `prefix`・`suffix`・`padding` はグループ自身の
+  装飾で描かれ、子には継承されません。
+- **グループ全体で 1 つの表示判断。** `optional="<field>"` と `when="..."` は
+  span 全体をゲートします — ラベルがデータと一緒に消えるので、`5h: ` を別の
+  `<text>` ではなく span の prefix として書きます。グループ化がなければ、
+  同じ条件をラベルと各フィールドに書き写すことになります。
+- **入れ子。** span は入れ子にできるので、グループが共通の色を持ちつつ、
+  内側のグループが一部だけ切り替えられます。
+
+エディタもこれを反映しています。span は枠で囲まれたチップのグループとして
+描かれ、チップを出し入れでき、グループ自身（`⋮` グリップ）を選ぶとグループの
+装飾・条件・ラベルを編集できます。以下は、グループを選択し、グループ全体に
+一度で色を付け、グループのラベルを編集し、最後に子 1 つだけ上書きする様子 —
+グループの色は他の要素に残ったままです。
+
+![spanグループを選択し、グループ全体に色を付け、ラベルを編集し、子1つの色を上書きする](docs/media/span-grouping.gif)
+
+### 幅への適応: セパレータ・flex・compact・variant
+
+小さいものから大きいものへ、4 つの仕組みが端末が狭くなっても行を読める状態に
+保ちます:
+
+- **自動的に畳まれるセパレータ。** `<text role="separator">` は、先頭・末尾に
+  来る場合や他のセパレータと隣接する場合に落とされます — フィールドを隠しても
+  ` | ` が取り残されません。全フィールドの間にセパレータを書いて、あとは
+  考えなくて済みます。
+- **flex。** `<flex/>` は行を埋めるまで伸び、これが右寄せの手段です。
+  `size="full-minus-N"` は Claude Code 自身のオーバーレイのために N 桁を
+  空けます（[レイアウト](#レイアウト)参照）。
+- **compact 形式。** `compact-threshold` 桁を下回ると、フィールドは compact な
+  描画に切り替わり、セパレータは padding を落とします — 属性 1 つで、
+  2 つ目のレイアウトを維持する必要はありません。
+- **variant。** compact でも足りないときは、`<responsive>` コンテナが複数の
+  レイアウト候補を持ち、全行が収まる最初の候補が使われます（広い順、最後が
+  フォールバック）。`<variant>` は `when` 条件も持てて、これは幅の判定より
+  **前**に評価されます — 1 つのドキュメントで Team シートと個人サブスクリプション
+  の両方に対応できるのはこのためです。
+
+```xml
+<responsive>
+  <variant>                          <!-- 広い: 全部出す -->
+    <line><field name="model"/><flex/><field name="session-cost"/></line>
+  </variant>
+  <variant>                          <!-- 狭い: フォールバック -->
+    <line><field name="model"/></line>
+  </variant>
+</responsive>
+```
+
+### 1 つのドキュメントに複数のレイアウト
+
+ドキュメントは複数の `<layout>` を持てます。`active="true"` のものが実際に
+描画されます。他はドキュメント内に残るので、詳細なレイアウトと最小の
+レイアウトを並べて持ち、切り替えて使えます（設定 UI のレイアウトタブが
+まさにこれです）。1 つのレイアウトを行き来して書き換える必要はありません。
+
+### フォーマッタ
+
+`format` が値の書き方を、`precision` がその精度を決めます:
+`percent`・`number`・`compact-number`（`28.5k`）・`currency`（`$9.50`）・
+`duration`（`1h 15m`）・`countdown`（残り時間）・`enum`。同じフィールドを
+あるレイアウトでは `38.3%`、狭いレイアウトでは `38%` として出せます —
+データ側には手を入れません。
 
 ### 条件付き表示と色
 

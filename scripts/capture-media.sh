@@ -89,7 +89,7 @@ echo "Building the frontend and the binary ..."
 "$script_dir/build-web.sh" > /dev/null
 go build -o "$work/statusloom" ./cmd/statusloom
 
-for phase in anim stills; do
+for phase in anim span stills; do
     echo "Capturing ($phase) ..."
     url="$(start_server)"
     env UI_URL="$url" MEDIA_OUT="$repo_root/docs/media" CAPTURE_PHASE="$phase" \

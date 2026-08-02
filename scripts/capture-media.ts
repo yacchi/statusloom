@@ -263,25 +263,113 @@ async function captureAnimation(): Promise<void> {
     await rec.close();
     await browser.close();
 
-    // ---- webm -> gif ------------------------------------------------------
-    const videoDir2 = join(OUT, ".video");
-    const webm = readdirSync(videoDir2).find((f) => f.endsWith(".webm"));
+    await webmToGif("editor.gif");
+}
+
+// Turns the recording Playwright just wrote into the GIF the README embeds, and
+// removes the raw video. Two-pass palette at a reduced size and frame rate: the
+// UI is flat colour, so it survives that and a README GIF has to stay small.
+async function webmToGif(name: string): Promise<void> {
+    const videoDir = join(OUT, ".video");
+    const webm = readdirSync(videoDir).find((f) => f.endsWith(".webm"));
     if (!webm) {
         throw new Error("playwright wrote no video");
     }
-    const src_webm = join(videoDir2, webm);
-    // Two-pass palette for a readable GIF at a sane size: the UI is mostly flat
-    // colors, so a per-clip palette keeps text crisp.
-    const palette = join(videoDir2, "palette.png");
+    const src = join(videoDir, webm);
+    const palette = join(videoDir, "palette.png");
     const gifFilter = "fps=10,scale=900:-1:flags=lanczos";
-    sh("ffmpeg", ["-y", "-loglevel", "error", "-i", src_webm,
+    sh("ffmpeg", ["-y", "-loglevel", "error", "-i", src,
         "-vf", `${gifFilter},palettegen=max_colors=64:stats_mode=diff`, palette]);
-    sh("ffmpeg", ["-y", "-loglevel", "error", "-i", src_webm, "-i", palette,
+    sh("ffmpeg", ["-y", "-loglevel", "error", "-i", src, "-i", palette,
         "-lavfi", `${gifFilter}[v];[v][1:v]paletteuse=dither=bayer:bayer_scale=3`,
-        `${OUT}/editor.gif`]);
-    // Keep the source recording out of git; the GIF is the deliverable.
-    rmSync(videoDir2, { recursive: true, force: true });
-    console.log(`wrote ${OUT}/editor.gif`);
+        `${OUT}/${name}`]);
+    rmSync(videoDir, { recursive: true, force: true });
+    console.log(`wrote ${OUT}/${name}`);
+}
+
+// The grouping clip: what a <span> buys you. Selects the group (not a field),
+// restyles it so the whole group changes at once, edits the group's own label,
+// then overrides one child to show that inheritance is nearest-wins.
+async function captureSpanClip(): Promise<void> {
+    const videoDir = join(OUT, ".video");
+    rmSync(videoDir, { recursive: true, force: true });
+    mkdirSync(videoDir, { recursive: true });
+
+    const browser = await chromium.launch();
+    const rec = await browser.newContext({
+        viewport: VIEWPORT,
+        recordVideo: { dir: videoDir, size: VIEWPORT },
+    });
+    const page = await rec.newPage();
+    await page.goto(UI_URL!, { waitUntil: "networkidle" });
+    await page.waitForSelector(".span-group", { timeout: 20000 });
+    await page.locator('[data-testid="width-slider"]').fill(PREVIEW_COLUMNS);
+    await page.waitForTimeout(700);
+    await installCursor(page);
+    await page.mouse.move(VIEWPORT.width / 2, VIEWPORT.height / 2);
+    await page.waitForTimeout(900);
+
+    // 1. Select the GROUP via its grip — a span with no decoration of its own
+    //    would otherwise have no clickable area.
+    const grip = page.locator(".span-handle").first();
+    const gb = await grip.boundingBox();
+    if (gb) {
+        await glide(page, { x: gb.x + gb.width / 2, y: gb.y + gb.height / 2 });
+    }
+    await grip.click();
+    await page.waitForTimeout(1100);
+
+    // 2. One colour for the whole group: prefix, both fields, separator.
+    const swatch = page.locator('[data-testid="swatch-magenta"]').first();
+    if ((await swatch.count()) > 0) {
+        const b = await swatch.boundingBox();
+        if (b) {
+            await glide(page, { x: b.x + b.width / 2, y: b.y + b.height / 2 });
+            await page.waitForTimeout(250);
+            await swatch.click();
+            await page.waitForTimeout(1400);
+        }
+    }
+
+    // 3. The group's own label, which disappears with the group.
+    const prefix = page.locator('[data-testid="attr-prefix"]');
+    if ((await prefix.count()) > 0) {
+        const b = await prefix.boundingBox();
+        if (b) {
+            await glide(page, { x: b.x + b.width / 2, y: b.y + b.height / 2 });
+        }
+        await prefix.click();
+        await prefix.fill("");
+        await prefix.type("5h left: ", { delay: 110 });
+        await page.waitForTimeout(1300);
+    }
+
+    // 4. Override one child: nearest-wins, so the group's colour stays on
+    //    everything else.
+    const inner = page.locator(".span-group .seg-chip.inner").first();
+    if ((await inner.count()) > 0) {
+        const b = await inner.boundingBox();
+        if (b) {
+            await glide(page, { x: b.x + b.width / 2, y: b.y + b.height / 2 });
+        }
+        await inner.click();
+        await page.waitForTimeout(900);
+        const yellow = page.locator('[data-testid="swatch-yellow"]').first();
+        if ((await yellow.count()) > 0) {
+            const yb = await yellow.boundingBox();
+            if (yb) {
+                await glide(page, { x: yb.x + yb.width / 2, y: yb.y + yb.height / 2 });
+                await page.waitForTimeout(250);
+                await yellow.click();
+                await page.waitForTimeout(1600);
+            }
+        }
+    }
+
+    await page.close();
+    await rec.close();
+    await browser.close();
+    await webmToGif("span-grouping.gif");
 }
 
 mkdirSync(OUT, { recursive: true });
@@ -290,4 +378,7 @@ if (PHASE === "stills" || PHASE === "all") {
 }
 if (PHASE === "anim" || PHASE === "all") {
     await captureAnimation();
+}
+if (PHASE === "span" || PHASE === "all") {
+    await captureSpanClip();
 }

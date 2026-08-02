@@ -240,6 +240,70 @@ the cache, Git, and Claude Code setup — including whether
 `refreshInterval` is configured when countdown fields (`five-hour-reset`,
 `weekly-reset`) are in use.
 
+### Editing the draft from your editor or an agent
+
+```
+statusloom draft pull [file]     # write the configurator's unsaved draft to a file
+statusloom draft push [file]     # push an edited file back as the draft
+```
+
+The configurator's unsaved edits live in a shared draft, and these two
+commands are the file-shaped end of it. Pull it, edit it in your own editor
+(or hand it to a coding agent), push it back, and the open configurator
+picks the change up — preview included — without anyone having to save
+first. This is what the embedded terminal's workspace uses, and it needs no
+token, since it goes through the local store rather than the HTTP API.
+
+`statusloom claude --draft` renders the draft instead of the saved document,
+so you can also point a real Claude Code session at work in progress.
+
+### Version history from the CLI
+
+```
+statusloom history list
+statusloom history show <id>
+statusloom history diff <id> [<id2>]
+statusloom history restore <id> [--force]
+```
+
+The same revisions the History panel shows. `restore` refuses to discard an
+unsaved draft that differs from the current document unless you pass
+`--force`.
+
+### Sharing a document: the Markdown exchange format
+
+```
+statusloom export [-o file]      # a *.sloom.md document (stdout by default)
+statusloom import <file>         # import one as a new revision ("-" reads stdin)
+```
+
+A `*.sloom.md` is frontmatter plus a fenced `xml` block — readable as a
+document in its own right, and importable verbatim. It is how presets travel
+between machines and people:
+
+```sh
+statusloom export -o my-layout.sloom.md
+# … on another machine
+statusloom import my-layout.sloom.md
+```
+
+Import goes through exactly the same Parse+Validate boundary as saving from
+the configurator, so a document that imports is a document that renders.
+
+### Live preview and rendering
+
+```
+statusloom monitor --emit-url URL --token TOK
+statusloom render [--tool ID]
+statusloom version
+```
+
+`monitor` renders like `statusloom claude` and additionally forwards the
+payload to a running configurator, which is what drives the live monitor
+described above — the configurator prints the exact command to paste.
+`render` is the tool-agnostic entry point: it detects the tool from the
+stdin payload when `--tool` is omitted.
+
 ## Fields
 
 Statusloom ships a catalog of built-in fields for Claude Code covering
@@ -280,6 +344,90 @@ subagent task: `task-description`, `task-model`, `task-model-id`,
 but currently always unavailable, since Claude Code's
 `subagentStatusLine` protocol doesn't expose per-subagent reasoning
 effort.
+
+### Grouping with `<span>`
+
+A `<span>` wraps several children and treats them as one thing. That single
+idea covers most of what a status line needs beyond "print this value":
+
+```xml
+<span prefix="5h: " suffix=" left" padding="1"
+      color="cyan" optional="five-hour-usage">
+    <field name="five-hour-usage" format="percent"/>
+    <text> / </text>
+    <field name="five-hour-reset" format="countdown"/>
+</span>
+```
+
+- **One style for the group.** `color`, `background`, `bold`, `dim`,
+  `italic`, `underline`, and `strikethrough` are inherited by everything
+  inside (nearest wins), so you colour a group once instead of every field
+  in it.
+- **Labels that belong to the group.** `prefix`, `suffix`, and `padding`
+  render in the group's own style and are not inherited by children.
+- **One visibility decision for the group.** `optional="<field>"` and
+  `when="..."` gate the whole span — the label disappears together with the
+  data, which is the reason `5h: ` is written as a span's prefix rather than
+  as a separate `<text>`. Without grouping you would have to repeat the same
+  condition on the label and on every field.
+- **Nesting.** Spans nest, so a group can carry a shared colour while an
+  inner group flips one part of it.
+
+The editor mirrors this: a span renders as a bordered chip group you can
+drag chips into and out of, and selecting the group (its `⋮` grip) edits the
+group's own style, condition, and label. Below: selecting the group, giving
+the whole group a colour at once, editing the group's label, then overriding
+one child — the group's colour stays on everything else.
+
+![Selecting a span group, colouring the whole group, editing its label, then overriding one child's colour](docs/media/span-grouping.gif)
+
+### Adaptive width: separators, flex, compact, and variants
+
+Four mechanisms, from smallest to largest, keep a line readable as the
+terminal narrows:
+
+- **Collapsing separators.** `<text role="separator">` is dropped when it
+  would end up leading, trailing, or next to another separator — so hiding a
+  field never leaves a dangling ` | `. You write separators between every
+  field and stop thinking about it.
+- **Flex.** `<flex/>` expands to fill the line, which is how you
+  right-align a run of content. `size="full-minus-N"` leaves N columns free
+  for Claude Code's own overlays (see [Layout](#layout)).
+- **Compact forms.** Below `compact-threshold` columns, fields switch to
+  their compact rendering and separators drop their padding — one attribute,
+  no second layout to maintain.
+- **Variants.** When compaction is not enough, a `<responsive>` container
+  holds several candidate layouts and the first one whose lines all fit is
+  used (widest first, last one as the fallback). A `<variant>` can also
+  carry a `when` condition, which is evaluated *before* the width fit — that
+  is how one document serves both a Team seat and a personal subscription.
+
+```xml
+<responsive>
+  <variant>                          <!-- wide: everything -->
+    <line><field name="model"/><flex/><field name="session-cost"/></line>
+  </variant>
+  <variant>                          <!-- narrow: fallback -->
+    <line><field name="model"/></line>
+  </variant>
+</responsive>
+```
+
+### Several layouts in one document
+
+A document can hold more than one `<layout>`; the one with `active="true"`
+is what the status line renders. The others stay in the document, so you can
+keep a verbose layout and a minimal one side by side and switch between them
+(the configurator's layout tabs do exactly that) instead of rewriting one
+layout back and forth.
+
+### Formatters
+
+`format` decides how a value is written, and `precision` how precisely:
+`percent`, `number`, `compact-number` (`28.5k`), `currency` (`$9.50`),
+`duration` (`1h 15m`), `countdown` (time remaining), and `enum`. The same
+field can therefore appear as `38.3%` in one layout and `38%` in a narrower
+one without touching the data.
 
 ### Conditional display and color
 

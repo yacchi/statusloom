@@ -167,6 +167,36 @@ carry a condition (for example, only on a Team account):
 
 ![A responsive container with two variant cards, one gated on account-type](docs/media/responsive.png)
 
+#### Version history
+
+Every save is a revision. The History panel lists them newest first, shows
+the diff of any revision against the current document, and restores it —
+so trying a layout out costs nothing.
+
+![The history panel listing revisions with the DSL diff of the selected one](docs/media/history.png)
+
+#### Live preview against your own sessions
+
+The samples above are synthetic. The live monitor renders your status line
+from REAL session snapshots as they arrive, so you can see how a layout
+behaves on your actual repositories, usage, and costs rather than on made-up
+numbers. It prints a command to run in whichever terminal you want to
+watch:
+
+![The live monitor waiting for a session, with the command to run](docs/media/live-monitor.png)
+
+#### Customizing with Claude Code itself
+
+"Start embedded session" opens a terminal inside the configurator running
+Claude Code in a workspace statusloom provisions for it: its own
+`CLAUDE.md` explaining the DSL and the current document, a sample stdin
+payload, and a status line wired to `--draft`. So you can ask the agent for
+what you want in words ("put the git branch on the right, and drop the cost
+when the terminal is narrow"), and its edits land in the shared draft that
+the visual editor and the preview are already showing. Describing a status
+line is often faster than assembling one, and you keep both routes over the
+same document.
+
 ### Setup
 
 ```

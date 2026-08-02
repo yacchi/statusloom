@@ -20,7 +20,6 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 cd "$repo_root"
 
 work="$(mktemp -d)"
-port="${CAPTURE_PORT:-45911}"
 server_pid=""
 
 cleanup() {
@@ -30,10 +29,14 @@ cleanup() {
 trap cleanup EXIT
 
 stop_server() {
-    if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
-        kill "$server_pid" 2>/dev/null || true
-        wait "$server_pid" 2>/dev/null || true
-    fi
+    [[ -z "$server_pid" ]] && return 0
+    kill "$server_pid" 2>/dev/null || true
+    for _ in $(seq 1 12); do
+        kill -0 "$server_pid" 2>/dev/null || { server_pid=""; return 0; }
+        sleep 0.25
+    done
+    kill -9 "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
     server_pid=""
 }
 
@@ -47,13 +50,13 @@ start_server() {
         STATUSLOOM_CACHE_DIR="$work/cache" \
         CLAUDE_CONFIG_DIR="$work/claude" \
         STATUSLOOM_NO_USAGE_API=1 \
-        "$work/statusloom" config -no-browser -port "$port" > "$work/server.log" 2>&1 &
+        "$work/statusloom" config -no-browser > "$work/server.log" 2>&1 &
     server_pid=$!
 
     local url=""
     for _ in $(seq 1 20); do
         sleep 0.5
-        url="$(grep -o "http://127.0.0.1:$port[^ ]*" "$work/server.log" | head -1 || true)"
+        url="$(grep -o "http://127.0.0.1:[0-9]*[^ ]*" "$work/server.log" | head -1 || true)"
         [[ -n "$url" ]] && break
     done
     if [[ -z "$url" ]]; then
@@ -87,7 +90,7 @@ echo "Building the frontend and the binary ..."
 go build -o "$work/statusloom" ./cmd/statusloom
 
 for phase in anim stills; do
-    echo "Capturing ($phase) on 127.0.0.1:${port} ..."
+    echo "Capturing ($phase) ..."
     url="$(start_server)"
     env UI_URL="$url" MEDIA_OUT="$repo_root/docs/media" CAPTURE_PHASE="$phase" \
         node --experimental-strip-types "$script_dir/capture-media.ts"

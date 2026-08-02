@@ -27,12 +27,13 @@ cd "$repo_root"
 
 work="$(mktemp -d)"
 out="${UI_OUT:-$work/shots}"
-port="${UI_CHECK_PORT:-45901}"
 server_pid=""
 
 cleanup() {
     if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
         kill "$server_pid" 2>/dev/null || true
+        sleep 0.5
+        kill -9 "$server_pid" 2>/dev/null || true
         wait "$server_pid" 2>/dev/null || true
     fi
     # Keep the screenshots when they were written outside the temp dir.
@@ -63,18 +64,18 @@ echo "Building the frontend and the binary ..."
 "$script_dir/build-web.sh" > /dev/null
 go build -o "$work/statusloom" ./cmd/statusloom
 
-echo "Starting an isolated configurator on 127.0.0.1:${port} ..."
+echo "Starting an isolated configurator on a free port ..."
 env STATUSLOOM_CONFIG="$work/statusloom.json" \
     STATUSLOOM_CACHE_DIR="$work/cache" \
     CLAUDE_CONFIG_DIR="$work/claude" \
     STATUSLOOM_NO_USAGE_API=1 \
-    "$work/statusloom" config -no-browser -port "$port" > "$work/server.log" 2>&1 &
+    "$work/statusloom" config -no-browser > "$work/server.log" 2>&1 &
 server_pid=$!
 
 url=""
 for _ in $(seq 1 20); do
     sleep 0.5
-    url="$(grep -o "http://127.0.0.1:$port[^ ]*" "$work/server.log" | head -1 || true)"
+    url="$(grep -o "http://127.0.0.1:[0-9]*[^ ]*" "$work/server.log" | head -1 || true)"
     [[ -n "$url" ]] && break
 done
 if [[ -z "$url" ]]; then

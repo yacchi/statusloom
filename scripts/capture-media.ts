@@ -120,9 +120,48 @@ async function captureStills(): Promise<void> {
     await still.locator('[data-testid="view-split"]').click();
     await still.waitForTimeout(800);
     await still.screenshot({ path: `${OUT}/dsl-editor.png` });
+
+    // Version history: every save is a revision, so it needs a couple of saves
+    // with an edit in between to have anything to show.
+    await still.locator('[data-testid="view-visual"]').click();
+    await still.waitForTimeout(400);
+    await still.locator('[data-testid="save-button"]').click();
+    await still.waitForTimeout(1200);
+    await still.locator('[data-testid="palette-field:git-branch"]').click();
+    await still.waitForTimeout(900);
+    await still.locator('[data-testid="save-button"]').click();
+    await still.waitForTimeout(1200);
+    await still.locator('[data-testid="history-button"]').click();
+    await still.waitForSelector('[data-testid="history-list"]', { timeout: 10000 });
+    await still.waitForTimeout(700);
+    // Select the older revision: the diff against the current document is the
+    // point of the panel, and an unselected panel is a blank right-hand pane.
+    await still.locator('[data-testid="history-list"] li').nth(1).click();
+    await still.waitForSelector('[data-testid="history-diff"]', { timeout: 10000 });
+    await still.waitForTimeout(700);
+    await still.locator(".modal").screenshot({ path: `${OUT}/history.png` });
+    await still.locator('[data-testid="modal-close"]').click();
+    await still.waitForTimeout(400);
+
+    // The live monitor: it renders the status line from REAL sessions as they
+    // update, so with no session captured yet it shows the command to run.
+    await still.locator("button", { hasText: "Start live monitor" }).first().click();
+    await still.waitForTimeout(1500);
+    await still.screenshot({ path: `${OUT}/live-monitor.png` });
+
+    // No screenshot of the embedded terminal: it starts Claude Code itself, and
+    // in the throwaway config directory this capture must use, Claude Code has no
+    // credentials — it walks from the theme picker straight to an OAuth sign-in
+    // URL. Capturing that would show a login page (and a live auth URL) instead
+    // of the feature. Authenticating would mean pointing the capture at the
+    // developer's real config, which this script must never do. The feature is
+    // described in the README instead.
+
     await still.close();
     await browser.close();
-    console.log(`wrote ${OUT}/{configurator,properties,responsive,dsl-editor}.png`);
+    console.log(
+        `wrote ${OUT}/{configurator,properties,responsive,dsl-editor,history,live-monitor}.png`,
+    );
 }
 
 async function captureAnimation(): Promise<void> {
@@ -144,24 +183,50 @@ async function captureAnimation(): Promise<void> {
     await page.mouse.move(VIEWPORT.width / 2, VIEWPORT.height / 2);
     await page.waitForTimeout(900);
 
-    // The clip shows three things, in the order a user meets them: adding a
-    // field, restyling it, and watching the line adapt to the terminal width.
-    //
-    // It clicks rather than drags. Synthetic pointer sequences from Playwright
-    // do not reliably start a dnd-kit drag (the palette chip never enters its
-    // dragging state), and a recording that silently fails to drag is worse than
-    // one that shows the click path — which is a real affordance, not a stand-in:
-    // clicking a palette chip appends it to the active line.
+    // The clip shows three things, in the order a user meets them: dragging a
+    // field in from the palette, restyling it, and watching the line adapt to the
+    // terminal width. The drag is the point — it is what a TUI-style editor
+    // cannot offer — so the sequence below asserts that it actually started
+    // rather than risking a recording that silently shows a failed drag.
 
-    // 1. Add a field: the preview grows a chip and the DSL behind it changes.
+    // 1. Drag a field from the palette onto a chip in line 1. The moves are
+    //    PACED (a pause after each): a single steps-only move works too, but
+    //    pacing gives the recording visible travel and the drop caret time to
+    //    paint at each position.
     const src = await centerOf(page, '[data-testid="palette-field:git-branch"]');
+    const dst = await centerOf(page, '[data-testid="seg-0-4"]');
     await glide(page, src);
     await page.waitForTimeout(400);
-    await page.locator('[data-testid="palette-field:git-branch"]').click();
-    await page.waitForTimeout(1200);
+    await page.mouse.down();
+    await page.waitForTimeout(120);
+    // Past dnd-kit's 4px activation distance, still inside the palette, so the
+    // clip shows where the chip is coming from.
+    await page.mouse.move(src.x + 10, src.y + 4);
+    await page.waitForTimeout(150);
+    await page.waitForSelector(".drag-overlay-chip", { timeout: 5000 });
+    const STEPS = 14;
+    for (let i = 1; i <= STEPS; i += 1) {
+        await page.mouse.move(
+            src.x + ((dst.x - src.x) * i) / STEPS,
+            src.y + ((dst.y - src.y) * i) / STEPS,
+        );
+        await page.waitForTimeout(45);
+    }
+    // Hold on the target so the drop caret is legible before releasing.
+    await page.waitForSelector(".seg-chip.drop-before, .seg-chip.drop-after", { timeout: 5000 });
+    // Which side of the target the caret is on decides the dropped chip's index,
+    // which is how step 2 finds it (node ids are positional, so they all shift).
+    const dropsAfter = (await page.locator('[data-testid="seg-0-4"].drop-after').count()) > 0;
+    await page.waitForTimeout(600);
+    await page.mouse.up();
+    await page.waitForTimeout(1300);
 
-    // 2. Select the new chip and recolor it — the preview restyles in place.
-    const chip = page.locator(".row-track").first().locator(".seg-chip").last();
+    // 2. Select the dropped chip and recolor it — the preview restyles in place.
+    const chip = page
+        .locator(".row-track")
+        .first()
+        .locator(".seg-chip")
+        .nth(dropsAfter ? 5 : 4);
     const chipBox = await chip.boundingBox();
     if (chipBox) {
         await glide(page, { x: chipBox.x + chipBox.width / 2, y: chipBox.y + chipBox.height / 2 });

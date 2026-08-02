@@ -15,6 +15,8 @@ Claude Code等コーディングエージェント向けステータスライン
   - `./statusloom claude < fixtures/claude/full.json`（描画確認。`mise run render`）
   - 検証時は必ず `STATUSLOOM_CONFIG` / `STATUSLOOM_CACHE_DIR` を設定し実configを隔離すること
 - webビルド: `./scripts/build-web.sh`（`apps/configurator/dist` → `internal/webconfig/dist` にコピーしembed。`mise run build-web`）。`internal/webconfig/dist` は**全体がgit管理外**（`dist/.gitignore` が唯一のtracked entryで、`//go:embed all:dist` のためにディレクトリを存在させるだけ）。よってコミット前の後始末は不要＝成果物を誤ってコミットする経路が無い。未ビルドのバイナリは placeholder ではなく `internal/webconfig/assets.go` の案内ページ（503）を返す
+- ブラウザレベルの検証: `mise run ui-check`（`scripts/ui-check.{ts,sh}`）。Chromiumで実UIを操作し、jsdomでは書けない検証＝実測ジオメトリ・ソフトラップ・レイアウトの安定性（hover/選択で何も動かないか）を確認する。**使い捨てconfigで起動し実行ごとにストアを消す**（前回実行の残留stateで偽陰性が出た実績あり。アカウントfieldにはfixtureを与える＝実アカウントがclaude_teamだとvariantの`when`が真になり検証が壊れる）。jsdomで書ける検証はvitest側に置くこと（数秒で回りブラウザ不要）
+- README素材の再生成: `mise run capture-media`（`scripts/capture-media.{ts,sh}` → `docs/media/`）。**録画と静止画は別インスタンス**で撮る（どちらもドキュメントを編集するため）。成果物はビルド産物ではなくREADMEコンテンツなのでコミットする
 - 完了条件（PR/コミット前に全て通すこと。まとめて `mise run check`）:
   - `gofmt -l .` が空、`go vet ./...`（`mise run lint`）
   - `go test ./...` 全パス（`mise run test` はこれと下記フロントtestを順に実行）

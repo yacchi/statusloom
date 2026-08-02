@@ -24,6 +24,10 @@ sources = [
 ]
 outputs = ["internal/webconfig/dist/**/*"]
 
+[tasks.ui-check]
+description = "Browser-level checks of the configurator (geometry, soft wrapping, layout stability) against a throwaway config; needs `pnpm exec playwright install chromium`. Set UI_OUT to keep the screenshots"
+run = "scripts/ui-check.sh"
+
 [tasks.capture-media]
 description = "Regenerate the README's screenshots and editing GIF (docs/media) by driving the configurator in Chromium against a throwaway config; needs `pnpm exec playwright install chromium` and ffmpeg"
 run = "scripts/capture-media.sh"

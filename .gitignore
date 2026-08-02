@@ -7,3 +7,5 @@ node_modules/
 coverage.out
 .DS_Store
 /plans/
+# Playwright's raw screen recording; only the generated GIF is committed.
+docs/media/.video/

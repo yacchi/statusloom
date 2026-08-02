@@ -2,6 +2,13 @@
 
 Statusloom is a fast, portable status-line toolkit for coding agents. Build, preview, install, and share status lines for Claude Code, Codex, GitHub Copilot, and other coding tools. Statusloom ships as a single Go binary, keeps the render path network-free, and includes a visual local configurator.
 
+![The Statusloom configurator: a field palette, the live status-line preview being edited directly, and the properties of the selected field](docs/media/properties.png)
+
+The preview *is* the editor: click a field in it to edit that field, drag
+to rearrange, and watch the real rendered output change as you go.
+
+![Adding a field, restyling it, and narrowing the terminal to watch the line adapt](docs/media/editor.gif)
+
 ## Status
 
 Statusloom is in early development. v0.1 targets Claude Code.
@@ -148,6 +155,17 @@ and the `subagentStatusLine` document, each with its own field
 catalog; switching tabs preserves editing state (undo history, unsaved
 edits, selection). The subagent tab's preview can toggle between a
 running and a completed sample task.
+
+Both editors work on one document, so you can build a layout visually and
+read the markup it produced — or the other way round:
+
+![The visual editor and the DSL editor side by side, showing the same document](docs/media/dsl-editor.png)
+
+A `<responsive>` container holds several candidate layouts; the editor
+marks the one the current width selects, and a variant can additionally
+carry a condition (for example, only on a Team account):
+
+![A responsive container with two variant cards, one gated on account-type](docs/media/responsive.png)
 
 ### Setup
 

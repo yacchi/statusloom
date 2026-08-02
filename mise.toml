@@ -24,6 +24,10 @@ sources = [
 ]
 outputs = ["internal/webconfig/dist/**/*"]
 
+[tasks.capture-media]
+description = "Regenerate the README's screenshots and editing GIF (docs/media) by driving the configurator in Chromium against a throwaway config; needs `pnpm exec playwright install chromium` and ffmpeg"
+run = "scripts/capture-media.sh"
+
 [tasks.build]
 description = "Build the statusloom binary, auto-building the embedded web UI first and skipping when inputs are unchanged"
 depends = ["build-web"]

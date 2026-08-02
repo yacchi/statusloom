@@ -953,7 +953,7 @@ Windowsでは`statusLine.command`のパスをスラッシュ区切りにする�
 ### CLI
 
 ```bash
-statusloom preset use fujie/compact-two-line
+statusloom preset use yacchi/compact-two-line
 statusloom preset export
 statusloom preset publish
 ```

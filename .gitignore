@@ -6,6 +6,7 @@ node_modules/
 *.tsbuildinfo
 coverage.out
 .DS_Store
+.idea/
 /plans/
 # Playwright's raw screen recording; only the generated GIF is committed.
 docs/media/.video/

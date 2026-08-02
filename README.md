@@ -427,8 +427,8 @@ the label disappears along with the field when the variable isn't set. A
 field with no `var` yet simply renders empty and reports nothing.
 
 **Credential-looking variables are masked.** A status line ends up in
-screenshots and screen shares, and shared Statusloom Room presets are
-written by strangers, so if the variable *name* contains `TOKEN`,
+screenshots and screen shares, and shared presets are written by
+strangers, so if the variable *name* contains `TOKEN`,
 `SECRET`, `KEY`, `PASSWORD`, `PASSWD`, `CREDENTIAL`, `AUTH`, `SESSION`,
 `COOKIE`, `PRIVATE`, or `SIGNATURE`, statusloom renders `***` instead of
 the value. The check looks only at the name, never the value, and it

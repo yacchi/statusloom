@@ -86,6 +86,6 @@ Claude Code等コーディングエージェント向けステータスライン
 - **全コードは単一 Initial Commit に集約済み**（v0.0.1 を再リリース）
 - extra-usage / per-model weekly rate-limit（OAuth usage API連携）は実装済み: `extra-usage-cost`/`extra-usage-limit`/`extra-usage-percent`/`weekly-usage-opus`/`weekly-usage-sonnet`/`weekly-reset-opus`/`weekly-reset-sonnet` field、`statusloom refresh --once`サブプロセスによるfetch、設定UIの capability probe（`GET /api/usage/probe`）
 - DSL関連の残作業: Phase 3（AST→ソースの minimal-diff シリアライズ＝コメント・整形の保存、`dsl fmt` 相当）。現状 `/api/dsl/serialize` は全文正規化形を返す
-- 残マイルストーン（計画書25章）: Milestone 6（クロスビルド・GitHub Release。Windows向け`statusLine.command`パスはスラッシュ区切り必須 — Git Bashがバックスラッシュをエスケープ文字として消費するため）、Milestone 7（Codex/Copilotアダプター）、Milestone 8（Statusloom Room）
+- 残マイルストーン（計画書25章）: Milestone 6（クロスビルド・GitHub Release。Windows向け`statusLine.command`パスはスラッシュ区切り必須 — Git Bashがバックスラッシュをエスケープ文字として消費するため）、Milestone 7（Codex/Copilotアダプター）、Milestone 8（Statusloom Room。実装は `feature/room-site` ブランチで進行中で、このブランチには含まれない）
 - `subagentStatusLine`対応（サブエージェントパネル行の差し替え。stdinで`tasks`配列を受け`{"id","content"}`のJSON行を出力する別プロトコル）は実装済み: DSL `<subagent>`要素として`claude-code`ドキュメントに統合（旧・独立tool `claude-code-subagent`/別ドキュメント/設定UI別タブは廃止）。per-taskの`model`/`contextWindowSize`はv2.1.205+
 - 進行中の作業がある場合は `git status` と直近のタスク状況から状態を判断すること

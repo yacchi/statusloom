@@ -69,8 +69,16 @@ func TestAuth_StaticNoAuthRequired(t *testing.T) {
 
 	resp := doRequest(t, "GET", ts.baseURL+"/", nil, nil)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("GET / status = %d, want 200", resp.StatusCode)
+	// What matters here is that the static route does NOT demand a token.
+	// Asserting 200 would tie the test to whether the developer happens to have
+	// run scripts/build-web.sh: internal/webconfig/dist is git-ignored in full,
+	// so a fresh checkout embeds no index.html and the handler answers 503 with
+	// build instructions (assets.go). Both are "auth was not required".
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Errorf("GET / status = 401, want the static route to need no token")
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("GET / status = %d, want 200 (built) or 503 (not built)", resp.StatusCode)
 	}
 }
 

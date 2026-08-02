@@ -411,7 +411,7 @@ refresh サブプロセスは Claude Code の OAuth トークンを**読み取�
 `var` が未指定のフィールドは単に空を描画し、何も報告しません。
 
 **認証情報らしい変数はマスクされます。** ステータスラインはスクリーンショット
-や画面共有に写り、共有される Statusloom Room のプリセットは第三者が書きます。
+や画面共有に写り、共有されるプリセットは第三者が書きます。
 そのため変数**名**に `TOKEN`・`SECRET`・`KEY`・`PASSWORD`・`PASSWD`・
 `CREDENTIAL`・`AUTH`・`SESSION`・`COOKIE`・`PRIVATE`・`SIGNATURE` が含まれる
 場合、statusloom は値ではなく `***` を描画します。この判定は名前だけを見て
@@ -490,42 +490,6 @@ field/text/span の間に遷移が生成されます。span とその入れ子�
 Statusloom のマークアップで表現し、未保存の draft として共有し、描画を
 プレビューするので、保存前に見比べて調整できます。ワークスペースに生成
 される `CLAUDE.md` にこの手順が書かれています。
-
-## Statusloom Room
-
-[Statusloom Room](https://github.com/yacchi/statusloom/tree/main/registry) は
-共有可能なプリセットのコミュニティギャラリーです。他のユーザーが公開した
-レイアウトを閲覧し、クライアントサイドで描画されたプレビューを見て、
-気に入ったものをマークアップを書かずにインストールできます。
-
-サイトから直接プリセットをインストールする例（`<room-domain>` は Room を
-デプロイした場所に置き換えてください）:
-
-```sh
-curl -fsSL https://<room-domain>/p/yacchi/default.sloom.md | statusloom import -
-```
-
-（`statusloom import` はすでに `-` で stdin を読むので、これに対応するための
-CLI 変更は不要でした — `internal/cli/import.go` 参照。）
-
-自分のプリセットを公開するには、`registry/<GitHub ユーザー名>/<slug>.sloom.md`
-を追加するプルリクエストを出してください（frontmatter ＋ ```` ```xml ````
-フェンスのドキュメント。`statusloom draft pull` が出力するのと同じ交換
-フォーマットです）。CI は `statusloom import` と同じ Parse+Validate 境界で
-全プリセットを検証するので、マージされたプリセットはインポート可能である
-ことが保証されます。`main` へのマージでサイトが自動的に再ビルド・再デプロイ
-されます。
-
-Room は `registry/` のプリセットプールから作られる完全な静的サイトです
-（バックエンドもアカウントもありません）。ローカルでビルドするには:
-
-```sh
-mise run build-room   # または: ./scripts/build-room.sh
-```
-
-`apps/room/dist` に自己完結した静的サイトが生成され、任意の静的ファイル
-サーバで配信できます。`internal/webconfig/dist` と同様、これらのビルド成果物は
-コミットしてはいけません。
 
 ## 開発
 

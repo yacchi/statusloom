@@ -2,6 +2,8 @@
 
 Statusloom is a fast, portable status-line toolkit for coding agents. Build, preview, install, and share status lines for Claude Code, Codex, GitHub Copilot, and other coding tools. Statusloom ships as a single Go binary, keeps the render path network-free, and includes a visual local configurator.
 
+*日本語版: [README.ja.md](README.ja.md)*
+
 ![The Statusloom configurator: a field palette, the live status-line preview being edited directly, and the properties of the selected field](docs/media/properties.png)
 
 The preview *is* the editor: click a field in it to edit that field, drag
@@ -113,9 +115,9 @@ command:
 
 Claude Code pipes a JSON array of subagent tasks to stdin; `statusloom
 claude-subagent` writes one `{"id", "content"}` JSON line per task to
-stdout. Subagent rows are configured as their own document,
-`claude-code-subagent`, independent of the session document (see
-[Configuration](#configuration)), with its own field catalog — `task-description`,
+stdout. Subagent rows are configured as a `<subagent>` element inside the
+SAME `claude-code` document (not a separate document — see
+[Configuration](#configuration)), scoped to its own field catalog — `task-description`,
 `task-model`, `task-model-id`, `task-tokens`, `task-context-size`,
 `task-context-percent`, `task-status`, and `task-duration` (see
 [Fields](#fields)). Pass `--draft` to render the shared draft document
@@ -150,11 +152,10 @@ automatically. The server prints its URL (including a one-time auth
 token) to stdout and shuts down on `Ctrl-C`, after an idle period, or
 when you close it from the UI.
 
-A tab switches the whole UI between the session status-line document
-and the `subagentStatusLine` document, each with its own field
-catalog; switching tabs preserves editing state (undo history, unsaved
-edits, selection). The subagent tab's preview can toggle between a
-running and a completed sample task.
+Subagent rows are edited inside the same document: each width-adaptive
+container gets a Subagent region in the editor, filled from the task-scoped
+field catalog. Its preview can toggle between a running and a completed
+sample task.
 
 Both editors work on one document, so you can build a layout visually and
 read the markup it produced — or the other way round:
@@ -225,8 +226,8 @@ statusloom fmt [file] [--check]
 
 Rewrites a DSL document in canonical form — normalizing attribute order,
 self-closing tags, indentation, and every `when` expression to the word
-form (`and`, `or`, `lt`, `ge`, ...). With no argument it formats your
-`claude-code.xml`; `-` reads stdin and writes stdout; `--check` reports
+form (`and`, `or`, `lt`, `ge`, ...). With no argument it formats the saved
+`claude-code` document; `-` reads stdin and writes stdout; `--check` reports
 whether formatting would change the document (non-zero exit) without
 writing. Normal saves through the configurator preserve your original
 formatting for untouched nodes; `fmt` is the opt-in whole-document
@@ -271,8 +272,8 @@ Recently added:
   `git-unstaged`, `git-untracked`, `git-ahead`, `git-behind`, `git-clean`
 - `lines-added` / `lines-removed` — separate session line counts
 
-The `claude-code-subagent` document (see [Subagent status
-line](#subagent-status-line)) has its own catalog, scoped to a single
+The `<subagent>` region (see [Subagent status
+line](#subagent-status-line)) only accepts fields scoped to a single
 subagent task: `task-description`, `task-model`, `task-model-id`,
 `task-tokens`, `task-context-size`, `task-context-percent`,
 `task-status`, and `task-duration`. `task-effort` is also registered
@@ -441,13 +442,13 @@ shown:
 
 ## Configuration
 
-Statusloom is configured with an XML markup document per tool. For Claude
-Code it lives at `~/.config/statusloom/claude-code.xml` (on macOS too;
-Statusloom uses XDG-style paths, and respects `XDG_CONFIG_HOME`). If the
-file is absent, a built-in default document is used, so Statusloom works
-out of the box. The subagent status line uses a second document in the
-same directory, `claude-code-subagent.xml`, with the same built-in-default
-fallback when it is absent.
+Statusloom keeps its configuration in a single internal store,
+`~/.config/statusloom/statusloom.json` (on macOS too; Statusloom uses
+XDG-style paths, and respects `XDG_CONFIG_HOME`). The store is git-shaped:
+every save appends a revision, and each tool has a `current` and a `draft`
+reference. A revision holds the XML markup document as its exchange format.
+When the store is absent a built-in default document is used, so Statusloom
+works out of the box.
 
 A minimal document:
 

@@ -580,7 +580,7 @@ input[type="number"] {
    the overflow scrolled horizontally and the chips past the right edge were
    effectively unreachable for drag & drop. Now the track wraps onto as many
    visual rows as it needs — the wrapped chips still form ONE statusline line
-   (the wrap is an editor affordance only, marked by the ↩ glyph that
+   (the wrap is an editor affordance only, marked by the ↵ glyph that
    CanvasRow's wrap detection puts on the last chip of each visual row). */
 .row-track {
     display: flex;
@@ -617,10 +617,11 @@ input[type="number"] {
     display: none;
 }
 
+/* An accent badge, so the marker reads as an editor affordance rather than as
+   content of the status line. The arrow inside is an SVG (see Canvas.tsx) and
+   inherits `color`, so no font is involved. */
 .seg-chip[data-wrap-end="true"] > .wrap-mark {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: block;
     position: absolute;
     top: 50%;
     left: 100%;
@@ -628,12 +629,10 @@ input[type="number"] {
     margin-left: 2px;
     width: 14px;
     height: 14px;
+    padding: 2px;
     border-radius: 3px;
     background: var(--accent);
     color: var(--accent-fg);
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    font-size: 10px;
-    line-height: 1;
     pointer-events: none;
 }
 
@@ -896,20 +895,28 @@ input[type="number"] {
     align-items: flex-start;
 }
 
+/* The variant stack fills the row's width (align-items defaults to stretch), so
+   a card's width comes from the row rather than from its own contents — see the
+   note on .variant-track. `+ Variant` stays content-width via its own
+   align-self. */
 .responsive-block {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
     gap: 8px;
     flex: 1;
+    min-width: 0;
 }
 
 /* Variants stack VERTICALLY and are reordered along the Y axis — they never
-   move horizontally (see the variant-reorder path in useDragEditing.ts). */
+   move horizontally (see the variant-reorder path in useDragEditing.ts).
+   Cards STRETCH to the track's width rather than hugging their content: a
+   content-width card changed width whenever its contents did (adding a
+   condition grew it sideways, removing one shrank it), and cards of a single
+   responsive did not line up with each other. Which variant is active is shown
+   by the "selected at this width" badge, not by the card's width. */
 .variant-track {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
     gap: 8px;
 }
 
@@ -1061,8 +1068,11 @@ input[type="number"] {
     min-width: 0;
 }
 
+/* Bounded, not greedy: the row is inside a full-width card, and letting the
+   pickers absorb all of it stretched a 2-character value box across 300px and
+   pushed the clear button to the far edge. They shrink but never grow. */
 .when-metric {
-    flex: 1 1 auto;
+    flex: 0 1 16em;
 }
 
 .when-op {
@@ -1070,7 +1080,7 @@ input[type="number"] {
 }
 
 .when-value {
-    flex: 1 1 6em;
+    flex: 0 1 9em;
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
@@ -1851,6 +1861,13 @@ button.link-button.danger-text {
 
 .settings-section:first-of-type {
     margin-top: 4px;
+}
+
+/* The shared 110px label column is sized for the (narrow) properties panel; in
+   the settings modal it wrapped "Include untracked" onto two lines while every
+   neighbor fit on one. The modal is wide enough not to need that. */
+.settings-modal .field label {
+    flex: 0 0 150px;
 }
 
 .modal-close {

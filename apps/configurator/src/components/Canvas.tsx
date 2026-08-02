@@ -599,10 +599,31 @@ function SortableChip({
             {/* Soft-wrap marker, shown only while this chip happens to end a
                 visual row (useWrapMarks stamps data-wrap-end on the chip).
                 Always rendered so the marker can appear and disappear on
-                resize without a React re-render. */}
-            <span className="wrap-mark" aria-hidden="true">
-                ↩
-            </span>
+                resize without a React re-render.
+
+                Drawn as an SVG rather than an arrow character: every arrow
+                glyph tried (U+21A9, U+21B5 — with U+FE0E and a monospace
+                family) still resolved through Apple Color Emoji on macOS
+                Chromium, which paints a blue emoji badge that ignores `color`
+                and reads as a stray UI control. currentColor keeps this one
+                themable. */}
+            <svg className="wrap-mark" viewBox="0 0 10 10" aria-hidden="true">
+                <path
+                    d="M8 1.5 V5 a1.6 1.6 0 0 1 -1.6 1.6 H2.6"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.1"
+                    strokeLinecap="round"
+                />
+                <path
+                    d="M4.4 4.6 L2.2 6.6 L4.4 8.6"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.1"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+            </svg>
         </span>
     );
 }
@@ -610,7 +631,7 @@ function SortableChip({
 // Soft-wrapped row tracks (`.row-track` wraps, see styles.css) render one
 // statusline line as several visual rows. This marks the last chip of every
 // visual row but the last with `data-wrap-end="true"`, which CSS turns into a
-// ↩ glyph, so it stays readable that the chips below continue the SAME line.
+// ↵ glyph, so it stays readable that the chips below continue the SAME line.
 //
 // The marking is done by writing the attribute directly on the DOM nodes
 // instead of through React state: it is derived purely from measured layout

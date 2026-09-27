@@ -489,9 +489,22 @@ refresh サブプロセスは Claude Code の OAuth トークンを**読み取�
 `CLAUDE_CODE_OAUTH_TOKEN` 環境変数 → `~/.claude/.credentials.json`
 （`CLAUDE_CONFIG_DIR` が設定されている場合は
 `$CLAUDE_CONFIG_DIR/.credentials.json`）→ macOS ではログインキーチェーンの
-`Claude Code-credentials` エントリ（Apple 署名済みの `/usr/bin/security`
-経由なので、キーチェーンのアクセス許可プロンプトも statusloom への
-コード署名も不要）です。`STATUSLOOM_NO_USAGE_API=1` を設定すると usage API の
+エントリ（Apple 署名済みの `/usr/bin/security` 経由なので、キーチェーンの
+アクセス許可プロンプトも statusloom へのコード署名も不要）です。
+エントリのサービス名は、`CLAUDE_CONFIG_DIR` が未設定なら
+`Claude Code-credentials`、設定されている場合はそれに `-` +
+`sha256(CLAUDE_CONFIG_DIR)` の先頭 8 桁 hex を付加した名前になります
+（これは statusloom 独自の仕様ではなく Claude Code 自身の命名規則で、
+Claude Code の CLI バンドルを実際に読んで確認済みです）。この仕組みにより、
+ccprofile のように複数の `CLAUDE_CONFIG_DIR` プロファイルを切り替えて
+Claude Code を使うツール環境でも、それぞれのアカウントに対応する
+キーチェーンエントリを正しく参照できます（未対応だと固定名のエントリを
+持つプロファイルの認証情報しか読めませんでした）。なお Claude Code 本体は
+ハッシュ化前に Unicode の NFC 正規化を行いますが、statusloom は新規の
+外部依存を追加しない判断により **NFC 正規化を行わず**、`CLAUDE_CONFIG_DIR`
+の生の文字列をそのままハッシュします。`CLAUDE_CONFIG_DIR` に非正規化
+Unicode（分解済み結合文字）が含まれる場合のみ Claude Code 本体と食い違い
+得ますが、実運用では稀なケースです。`STATUSLOOM_NO_USAGE_API=1` を設定すると usage API の
 取得を完全に無効化できます — 該当フィールドは、元データが無いときと同じく
 単に空になります。
 

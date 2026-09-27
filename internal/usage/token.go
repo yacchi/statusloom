@@ -52,7 +52,7 @@ func Token(getenv func(string) string) (string, error) {
 		}
 	}
 
-	if data, err := readKeychain(); err == nil {
+	if data, err := readKeychain(getenv); err == nil {
 		if token := extractAccessToken(data); token != "" {
 			return token, nil
 		}

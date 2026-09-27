@@ -35,7 +35,7 @@ func withCredentialsPath(t *testing.T, path string) {
 	t.Cleanup(func() { credentialsPath = original })
 }
 
-func withReadKeychain(t *testing.T, fn func() ([]byte, error)) {
+func withReadKeychain(t *testing.T, fn func(getenv func(string) string) ([]byte, error)) {
 	t.Helper()
 	original := readKeychain
 	readKeychain = fn
@@ -50,7 +50,7 @@ func TestToken_CredentialsFileValid(t *testing.T) {
 		t.Fatalf("write credentials file: %v", err)
 	}
 	withCredentialsPath(t, path)
-	withReadKeychain(t, func() ([]byte, error) { return nil, ErrNoToken })
+	withReadKeychain(t, func(getenv func(string) string) ([]byte, error) { return nil, ErrNoToken })
 
 	getenv := fakeGetenv(nil)
 	token, err := Token(getenv)
@@ -69,7 +69,7 @@ func TestToken_CredentialsFileInvalidFallsThroughToKeychain(t *testing.T) {
 		t.Fatalf("write credentials file: %v", err)
 	}
 	withCredentialsPath(t, path)
-	withReadKeychain(t, func() ([]byte, error) {
+	withReadKeychain(t, func(getenv func(string) string) ([]byte, error) {
 		return []byte(`{"claudeAiOauth":{"accessToken":"keychain-token-value"}}`), nil
 	})
 
@@ -87,7 +87,7 @@ func TestToken_CredentialsFileMissingFallsThroughToKeychain(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "does-not-exist.json")
 	withCredentialsPath(t, path)
-	withReadKeychain(t, func() ([]byte, error) {
+	withReadKeychain(t, func(getenv func(string) string) ([]byte, error) {
 		return []byte(`{"claudeAiOauth":{"accessToken":"keychain-token-value"}}`), nil
 	})
 
@@ -105,7 +105,7 @@ func TestToken_KeychainEmptyAccessTokenFallsThrough(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "does-not-exist.json")
 	withCredentialsPath(t, path)
-	withReadKeychain(t, func() ([]byte, error) {
+	withReadKeychain(t, func(getenv func(string) string) ([]byte, error) {
 		return []byte(`{"claudeAiOauth":{"accessToken":""}}`), nil
 	})
 
@@ -120,7 +120,7 @@ func TestToken_NoSourcesReturnsErrNoToken(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "does-not-exist.json")
 	withCredentialsPath(t, path)
-	withReadKeychain(t, func() ([]byte, error) { return nil, ErrNoToken })
+	withReadKeychain(t, func(getenv func(string) string) ([]byte, error) { return nil, ErrNoToken })
 
 	getenv := fakeGetenv(nil)
 	token, err := Token(getenv)
@@ -138,7 +138,7 @@ func TestToken_ErrorNeverEmbedsTokenValue(t *testing.T) {
 	withCredentialsPath(t, path)
 
 	const secret = "sk-ant-super-secret-value-should-not-leak"
-	withReadKeychain(t, func() ([]byte, error) {
+	withReadKeychain(t, func(getenv func(string) string) ([]byte, error) {
 		return nil, errors.New("keychain lookup failed for " + secret)
 	})
 
@@ -161,6 +161,33 @@ func TestCredentialsPathDefault_UsesHomeEnv(t *testing.T) {
 	want := filepath.Join("/home/testuser", ".claude", ".credentials.json")
 	if got != want {
 		t.Errorf("credentialsPath = %q, want %q", got, want)
+	}
+}
+
+func TestToken_ThreadsGetenvToReadKeychain(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "does-not-exist.json")
+	withCredentialsPath(t, path)
+
+	var gotConfigDir string
+	var sawCall bool
+	withReadKeychain(t, func(getenv func(string) string) ([]byte, error) {
+		sawCall = true
+		gotConfigDir = getenv("CLAUDE_CONFIG_DIR")
+		return nil, ErrNoToken
+	})
+
+	getenv := fakeGetenv(map[string]string{
+		"CLAUDE_CONFIG_DIR": "/Users/yasu/.config/ccprofile/profiles/max",
+	})
+	if _, err := Token(getenv); !errors.Is(err, ErrNoToken) {
+		t.Fatalf("Token err = %v, want ErrNoToken", err)
+	}
+	if !sawCall {
+		t.Fatal("readKeychain was never called")
+	}
+	if gotConfigDir != "/Users/yasu/.config/ccprofile/profiles/max" {
+		t.Errorf("readKeychain saw CLAUDE_CONFIG_DIR = %q, want the value from Token's getenv", gotConfigDir)
 	}
 }
 

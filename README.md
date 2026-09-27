@@ -505,10 +505,22 @@ The refresh subprocess reads your Claude Code OAuth token **read-only**
 `CLAUDE_CODE_OAUTH_TOKEN` environment variable, then
 `~/.claude/.credentials.json` (or
 `$CLAUDE_CONFIG_DIR/.credentials.json` when that variable is set), then,
-on macOS, the login Keychain entry
-named `Claude Code-credentials` (read via the Apple-signed
-`/usr/bin/security` binary, so this doesn't trigger a Keychain access
-prompt or require statusloom to be code-signed). Set
+on macOS, a login Keychain entry read via the Apple-signed
+`/usr/bin/security` binary (so this doesn't trigger a Keychain access
+prompt or require statusloom to be code-signed). The entry's service
+name is `Claude Code-credentials` when `CLAUDE_CONFIG_DIR` is unset, or
+that suffixed with `-` plus the first 8 hex digits of
+`sha256(CLAUDE_CONFIG_DIR)` when it's set — this is Claude Code's own
+naming rule (not something statusloom invented; verified by reading
+Claude Code's own CLI bundle), used so that tools which run Claude Code
+under multiple `CLAUDE_CONFIG_DIR` profiles (e.g. ccprofile) each get
+their own account's credentials instead of statusloom always reading
+whichever profile happens to own the unsuffixed entry. Unlike Claude
+Code itself, statusloom does **not** apply Unicode NFC normalization to
+`CLAUDE_CONFIG_DIR` before hashing it (it hashes the raw string as-is,
+to avoid a new external dependency); this only matters if
+`CLAUDE_CONFIG_DIR` contains non-precomposed Unicode, which is rare in
+practice. Set
 `STATUSLOOM_NO_USAGE_API=1` to disable usage-API fetching entirely —
 these fields will simply stay empty, as if the underlying data weren't
 available.

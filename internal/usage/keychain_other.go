@@ -6,6 +6,6 @@ package usage
 // credentials JSON from the platform keychain. There is no supported
 // keychain integration outside darwin, so this always reports no token
 // available.
-var readKeychain = func() ([]byte, error) {
+var readKeychain = func(getenv func(string) string) ([]byte, error) {
 	return nil, ErrNoToken
 }

@@ -207,3 +207,64 @@ func TestSetupClaudeCode_OrcaNote(t *testing.T) {
 		})
 	}
 }
+
+// TestForwardToKnownStatusLineHooks_MultipleEntries verifies that the
+// registry generalization actually forwards to every registered hook, not
+// just Orca's: it temporarily adds a second, fictitious hook to
+// knownStatusLineHooks and checks that both it and Orca's hook receive the
+// raw payload.
+func TestForwardToKnownStatusLineHooks_MultipleEntries(t *testing.T) {
+	setupEnv(t)
+	data := fixture(t, "full.json")
+
+	home := t.TempDir()
+	orcaCapture := filepath.Join(t.TempDir(), "orca-captured.json")
+	writeHookScript(t, filepath.Join(home, ".orca", "agent-hooks", "claude-statusline.sh"), orcaCapture)
+
+	fakeCapture := filepath.Join(t.TempDir(), "fake-captured.json")
+	fakePath := filepath.Join(home, ".fake-tool", "statusline.sh")
+	writeHookScript(t, fakePath, fakeCapture)
+
+	orig := knownStatusLineHooks
+	knownStatusLineHooks = append(append([]knownStatusLineHook{}, orig...), knownStatusLineHook{
+		name: "FakeTool",
+		path: func(getenv func(string) string) string {
+			return filepath.Join(getenv("HOME"), ".fake-tool", "statusline.sh")
+		},
+		marker: ".fake-tool/statusline.sh",
+	})
+	t.Cleanup(func() { knownStatusLineHooks = orig })
+
+	stdout, stderr, code := runCLI(t, []string{"claude"}, data, map[string]string{"HOME": home})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if strings.TrimSpace(stdout) == "" {
+		t.Errorf("expected rendered output, got empty stdout")
+	}
+
+	for _, cap := range []struct {
+		name, path string
+	}{{"Orca", orcaCapture}, {"FakeTool", fakeCapture}} {
+		got, err := os.ReadFile(cap.path)
+		if err != nil {
+			t.Fatalf("%s hook was not invoked (reading %s): %v", cap.name, cap.path, err)
+		}
+		if string(got) != string(data) {
+			t.Errorf("%s hook received %q, want raw stdin %q", cap.name, got, data)
+		}
+	}
+}
+
+// writeHookScript writes an executable shell script at path that copies its
+// stdin to capturePath, creating parent directories as needed.
+func writeHookScript(t *testing.T, path, capturePath string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	script := "#!/bin/sh\ncat >" + capturePath + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}

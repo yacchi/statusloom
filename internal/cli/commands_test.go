@@ -379,6 +379,33 @@ func TestDoctorDisableAllHooksWarns(t *testing.T) {
 	}
 }
 
+// TestDoctorClaudeCodeWarnsOnKnownHook covers the doctor warning for a
+// statusLine that has been overwritten by a known third-party tool's own
+// hook (e.g. Orca's) instead of statusloom: doctor should name the tool,
+// point at `statusloom setup claude-code`, and reassure that forwarding
+// keeps working - not just report the generic "not configured" WARN.
+func TestDoctorClaudeCodeWarnsOnKnownHook(t *testing.T) {
+	const orcaCommand = `case "$(uname -s)" in Darwin*|Linux*) exec "${HOME-}/.orca/agent-hooks/claude-statusline.sh";; *) exec "${HOME-}/.orca/agent-hooks/claude-statusline.cmd";; esac`
+
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+	settings, _ := json.Marshal(map[string]any{
+		"statusLine": map[string]any{"type": "command", "command": orcaCommand},
+	})
+	os.WriteFile(settingsPath, settings, 0o600)
+	t.Setenv("STATUSLOOM_CONFIG", filepath.Join(dir, "does-not-exist.json"))
+	t.Setenv("STATUSLOOM_CACHE_DIR", filepath.Join(dir, "cache"))
+
+	out, _, _ := runCLI(t, []string{"doctor", "--settings", settingsPath}, nil, nil)
+	const want = "WARN claude-code - statusLine is Orca's own hook, not statusloom; run statusloom setup claude-code (statusloom will keep forwarding to Orca automatically)"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected known-hook warning:\nwant substring: %q\ngot: %q", want, out)
+	}
+	if strings.Contains(out, "PASS claude-code") {
+		t.Errorf("should not report PASS for a non-statusloom statusLine: %q", out)
+	}
+}
+
 // TestDoctorRefreshInterval covers the "refresh" check: it should warn
 // only when the active claude-code layout has a countdown widget
 // (five-hour-reset / weekly-reset) and Claude Code's

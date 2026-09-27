@@ -12,22 +12,41 @@ import (
 	"time"
 )
 
-// orcaStatusLineHookTimeout bounds the best-effort delegation to Orca's own
-// claude-statusline.sh hook. Orca's script itself caps its outbound request
-// at 1.5s (see its own --max-time), so this leaves it room to complete
-// normally while still guaranteeing statusloom's own process exits promptly
-// if the hook hangs.
+// orcaStatusLineHookTimeout bounds the best-effort delegation to a known
+// third-party tool's own statusline hook (e.g. Orca's claude-statusline.sh).
+// Orca's script itself caps its outbound request at 1.5s (see its own
+// --max-time), so this leaves it room to complete normally while still
+// guaranteeing statusloom's own process exits promptly if a hook hangs.
 const orcaStatusLineHookTimeout = 2 * time.Second
+
+// knownStatusLineHook describes a third-party tool that may have installed
+// its own statusLine command, which forwardToKnownStatusLineHooks can
+// delegate to, and setup/doctor can recognize in an existing statusLine.
+type knownStatusLineHook struct {
+	name   string // human-readable, for messages, e.g. "Orca"
+	path   func(getenv func(string) string) string
+	marker string // substring identifying this tool's command
+}
+
+// knownStatusLineHooks is the small internal registry of third-party tools
+// statusloom knows how to coexist with. It is intentionally not a plugin
+// system - Orca is the only known instance today, and this slice is meant
+// to stay tiny (see plans/... for the YAGNI rationale). Add an entry here
+// (not a parallel code path) if another tool starts doing the same thing.
+var knownStatusLineHooks = []knownStatusLineHook{
+	{name: "Orca", path: orcaStatusLineHookPath, marker: orcaStatusLineHookMarker},
+}
 
 // runClaude implements `statusloom claude`. It renders exactly like
 // runRenderPipeline, and additionally best-effort forwards the raw stdin
-// payload to Orca's own claude-statusline.sh hook, if present. This lets
-// statusloom be Claude Code's sole statusLine command on a machine where
-// Orca (a third-party coding-agent IDE) previously installed its own
-// forwarder there: without this, configuring statusloom as statusLine
-// silently drops Orca's pane integration, and configuring Orca's script
-// instead silently drops statusloom's own status line - only one command
-// can occupy the slot.
+// payload to any known third-party tool's own statusline hook (see
+// knownStatusLineHooks), if present. This lets statusloom be Claude Code's
+// sole statusLine command on a machine where such a tool (e.g. Orca, a
+// third-party coding-agent IDE) previously installed its own forwarder
+// there: without this, configuring statusloom as statusLine silently drops
+// that tool's own integration, and configuring the tool's script instead
+// silently drops statusloom's own status line - only one command can
+// occupy the slot.
 func runClaude(stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
 	raw, err := io.ReadAll(io.LimitReader(stdin, maxStdinBytes))
 	if err != nil {
@@ -37,33 +56,37 @@ func runClaude(stdin io.Reader, stdout, stderr io.Writer, getenv func(string) st
 	lines, rerr := renderDocFromRaw(raw, getenv, "claude-code", stderr, false)
 	code := writeRenderResult(stdout, stderr, lines, nil, rerr)
 
-	forwardToOrcaStatusLine(raw, getenv)
+	forwardToKnownStatusLineHooks(raw, getenv)
 
 	return code
 }
 
-// forwardToOrcaStatusLine best-effort hands raw to
-// ~/.orca/agent-hooks/claude-statusline.sh, if it exists and is executable.
+// forwardToKnownStatusLineHooks best-effort hands raw to every hook in
+// knownStatusLineHooks whose path exists and is executable. A failing or
+// hanging hook never affects another: each gets its own timeout and error
+// is ignored independently.
 //
-// statusloom deliberately does not reimplement Orca's forwarding protocol
-// (which pane it's running in, which local port and token to post to, its
-// own dedup window). That protocol is undocumented and Orca's to change;
-// the script already gates all of it internally and exits immediately
-// when not running inside an Orca-managed pane, so handing it the same
-// payload Orca's own installer would have wired as statusLine is enough -
-// with zero cost on any machine where Orca (or the hook) isn't present.
-func forwardToOrcaStatusLine(raw []byte, getenv func(string) string) {
-	script := orcaStatusLineHookPath(getenv)
-	if script == "" || !hasOrcaStatusLineHook(getenv) {
-		return
+// statusloom deliberately does not reimplement any of these tools' own
+// forwarding protocols (which pane it's running in, which local port and
+// token to post to, its own dedup window). Those protocols are undocumented
+// and each tool's to change; the scripts already gate all of that
+// internally and exit immediately when not applicable, so handing them the
+// same payload their own installer would have wired as statusLine is
+// enough - with zero cost on any machine where the tool (or its hook)
+// isn't present.
+func forwardToKnownStatusLineHooks(raw []byte, getenv func(string) string) {
+	for _, hook := range knownStatusLineHooks {
+		script := hook.path(getenv)
+		if script == "" || !isExecutableFile(script) {
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), orcaStatusLineHookTimeout)
+		cmd := exec.CommandContext(ctx, script)
+		cmd.Stdin = bytes.NewReader(raw)
+		_ = cmd.Run()
+		cancel()
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), orcaStatusLineHookTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, script)
-	cmd.Stdin = bytes.NewReader(raw)
-	_ = cmd.Run()
 }
 
 // orcaStatusLineHookPath returns the path to Orca's own claude-statusline.sh
@@ -76,16 +99,14 @@ func orcaStatusLineHookPath(getenv func(string) string) string {
 	return filepath.Join(home, ".orca", "agent-hooks", "claude-statusline.sh")
 }
 
-// hasOrcaStatusLineHook reports whether Orca's claude-statusline.sh hook is
-// present and executable, i.e. whether forwardToOrcaStatusLine (and, by
-// extension, `statusloom claude`) will actually hand it the rendered
-// payload.
-func hasOrcaStatusLineHook(getenv func(string) string) bool {
-	script := orcaStatusLineHookPath(getenv)
-	if script == "" {
+// isExecutableFile reports whether path exists, is not a directory, and has
+// at least one executable bit set - i.e. whether it's safe to exec it as a
+// forwarding hook.
+func isExecutableFile(path string) bool {
+	if path == "" {
 		return false
 	}
-	info, err := os.Stat(script)
+	info, err := os.Stat(path)
 	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
 }
 
@@ -101,20 +122,25 @@ func hasOrcaStatusLineHook(getenv func(string) string) bool {
 // Orca-authored statusLine command while the hook file itself is missing.
 const orcaStatusLineHookMarker = ".orca/agent-hooks/claude-statusline"
 
-// statusLineReferencesOrca reports whether value - an existing
-// statusLine/subagentStatusLine object as decoded from Claude Code settings
-// JSON (map[string]any) - has a "command" string that references Orca's own
-// claude-statusline hook. It is false for anything else (a differently
-// shaped value, a missing or non-string command, or a command that simply
-// doesn't mention Orca's hook).
-func statusLineReferencesOrca(value any) bool {
+// detectKnownStatusLineHook reports which known third-party tool (if any)
+// the existing statusLine/subagentStatusLine value - as decoded from
+// Claude Code settings JSON (map[string]any) - has a "command" string that
+// references. It is (zero value, false) for anything else (a differently
+// shaped value, a missing or non-string command, or a command that
+// doesn't mention any known hook's marker).
+func detectKnownStatusLineHook(value any) (knownStatusLineHook, bool) {
 	m, ok := value.(map[string]any)
 	if !ok {
-		return false
+		return knownStatusLineHook{}, false
 	}
 	command, ok := m["command"].(string)
 	if !ok {
-		return false
+		return knownStatusLineHook{}, false
 	}
-	return strings.Contains(command, orcaStatusLineHookMarker)
+	for _, hook := range knownStatusLineHooks {
+		if strings.Contains(command, hook.marker) {
+			return hook, true
+		}
+	}
+	return knownStatusLineHook{}, false
 }

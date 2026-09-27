@@ -97,12 +97,12 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 	}
 	if hadStatusLine && statusLineChanged {
 		printStatusLineDiff(stdout, before, desired)
-		if statusLineReferencesOrca(before) {
-			hookDesc := "own claude-statusline hook"
-			if path := orcaStatusLineHookPath(getenv); path != "" {
+		if hook, ok := detectKnownStatusLineHook(before); ok {
+			hookDesc := "own hook"
+			if path := hook.path(getenv); path != "" {
 				hookDesc = "own " + path + " hook"
 			}
-			fmt.Fprintf(stdout, "Note: existing statusLine looks like Orca's %s. `statusloom claude` forwards rendered payloads to it automatically, so Orca's pane integration will keep working after this change.\n", hookDesc)
+			fmt.Fprintf(stdout, "Note: existing statusLine looks like %s's %s. `statusloom claude` forwards rendered payloads to it automatically, so %s's integration will keep working after this change.\n", hook.name, hookDesc, hook.name)
 		}
 	}
 	if hadSubagentStatusLine && subagentChanged {

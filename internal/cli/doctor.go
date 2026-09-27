@@ -132,6 +132,10 @@ func doctorClaudeCode(report func(string, string, string), path string) {
 			report("PASS", "claude-code", command)
 			return
 		}
+		if hook, ok := detectKnownStatusLineHook(statusLine); ok {
+			report("WARN", "claude-code", fmt.Sprintf("statusLine is %s's own hook, not statusloom; run statusloom setup claude-code (statusloom will keep forwarding to %s automatically)", hook.name, hook.name))
+			return
+		}
 	}
 	report("WARN", "claude-code", "not configured; run statusloom setup claude-code")
 }

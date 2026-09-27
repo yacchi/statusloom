@@ -41,6 +41,7 @@ type oauthAccount struct {
 	UserRateLimitTier         string `json:"userRateLimitTier"`
 	OrganizationRateLimitTier string `json:"organizationRateLimitTier"`
 	SeatTier                  string `json:"seatTier"`
+	OrganizationUuid          string `json:"organizationUuid"`
 }
 
 // Load reads the logged-in account profile. It returns nil when the profile
@@ -71,13 +72,14 @@ func Load(getenv func(string) string) *schema.AccountProfile {
 		plan = acct.OrganizationRateLimitTier
 	}
 	p := &schema.AccountProfile{
-		Email:        acct.EmailAddress,
-		DisplayName:  acct.DisplayName,
-		Organization: acct.OrganizationName,
-		Role:         acct.OrganizationRole,
-		Type:         acct.OrganizationType,
-		Plan:         plan,
-		Seat:         acct.SeatTier,
+		Email:            acct.EmailAddress,
+		DisplayName:      acct.DisplayName,
+		Organization:     acct.OrganizationName,
+		Role:             acct.OrganizationRole,
+		Type:             acct.OrganizationType,
+		Plan:             plan,
+		Seat:             acct.SeatTier,
+		OrganizationUUID: acct.OrganizationUuid,
 	}
 	// An oauthAccount present but empty of every surfaced key is
 	// indistinguishable from absent, as far as the fields go.

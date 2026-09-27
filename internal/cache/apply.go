@@ -6,12 +6,30 @@ import (
 	"github.com/yacchi/statusloom/internal/schema"
 )
 
-// AccountCacheKey is the fixed account cache key used until statusloom can
-// distinguish multiple accounts (plan section 11: stdin carries no account
-// identifier in v0.1). Shared by the render path (internal/cli) and the
-// config UI's real-session preview path (internal/webconfig), both of which
-// fold the same account/extra-usage caches into a snapshot.
+// AccountCacheKey is the fallback account cache key used when the caller
+// could not resolve an account profile (e.g. .claude.json is missing,
+// unreadable, or has no oauthAccount block - see ResolveAccountCacheKey).
+// Historically (before organizationUuid-keying) this was also the single,
+// permanently shared key every account used; it now only backstops the
+// profile-less case.
 const AccountCacheKey = "default"
+
+// ResolveAccountCacheKey derives the account cache key to use for profile,
+// per statusloom-local-development-plan.md's account-cache-key design: a
+// ccprofile-style Team/Max switch on the same machine must not have one
+// account's data clobber the other's. profile.OrganizationUUID
+// (oauthAccount.organizationUuid) is a stable identifier unique to the
+// logged-in account/organization - unlike email or organization display name,
+// which can collide (the same person's Team and Max profiles can share an
+// email) or be renamed. When profile is nil or its OrganizationUUID is empty
+// (account undetermined), the fixed fallback AccountCacheKey is used instead,
+// preserving pre-this-change behavior for that case.
+func ResolveAccountCacheKey(profile *schema.AccountProfile) string {
+	if profile == nil || profile.OrganizationUUID == "" {
+		return AccountCacheKey
+	}
+	return profile.OrganizationUUID
+}
 
 // accountCacheTTL is the informational freshness window written into a
 // stdin-sourced account cache entry's ExpiresAt.
@@ -34,9 +52,9 @@ const accountCacheTTL = 5 * time.Minute
 // look at a cached session snapshot, not rewrite the shared cache with
 // whatever stale windows that snapshot happened to carry - should call
 // FillAccountFromCache directly instead.
-func ApplyAccountCache(snap *schema.StatusSnapshot, now time.Time) {
-	StoreAccountFromSnapshot(snap, now)
-	FillAccountFromCache(snap, now)
+func ApplyAccountCache(key string, snap *schema.StatusSnapshot, now time.Time) {
+	StoreAccountFromSnapshot(key, snap, now)
+	FillAccountFromCache(key, snap, now)
 }
 
 // StoreAccountFromSnapshot writes any five-hour/seven-day window present on
@@ -48,7 +66,7 @@ func ApplyAccountCache(snap *schema.StatusSnapshot, now time.Time) {
 // Cache errors are deliberately ignored: the shared cache is a best-effort
 // convenience, and a render must never fail just because the cache
 // directory is unwritable.
-func StoreAccountFromSnapshot(snap *schema.StatusSnapshot, now time.Time) {
+func StoreAccountFromSnapshot(key string, snap *schema.StatusSnapshot, now time.Time) {
 	if snap.Account.FiveHour == nil && snap.Account.SevenDay == nil {
 		return
 	}
@@ -63,7 +81,7 @@ func StoreAccountFromSnapshot(snap *schema.StatusSnapshot, now time.Time) {
 	if snap.Account.SevenDay != nil {
 		u.SevenDay = ToRateWindowState(snap.Account.SevenDay)
 	}
-	_ = StoreAccount(AccountCacheKey, u)
+	_ = StoreAccount(key, u)
 }
 
 // FillAccountFromCache fills in any five-hour/seven-day window snap is
@@ -74,14 +92,14 @@ func StoreAccountFromSnapshot(snap *schema.StatusSnapshot, now time.Time) {
 // Cache errors are deliberately ignored: the shared cache is a best-effort
 // convenience, and a caller must never fail (or even go stale-empty) just
 // because the cache directory is unreadable.
-func FillAccountFromCache(snap *schema.StatusSnapshot, now time.Time) {
+func FillAccountFromCache(key string, snap *schema.StatusSnapshot, now time.Time) {
 	needFiveHour := snap.Account.FiveHour == nil
 	needSevenDay := snap.Account.SevenDay == nil
 	if !needFiveHour && !needSevenDay {
 		return
 	}
 
-	cached, err := LoadAccount(AccountCacheKey)
+	cached, err := LoadAccount(key)
 	if err != nil || cached == nil {
 		return
 	}
@@ -125,8 +143,8 @@ func FillAccountFromCache(snap *schema.StatusSnapshot, now time.Time) {
 // value must survive well past any single windows-envelope expiry. Each
 // source is best-effort and independent: a missing/corrupt/expired value
 // from one never blocks the other, and neither ever errors or panics.
-func ApplyExtraUsageCache(snap *schema.StatusSnapshot, now time.Time) {
-	if eu, stale, ok := LoadExtraUsage(AccountCacheKey, now); ok && eu != nil {
+func ApplyExtraUsageCache(key string, snap *schema.StatusSnapshot, now time.Time) {
+	if eu, stale, ok := LoadExtraUsage(key, now); ok && eu != nil {
 		snap.Account.ExtraUsage = &schema.ExtraUsage{
 			Enabled:         eu.Enabled,
 			MonthlyLimitUSD: eu.MonthlyLimit,
@@ -135,7 +153,7 @@ func ApplyExtraUsageCache(snap *schema.StatusSnapshot, now time.Time) {
 			Stale:           stale,
 		}
 	}
-	if env, _, ok := LoadAccountUsage(AccountCacheKey, now); ok && env != nil {
+	if env, _, ok := LoadAccountUsage(key, now); ok && env != nil {
 		if env.SevenDayOpus != nil {
 			snap.Account.SevenDayOpus = ToSchemaRateWindow(env.SevenDayOpus)
 		}

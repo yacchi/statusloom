@@ -80,9 +80,20 @@ func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool strin
 	tool := string(schema.ToolClaudeCode)
 	doc := resolveRenderDocument(tool, draft, stderr)
 
+	// Resolve the account profile once (claudeaccount.Provider memoizes the
+	// .claude.json read via sync.OnceValue) and reuse the same memoized
+	// provider for render.Options.Profile below, so a render never opens
+	// .claude.json more than once regardless of how many places consult it.
+	// Note this does make the account-cache-key resolution force that one
+	// read on every render (needed to key the account/extra-usage caches by
+	// organizationUuid), even for a document with no account-* field - a
+	// deliberate tradeoff for correct per-account cache isolation.
+	profileProvider := claudeaccount.Provider(getenv)
+	accountCacheKey := cache.ResolveAccountCacheKey(profileProvider())
+
 	now := time.Now()
-	cache.ApplyAccountCache(&snap, now)
-	cache.ApplyExtraUsageCache(&snap, now)
+	cache.ApplyAccountCache(accountCacheKey, &snap, now)
+	cache.ApplyExtraUsageCache(accountCacheKey, &snap, now)
 	applyTranscriptCache(&snap, now)
 	applyGitStatus(&snap, config.DocumentGitConfig(doc), now)
 	storeSessionSnapshot(&snap, now)
@@ -93,7 +104,7 @@ func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool strin
 		Width:   width,
 		Now:     now,
 		Env:     getenv,
-		Profile: claudeaccount.Provider(getenv),
+		Profile: profileProvider,
 	})
 	if out == "" {
 		return nil, nil

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/yacchi/statusloom/internal/cache"
+	"github.com/yacchi/statusloom/internal/claudeaccount"
 	"github.com/yacchi/statusloom/internal/usage"
 )
 
@@ -154,8 +155,16 @@ func runRefresh(args []string, stdout, stderr io.Writer) int {
 // refresh manifest's AccountUsageSchedule. It is called only from the
 // spawned worker subprocess, never from the render path, so the network
 // fetch here never blocks a status-line render.
+//
+// It resolves the account cache key from this subprocess's own environment
+// (os.Getenv, since it is a detached child process that inherited the
+// invoking shell's CLAUDE_CONFIG_DIR - the same profile the render pass that
+// spawned it was rendering for), so a Team/Max profile switch on the same
+// machine keys the refreshed extra-usage/per-model-weekly data separately
+// per account instead of one clobbering the other's cache entry.
 func refreshAccountUsage(now time.Time, ccVersion string) {
 	m := cache.LoadRefreshManifest()
+	accountCacheKey := cache.ResolveAccountCacheKey(claudeaccount.Load(os.Getenv))
 
 	token, err := acquireUsageToken(os.Getenv)
 	if errors.Is(err, usage.ErrNoToken) || token == "" {
@@ -187,11 +196,11 @@ func refreshAccountUsage(now time.Time, ccVersion string) {
 		// unchanged so a merely-missing field in one poll never drops a
 		// value that is otherwise still fresh under its own long-lived
 		// retention window (cache.LoadExtraUsage).
-		if prev, ok := cache.LoadAccountUsageRaw(cache.AccountCacheKey); ok && prev != nil && prev.ExtraUsage != nil {
+		if prev, ok := cache.LoadAccountUsageRaw(accountCacheKey); ok && prev != nil && prev.ExtraUsage != nil {
 			env.ExtraUsage = prev.ExtraUsage
 		}
 	}
-	_ = cache.StoreAccountUsage(cache.AccountCacheKey, env)
+	_ = cache.StoreAccountUsage(accountCacheKey, env)
 	m.AccountUsage = cache.AccountUsageSchedule{
 		NextDueAt:   cache.NextUsageDue(now, 0),
 		LastAttempt: now,

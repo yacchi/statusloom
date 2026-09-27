@@ -95,6 +95,7 @@ func TestDSLFields_CapabilityMarksOAuthUsageFields(t *testing.T) {
 // fullSample ones.
 func TestDSLFields_ExtraUsageOverlay_Real(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+	isolateClaudeConfig(t) // keep this test's account cache key at cache.AccountCacheKey regardless of the developer's real .claude.json
 
 	now := time.Now()
 	env := cache.NewAccountUsageEnvelope(now)

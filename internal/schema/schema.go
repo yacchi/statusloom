@@ -160,6 +160,14 @@ type AccountProfile struct {
 	// Seat is oauthAccount.seatTier, e.g. "team_tier_1". Individual accounts
 	// have no seat, so this is legitimately empty for them.
 	Seat string
+	// OrganizationUUID is oauthAccount.organizationUuid: a stable identifier
+	// that uniquely distinguishes the account/organization currently logged
+	// in, safe to use as a cache key across a ccprofile-style Team/Max
+	// profile switch. oauthAccount.accountUuid (not surfaced here) is NOT
+	// usable for this: it identifies the person and is the same value across
+	// that same person's Team and Max profiles, so it cannot tell those two
+	// apart.
+	OrganizationUUID string
 }
 
 // RateWindow describes usage within a rolling rate-limit window.

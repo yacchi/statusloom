@@ -7,6 +7,22 @@ import (
 	"github.com/yacchi/statusloom/internal/schema"
 )
 
+// TestResolveAccountCacheKey covers the three cases ResolveAccountCacheKey
+// must handle: no profile, a profile with no OrganizationUUID (both fall back
+// to AccountCacheKey), and a profile with an OrganizationUUID (used as-is).
+func TestResolveAccountCacheKey(t *testing.T) {
+	if got := ResolveAccountCacheKey(nil); got != AccountCacheKey {
+		t.Errorf("ResolveAccountCacheKey(nil) = %q, want %q", got, AccountCacheKey)
+	}
+	if got := ResolveAccountCacheKey(&schema.AccountProfile{Email: "a@example.com"}); got != AccountCacheKey {
+		t.Errorf("ResolveAccountCacheKey(profile with empty OrganizationUUID) = %q, want %q", got, AccountCacheKey)
+	}
+	profile := &schema.AccountProfile{OrganizationUUID: "org-uuid-123"}
+	if got := ResolveAccountCacheKey(profile); got != "org-uuid-123" {
+		t.Errorf("ResolveAccountCacheKey(profile) = %q, want org-uuid-123", got)
+	}
+}
+
 // TestApplyExtraUsageCache_Populates stores an OAuth-usage envelope and
 // asserts ApplyExtraUsageCache folds the extra-usage state and the per-model
 // seven-day windows into the snapshot, while leaving FiveHour/SevenDay alone.
@@ -27,7 +43,7 @@ func TestApplyExtraUsageCache_Populates(t *testing.T) {
 	}
 
 	var snap schema.StatusSnapshot
-	ApplyExtraUsageCache(&snap, now.Add(1*time.Minute))
+	ApplyExtraUsageCache(AccountCacheKey, &snap, now.Add(1*time.Minute))
 
 	if snap.Account.ExtraUsage == nil {
 		t.Fatal("ExtraUsage = nil, want populated")
@@ -65,7 +81,7 @@ func TestApplyExtraUsageCache_StaleBoundary(t *testing.T) {
 
 	// 20 minutes later: past ExpiresAt (now+15m) but within StaleUntil (now+6h).
 	var snap schema.StatusSnapshot
-	ApplyExtraUsageCache(&snap, now.Add(20*time.Minute))
+	ApplyExtraUsageCache(AccountCacheKey, &snap, now.Add(20*time.Minute))
 	if snap.Account.ExtraUsage == nil {
 		t.Fatal("ExtraUsage = nil, want populated")
 	}
@@ -79,7 +95,7 @@ func TestApplyExtraUsageCache_StaleBoundary(t *testing.T) {
 func TestApplyExtraUsageCache_NoFile(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 	var snap schema.StatusSnapshot
-	ApplyExtraUsageCache(&snap, time.Now())
+	ApplyExtraUsageCache(AccountCacheKey, &snap, time.Now())
 	if snap.Account.ExtraUsage != nil || snap.Account.SevenDayOpus != nil || snap.Account.SevenDaySonnet != nil {
 		t.Error("snapshot must be untouched when no envelope exists")
 	}
@@ -97,7 +113,7 @@ func TestApplyAccountCache_StoresAndFillsFromCache(t *testing.T) {
 	var snap1 schema.StatusSnapshot
 	snap1.Account.FiveHour = &schema.RateWindow{UsedPercentage: 25, ResetsAt: now.Add(2 * time.Hour)}
 	snap1.Account.SevenDay = &schema.RateWindow{UsedPercentage: 60, ResetsAt: now.Add(48 * time.Hour)}
-	ApplyAccountCache(&snap1, now)
+	ApplyAccountCache(AccountCacheKey, &snap1, now)
 
 	cached, err := LoadAccount(AccountCacheKey)
 	if err != nil || cached == nil {
@@ -110,7 +126,7 @@ func TestApplyAccountCache_StoresAndFillsFromCache(t *testing.T) {
 	// Second render (a few minutes later): stdin carries neither window ->
 	// both are filled in from the cache and Stale is set.
 	var snap2 schema.StatusSnapshot
-	ApplyAccountCache(&snap2, now.Add(1*time.Minute))
+	ApplyAccountCache(AccountCacheKey, &snap2, now.Add(1*time.Minute))
 	if snap2.Account.FiveHour == nil || snap2.Account.FiveHour.UsedPercentage != 25 {
 		t.Errorf("snap2.Account.FiveHour = %v, want filled from cache (25)", snap2.Account.FiveHour)
 	}
@@ -146,7 +162,7 @@ func TestFillAccountFromCache_DoesNotWrite(t *testing.T) {
 	// must not write anything to the cache either way.
 	snap := schema.StatusSnapshot{}
 	snap.Account.FiveHour = &schema.RateWindow{UsedPercentage: 99, ResetsAt: now.Add(3 * time.Hour)}
-	FillAccountFromCache(&snap, now)
+	FillAccountFromCache(AccountCacheKey, &snap, now)
 
 	if snap.Account.FiveHour.UsedPercentage != 99 {
 		t.Errorf("snap.Account.FiveHour.UsedPercentage = %v, want unchanged (99): FillAccountFromCache must not overwrite a window already present", snap.Account.FiveHour.UsedPercentage)

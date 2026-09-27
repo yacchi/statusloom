@@ -178,6 +178,7 @@ func TestUsageProbe_Unauthorized(t *testing.T) {
 // preview overlay (handleDSLFields, B2) can read the user's real values.
 func TestUsageProbe_Ok_PersistsAccountUsage(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+	isolateClaudeConfig(t) // keep this test's account cache key at cache.AccountCacheKey regardless of the developer's real .claude.json
 
 	resetsAt := time.Now().Add(3 * time.Hour).Truncate(time.Second)
 	withUsageProbeSeams(t,

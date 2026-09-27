@@ -587,14 +587,15 @@ func (s *server) previewSnapshot(w http.ResponseWriter, section, sample, session
 		}
 		snap := entry.Snapshot
 		now := time.Now()
+		accountCacheKey := cache.ResolveAccountCacheKey(claudeaccount.Provider(os.Getenv)())
 		// FillAccountFromCache only (never StoreAccountFromSnapshot /
 		// ApplyAccountCache): previewing a cached session must not rewrite
 		// the shared account cache with whatever stale five-hour/seven-day
 		// windows that session's frozen snapshot happened to carry. A
 		// preview is a read-only look at a past moment; it must not have a
 		// side effect on the render path's shared state.
-		cache.FillAccountFromCache(&snap, now)
-		cache.ApplyExtraUsageCache(&snap, now)
+		cache.FillAccountFromCache(accountCacheKey, &snap, now)
+		cache.ApplyExtraUsageCache(accountCacheKey, &snap, now)
 		return snap, true
 	}
 	name := sample
@@ -706,7 +707,8 @@ func (s *server) handleDSLFields(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	snap, _ := samples.Snapshot(samples.Full, now)
-	overlayRealAccountUsage(&snap, now)
+	accountCacheKey := cache.ResolveAccountCacheKey(claudeaccount.Provider(os.Getenv)())
+	overlayRealAccountUsage(&snap, now, accountCacheKey)
 	fields := dsl.Fields(tool)
 	out := make([]dslFieldEntry, 0, len(fields))
 	for _, f := range fields {
@@ -729,11 +731,12 @@ func (s *server) handleDSLFields(w http.ResponseWriter, r *http.Request) {
 // overlayRealAccountUsage replaces snap.Account's extra-usage / per-model
 // weekly-usage fields with the user's real cached values, when the usage-API
 // probe (handleUsageProbe in usageprobe.go) has successfully persisted them
-// to the shared account-usage cache (cache.AccountCacheKey). Fields with no cached
-// value are left as the synthetic fullSample values so previews still look
-// realistic before the probe has ever run.
-func overlayRealAccountUsage(snap *schema.StatusSnapshot, now time.Time) {
-	env, _, ok := cache.LoadAccountUsage(cache.AccountCacheKey, now)
+// to the shared account-usage cache under accountCacheKey
+// (cache.ResolveAccountCacheKey). Fields with no cached value are left as the
+// synthetic fullSample values so previews still look realistic before the
+// probe has ever run.
+func overlayRealAccountUsage(snap *schema.StatusSnapshot, now time.Time, accountCacheKey string) {
+	env, _, ok := cache.LoadAccountUsage(accountCacheKey, now)
 	if !ok {
 		return
 	}

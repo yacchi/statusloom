@@ -39,7 +39,8 @@ func TestLoad_TeamAccount(t *testing.T) {
 	    "userRateLimitTier": "default_claude_max_5x",
 	    "organizationRateLimitTier": "default_raven",
 	    "seatTier": "team_tier_1",
-	    "accountUuid": "ignored"
+	    "accountUuid": "ignored",
+	    "organizationUuid": "org-team-uuid"
 	  },
 	  "tipsHistory": {"x": 1}
 	}`)
@@ -55,8 +56,9 @@ func TestLoad_TeamAccount(t *testing.T) {
 		Role:         "primary_owner",
 		Type:         "claude_team",
 		// The user-scoped tier wins over the org-wide one.
-		Plan: "default_claude_max_5x",
-		Seat: "team_tier_1",
+		Plan:             "default_claude_max_5x",
+		Seat:             "team_tier_1",
+		OrganizationUUID: "org-team-uuid",
 	}
 	if *got != want {
 		t.Errorf("Load() = %+v, want %+v", *got, want)
@@ -170,5 +172,48 @@ func TestLoad_HonorsProfileSwitch(t *testing.T) {
 	}
 	if got := Load(b); got == nil || got.Email != "b@example.com" {
 		t.Errorf("profile b = %+v, want b@example.com", got)
+	}
+}
+
+// TestLoad_OrganizationUUID_DistinguishesTeamAndMax pins the real-world case
+// this field exists for: the same person's Team seat and Max subscription
+// (same email, same accountUuid - not surfaced here) carry different
+// organizationUuid values, so it - not the email or the organization display
+// name (a renameable label) - is the stable identifier that tells the two
+// profiles apart for cache-keying purposes.
+func TestLoad_OrganizationUUID_DistinguishesTeamAndMax(t *testing.T) {
+	maxProfile := writeConfig(t, `{
+	  "oauthAccount": {
+	    "emailAddress": "fujie@ai2-jp.com",
+	    "organizationType": "claude_max",
+	    "accountUuid": "same-person-account-uuid",
+	    "organizationUuid": "ab0f74df-1d50-456a-85a0-cbde151d1bd6"
+	  }
+	}`)
+	teamProfile := writeConfig(t, `{
+	  "oauthAccount": {
+	    "emailAddress": "fujie@ai2-jp.com",
+	    "organizationType": "claude_team",
+	    "accountUuid": "same-person-account-uuid",
+	    "organizationUuid": "055b1111-82d7-4f94-972c-0c6c799a9894"
+	  }
+	}`)
+
+	max := Load(maxProfile)
+	team := Load(teamProfile)
+	if max == nil || team == nil {
+		t.Fatalf("Load() returned nil: max=%+v team=%+v", max, team)
+	}
+	if max.Email != team.Email {
+		t.Fatalf("test setup invalid: emails differ (%q vs %q), want identical", max.Email, team.Email)
+	}
+	if max.OrganizationUUID == team.OrganizationUUID {
+		t.Errorf("OrganizationUUID identical (%q) for two distinct profiles sharing an email/accountUuid, want different", max.OrganizationUUID)
+	}
+	if max.OrganizationUUID != "ab0f74df-1d50-456a-85a0-cbde151d1bd6" {
+		t.Errorf("max OrganizationUUID = %q, want ab0f74df-1d50-456a-85a0-cbde151d1bd6", max.OrganizationUUID)
+	}
+	if team.OrganizationUUID != "055b1111-82d7-4f94-972c-0c6c799a9894" {
+		t.Errorf("team OrganizationUUID = %q, want 055b1111-82d7-4f94-972c-0c6c799a9894", team.OrganizationUUID)
 	}
 }

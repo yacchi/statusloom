@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yacchi/statusloom/internal/cache"
+	"github.com/yacchi/statusloom/internal/claudeaccount"
 	"github.com/yacchi/statusloom/internal/usage"
 )
 
@@ -64,7 +65,8 @@ func (s *server) handleUsageProbe(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case status == http.StatusOK && ferr == nil:
 		if report != nil {
-			persistAccountUsage(report, time.Now())
+			accountCacheKey := cache.ResolveAccountCacheKey(claudeaccount.Provider(os.Getenv)())
+			persistAccountUsage(report, time.Now(), accountCacheKey)
 		}
 		writeJSON(w, http.StatusOK, usageProbeResponse{
 			Available:         true,
@@ -82,12 +84,13 @@ func (s *server) handleUsageProbe(w http.ResponseWriter, r *http.Request) {
 }
 
 // persistAccountUsage maps a successful usage-API report onto the shared
-// account-usage cache envelope and best-effort stores it (cache.AccountCacheKey),
-// so the render path and the fields preview overlay (handleDSLFields in
-// dsl.go) can pick up the user's real values instead of only synthetic
-// samples. Errors are ignored: this is an opportunistic side effect of the
-// probe, not something the probe response depends on.
-func persistAccountUsage(report *usage.Report, now time.Time) {
+// account-usage cache envelope and best-effort stores it under
+// accountCacheKey (cache.ResolveAccountCacheKey), so the render path and the
+// fields preview overlay (handleDSLFields in dsl.go) can pick up the user's
+// real values instead of only synthetic samples. Errors are ignored: this is
+// an opportunistic side effect of the probe, not something the probe
+// response depends on.
+func persistAccountUsage(report *usage.Report, now time.Time, accountCacheKey string) {
 	env := cache.NewAccountUsageEnvelope(now)
 	if report.FiveHour != nil {
 		env.FiveHour = &cache.RateWindowState{UsedPercentage: report.FiveHour.Utilization, ResetsAt: report.FiveHour.ResetsAt}
@@ -109,5 +112,5 @@ func persistAccountUsage(report *usage.Report, now time.Time) {
 			Utilization:  report.Extra.Utilization,
 		}
 	}
-	_ = cache.StoreAccountUsage(cache.AccountCacheKey, env)
+	_ = cache.StoreAccountUsage(accountCacheKey, env)
 }

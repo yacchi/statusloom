@@ -79,6 +79,14 @@ func setupEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("STATUSLOOM_CONFIG", filepath.Join(t.TempDir(), "does-not-exist.json"))
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+	// Isolate .claude.json resolution (internal/claudecfg.GlobalConfigPath)
+	// from the developer's real machine: refreshAccountUsage (internal/cli's
+	// refresh.go) resolves the account cache key via claudeaccount.Load(os.Getenv),
+	// and a real .claude.json's organizationUuid would otherwise key these
+	// tests' cache reads/writes away from cache.AccountCacheKey, which the
+	// tests assert against directly.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 }
 
 func runCLI(t *testing.T, args []string, stdin []byte, env map[string]string) (stdout, stderr string, code int) {

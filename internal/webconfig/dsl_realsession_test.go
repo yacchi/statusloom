@@ -22,6 +22,7 @@ import (
 // value, not the stored-empty snapshot.
 func TestDSL_Preview_RealSession_OverlaysCurrentAccountCache(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+	isolateClaudeConfig(t) // keep this test's account cache key at cache.AccountCacheKey regardless of the developer's real .claude.json
 	ts := startTestServer(t, time.Hour)
 
 	snap := schema.StatusSnapshot{
@@ -97,6 +98,7 @@ func TestDSL_Preview_RealSession_OverlaysCurrentAccountCache(t *testing.T) {
 // now".
 func TestDSL_Preview_RealSession_DoesNotMutateSharedAccountCache(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+	isolateClaudeConfig(t) // keep this test's account cache key at cache.AccountCacheKey regardless of the developer's real .claude.json
 	ts := startTestServer(t, time.Hour)
 
 	// Seed the shared account cache with a known baseline, as the render

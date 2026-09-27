@@ -26,8 +26,9 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, version strin
 
 	switch args[0] {
 	case "claude":
-		// Explicit tool: skip stdin sniffing entirely.
-		return runRenderPipeline(stdin, stdout, stderr, getenv, "claude-code")
+		// Explicit tool: skip stdin sniffing entirely. Also forwards to
+		// Orca's own statusline hook, if present (see runClaude).
+		return runClaude(stdin, stdout, stderr, getenv)
 
 	case "claude-subagent":
 		// Claude Code's subagentStatusLine: a distinct stdin shape (a

@@ -26,6 +26,21 @@ type knownStatusLineHook struct {
 	name   string // human-readable, for messages, e.g. "Orca"
 	path   func(getenv func(string) string) string
 	marker string // substring identifying this tool's command
+
+	// envPrefix, if non-empty, is a process environment variable name
+	// prefix (e.g. "ORCA_") whose presence is used as a cheap pre-fork
+	// shortcut: if no environment variable starts with it,
+	// forwardToKnownStatusLineHooks skips forking this hook entirely. A
+	// prefix rather than a specific variable name is used deliberately -
+	// the tool's own hook protocol (which exact variables it sets, e.g.
+	// port/token/pane-key ones) is undocumented and free to change, but
+	// the naming convention it uses for all of them is comparatively
+	// stable. This is only a fork/no-fork shortcut: the tool's own
+	// script remains the sole authority on whether to actually act, so a
+	// hit here (even with none of the specific variables the script
+	// looks for actually set) still forks it as before. Empty means
+	// always fork (subject to the executable check).
+	envPrefix string
 }
 
 // knownStatusLineHooks is the small internal registry of third-party tools
@@ -34,7 +49,28 @@ type knownStatusLineHook struct {
 // to stay tiny (see plans/... for the YAGNI rationale). Add an entry here
 // (not a parallel code path) if another tool starts doing the same thing.
 var knownStatusLineHooks = []knownStatusLineHook{
-	{name: "Orca", path: orcaStatusLineHookPath, marker: orcaStatusLineHookMarker},
+	{name: "Orca", path: orcaStatusLineHookPath, marker: orcaStatusLineHookMarker, envPrefix: "ORCA_"},
+}
+
+// environ returns the process's environment variable list, in "key=value"
+// form (like os.Environ). It is a package variable rather than a direct
+// call to os.Environ so tests can substitute a fixed list, independent of
+// whatever ORCA_* (or similar) variables happen to be set in the real
+// environment the test binary runs under.
+var environ = os.Environ
+
+// hasEnvWithPrefix reports whether any environment variable (as returned by
+// environ) starts with prefix. An empty prefix always reports true.
+func hasEnvWithPrefix(prefix string) bool {
+	if prefix == "" {
+		return true
+	}
+	for _, kv := range environ() {
+		if strings.HasPrefix(kv, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // runClaude implements `statusloom claude`. It renders exactly like
@@ -74,10 +110,22 @@ func runClaude(stdin io.Reader, stdout, stderr io.Writer, getenv func(string) st
 // same payload their own installer would have wired as statusLine is
 // enough - with zero cost on any machine where the tool (or its hook)
 // isn't present.
+//
+// As a fork/exec avoidance shortcut, a hook whose envPrefix is set is only
+// forked when at least one process environment variable starts with that
+// prefix (see hasEnvWithPrefix and the envPrefix field doc for why a
+// prefix, not specific variable names, is used here). This does not change
+// the final decision of whether to act on the payload - that's still
+// entirely up to the hook script itself - it only avoids an otherwise
+// pointless fork/exec when the tool is installed but clearly not active in
+// the current pane (e.g. no pane hooked at all), which is common.
 func forwardToKnownStatusLineHooks(raw []byte, getenv func(string) string) {
 	for _, hook := range knownStatusLineHooks {
 		script := hook.path(getenv)
 		if script == "" || !isExecutableFile(script) {
+			continue
+		}
+		if hook.envPrefix != "" && !hasEnvWithPrefix(hook.envPrefix) {
 			continue
 		}
 

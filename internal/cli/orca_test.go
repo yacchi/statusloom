@@ -8,6 +8,20 @@ import (
 	"testing"
 )
 
+// stubEnviron temporarily replaces the package-level environ func (used by
+// hasEnvWithPrefix) with one that returns kv, restoring it to os.Environ via
+// t.Cleanup. Tests that need forwarding to actually happen use this to
+// simulate being inside an Orca-hooked pane (ORCA_* variables present)
+// without depending on, or polluting, the real process environment; tests
+// that need forwarding to be skipped use it to guarantee no ORCA_* variable
+// leaks in from the real environment the test binary happens to run under.
+func stubEnviron(t *testing.T, kv []string) {
+	t.Helper()
+	orig := environ
+	environ = func() []string { return kv }
+	t.Cleanup(func() { environ = orig })
+}
+
 // writeOrcaStatusLineHook writes an executable ~/.orca/agent-hooks/
 // claude-statusline.sh under home that copies its stdin to capturePath, and
 // returns home for use as the HOME env passed to runCLI.
@@ -31,6 +45,7 @@ func writeOrcaStatusLineHook(t *testing.T, capturePath string) (home string) {
 // exists and is executable, without changing its own rendered output.
 func TestRun_Claude_ForwardsToOrcaHook(t *testing.T) {
 	setupEnv(t)
+	stubEnviron(t, []string{"ORCA_PANE_KEY=test-pane"})
 	data := fixture(t, "full.json")
 
 	capture := filepath.Join(t.TempDir(), "captured.json")
@@ -78,6 +93,7 @@ func TestRun_Claude_NoOrcaHookIsNoop(t *testing.T) {
 // exits non-zero never affects statusloom's own exit code or output.
 func TestRun_Claude_OrcaHookFailureIsIgnored(t *testing.T) {
 	setupEnv(t)
+	stubEnviron(t, []string{"ORCA_PANE_KEY=test-pane"})
 	data := fixture(t, "full.json")
 
 	home := t.TempDir()
@@ -103,6 +119,7 @@ func TestRun_Claude_OrcaHookFailureIsIgnored(t *testing.T) {
 // non-executable script is not run (and does not error).
 func TestRun_Claude_OrcaHookNotExecutableIsSkipped(t *testing.T) {
 	setupEnv(t)
+	stubEnviron(t, []string{"ORCA_PANE_KEY=test-pane"})
 	data := fixture(t, "full.json")
 
 	home := t.TempDir()
@@ -215,6 +232,7 @@ func TestSetupClaudeCode_OrcaNote(t *testing.T) {
 // raw payload.
 func TestForwardToKnownStatusLineHooks_MultipleEntries(t *testing.T) {
 	setupEnv(t)
+	stubEnviron(t, []string{"ORCA_PANE_KEY=test-pane"})
 	data := fixture(t, "full.json")
 
 	home := t.TempDir()
@@ -253,6 +271,86 @@ func TestForwardToKnownStatusLineHooks_MultipleEntries(t *testing.T) {
 		if string(got) != string(data) {
 			t.Errorf("%s hook received %q, want raw stdin %q", cap.name, got, data)
 		}
+	}
+}
+
+// TestRun_Claude_ForwardsToOrcaHook_WithOrcaEnvPrefix verifies that the
+// envPrefix pre-fork shortcut lets forwarding through when an ORCA_*
+// environment variable is present, even though its specific name is
+// something forwardToKnownStatusLineHooks has never heard of - only the
+// "ORCA_" prefix is checked (see the envPrefix field doc for why).
+func TestRun_Claude_ForwardsToOrcaHook_WithOrcaEnvPrefix(t *testing.T) {
+	setupEnv(t)
+	stubEnviron(t, []string{"ORCA_SOME_FUTURE_VARIABLE=1"})
+	data := fixture(t, "full.json")
+
+	capture := filepath.Join(t.TempDir(), "captured.json")
+	home := writeOrcaStatusLineHook(t, capture)
+
+	stdout, stderr, code := runCLI(t, []string{"claude"}, data, map[string]string{"HOME": home})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if strings.TrimSpace(stdout) == "" {
+		t.Errorf("expected rendered output, got empty stdout")
+	}
+
+	got, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatalf("hook was not invoked (reading %s): %v", capture, err)
+	}
+	if string(got) != string(data) {
+		t.Errorf("hook received %q, want raw stdin %q", got, data)
+	}
+}
+
+// TestRun_Claude_SkipsOrcaHookWithoutOrcaEnvPrefix verifies the envPrefix
+// pre-fork shortcut: when no ORCA_*-prefixed environment variable is
+// present, forwardToKnownStatusLineHooks skips forking Orca's hook
+// altogether, even though the hook file exists and is executable.
+func TestRun_Claude_SkipsOrcaHookWithoutOrcaEnvPrefix(t *testing.T) {
+	setupEnv(t)
+	stubEnviron(t, nil)
+	data := fixture(t, "full.json")
+
+	capture := filepath.Join(t.TempDir(), "captured.json")
+	home := writeOrcaStatusLineHook(t, capture)
+
+	stdout, stderr, code := runCLI(t, []string{"claude"}, data, map[string]string{"HOME": home})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (stderr: %s)", code, stderr)
+	}
+	if strings.TrimSpace(stdout) == "" {
+		t.Errorf("expected rendered output, got empty stdout")
+	}
+
+	if _, err := os.Stat(capture); err == nil {
+		t.Errorf("hook was invoked despite no ORCA_* environment variable present, want skipped")
+	}
+}
+
+// TestHasEnvWithPrefix covers hasEnvWithPrefix directly, including the
+// empty-prefix "always true" case used by hooks without an envPrefix.
+func TestHasEnvWithPrefix(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix string
+		env    []string
+		want   bool
+	}{
+		{name: "empty prefix always matches", prefix: "", env: nil, want: true},
+		{name: "no vars at all", prefix: "ORCA_", env: nil, want: false},
+		{name: "unrelated vars only", prefix: "ORCA_", env: []string{"HOME=/x", "PATH=/y"}, want: false},
+		{name: "matching var present", prefix: "ORCA_", env: []string{"ORCA_TAB_ID=1"}, want: true},
+		{name: "matching var among others", prefix: "ORCA_", env: []string{"HOME=/x", "ORCA_AGENT_HOOK_PORT=123"}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stubEnviron(t, tt.env)
+			if got := hasEnvWithPrefix(tt.prefix); got != tt.want {
+				t.Errorf("hasEnvWithPrefix(%q) = %v, want %v", tt.prefix, got, tt.want)
+			}
+		})
 	}
 }
 

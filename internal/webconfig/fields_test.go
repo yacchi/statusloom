@@ -106,7 +106,7 @@ func TestDSLFields_ExtraUsageOverlay_Real(t *testing.T) {
 	}
 	env.SevenDayOpus = &cache.RateWindowState{UsedPercentage: 77, ResetsAt: now.Add(2 * time.Hour)}
 	env.SevenDaySonnet = &cache.RateWindowState{UsedPercentage: 5, ResetsAt: now.Add(6 * time.Hour)}
-	if err := cache.StoreAccountUsage(accountUsageKey, env); err != nil {
+	if err := cache.StoreAccountUsage(cache.AccountCacheKey, env); err != nil {
 		t.Fatalf("StoreAccountUsage() error = %v", err)
 	}
 

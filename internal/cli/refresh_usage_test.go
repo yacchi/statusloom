@@ -7,89 +7,10 @@ import (
 	"time"
 
 	"github.com/yacchi/statusloom/internal/cache"
-	"github.com/yacchi/statusloom/internal/schema"
 	"github.com/yacchi/statusloom/internal/usage"
 )
 
 func floatPtr(f float64) *float64 { return &f }
-
-// TestApplyExtraUsageCache_Populates stores an OAuth-usage envelope and
-// asserts applyExtraUsageCache folds the extra-usage state and the per-model
-// seven-day windows into the snapshot, while leaving FiveHour/SevenDay alone.
-func TestApplyExtraUsageCache_Populates(t *testing.T) {
-	setupEnv(t)
-	now := time.Now()
-	env := cache.NewAccountUsageEnvelope(now)
-	env.SevenDayOpus = &cache.RateWindowState{UsedPercentage: 42, ResetsAt: now.Add(3 * time.Hour)}
-	env.SevenDaySonnet = &cache.RateWindowState{UsedPercentage: 7, ResetsAt: now.Add(4 * time.Hour)}
-	env.ExtraUsage = &cache.ExtraUsageState{
-		Enabled:      true,
-		MonthlyLimit: floatPtr(100),
-		UsedCredits:  floatPtr(12.5),
-		Utilization:  floatPtr(12.5),
-	}
-	if err := cache.StoreAccountUsage(accountCacheKey, env); err != nil {
-		t.Fatalf("StoreAccountUsage() error = %v", err)
-	}
-
-	var snap schema.StatusSnapshot
-	applyExtraUsageCache(&snap, now.Add(1*time.Minute))
-
-	if snap.Account.ExtraUsage == nil {
-		t.Fatal("ExtraUsage = nil, want populated")
-	}
-	if !snap.Account.ExtraUsage.Enabled {
-		t.Error("ExtraUsage.Enabled = false, want true")
-	}
-	if snap.Account.ExtraUsage.Stale {
-		t.Error("ExtraUsage.Stale = true, want false (within fresh TTL)")
-	}
-	if got := snap.Account.ExtraUsage.MonthlyLimitUSD; got == nil || *got != 100 {
-		t.Errorf("MonthlyLimitUSD = %v, want 100", got)
-	}
-	if snap.Account.SevenDayOpus == nil || snap.Account.SevenDayOpus.UsedPercentage != 42 {
-		t.Errorf("SevenDayOpus = %v, want UsedPercentage 42", snap.Account.SevenDayOpus)
-	}
-	if snap.Account.SevenDaySonnet == nil || snap.Account.SevenDaySonnet.UsedPercentage != 7 {
-		t.Errorf("SevenDaySonnet = %v, want UsedPercentage 7", snap.Account.SevenDaySonnet)
-	}
-	if snap.Account.FiveHour != nil || snap.Account.SevenDay != nil {
-		t.Error("FiveHour/SevenDay must be left untouched by applyExtraUsageCache")
-	}
-}
-
-// TestApplyExtraUsageCache_StaleBoundary asserts Stale reflects the
-// ExpiresAt (fresh-TTL) boundary of the loaded envelope.
-func TestApplyExtraUsageCache_StaleBoundary(t *testing.T) {
-	setupEnv(t)
-	now := time.Now()
-	env := cache.NewAccountUsageEnvelope(now)
-	env.ExtraUsage = &cache.ExtraUsageState{Enabled: true, Utilization: floatPtr(50)}
-	if err := cache.StoreAccountUsage(accountCacheKey, env); err != nil {
-		t.Fatalf("StoreAccountUsage() error = %v", err)
-	}
-
-	// 20 minutes later: past ExpiresAt (now+15m) but within StaleUntil (now+6h).
-	var snap schema.StatusSnapshot
-	applyExtraUsageCache(&snap, now.Add(20*time.Minute))
-	if snap.Account.ExtraUsage == nil {
-		t.Fatal("ExtraUsage = nil, want populated")
-	}
-	if !snap.Account.ExtraUsage.Stale {
-		t.Error("ExtraUsage.Stale = false, want true (past ExpiresAt)")
-	}
-}
-
-// TestApplyExtraUsageCache_NoFile asserts a missing envelope leaves the
-// snapshot untouched.
-func TestApplyExtraUsageCache_NoFile(t *testing.T) {
-	setupEnv(t)
-	var snap schema.StatusSnapshot
-	applyExtraUsageCache(&snap, time.Now())
-	if snap.Account.ExtraUsage != nil || snap.Account.SevenDayOpus != nil || snap.Account.SevenDaySonnet != nil {
-		t.Error("snapshot must be untouched when no envelope exists")
-	}
-}
 
 // swapUsageSeams overrides the account-usage seams for the duration of a test
 // and restores them (and the TestMain defaults) via t.Cleanup.
@@ -124,7 +45,7 @@ func TestRunRefresh_UsageSuccess(t *testing.T) {
 	}
 
 	now := time.Now()
-	got, _, ok := cache.LoadAccountUsage(accountCacheKey, now)
+	got, _, ok := cache.LoadAccountUsage(cache.AccountCacheKey, now)
 	if !ok || got == nil {
 		t.Fatal("expected an account-usage envelope to be stored")
 	}
@@ -156,7 +77,7 @@ func TestRunRefresh_UsageFailure(t *testing.T) {
 	// Seed a prior good envelope to prove it is preserved.
 	prior := cache.NewAccountUsageEnvelope(time.Now())
 	prior.ExtraUsage = &cache.ExtraUsageState{Enabled: true, Utilization: floatPtr(33)}
-	if err := cache.StoreAccountUsage(accountCacheKey, prior); err != nil {
+	if err := cache.StoreAccountUsage(cache.AccountCacheKey, prior); err != nil {
 		t.Fatalf("seed StoreAccountUsage() error = %v", err)
 	}
 
@@ -186,7 +107,7 @@ func TestRunRefresh_UsageFailure(t *testing.T) {
 	}
 
 	// Prior envelope must be intact (unchanged utilization).
-	got, _, ok := cache.LoadAccountUsage(accountCacheKey, now)
+	got, _, ok := cache.LoadAccountUsage(cache.AccountCacheKey, now)
 	if !ok || got == nil || got.ExtraUsage == nil || got.ExtraUsage.Utilization == nil || *got.ExtraUsage.Utilization != 33 {
 		t.Errorf("prior envelope not preserved: %+v", got)
 	}
@@ -213,7 +134,7 @@ func TestRunRefresh_UsageExtraCarriedForward(t *testing.T) {
 		t.Fatalf("runRefresh() (poll 1) code = %d, want 0", code)
 	}
 
-	first, ok := cache.LoadAccountUsageRaw(accountCacheKey)
+	first, ok := cache.LoadAccountUsageRaw(cache.AccountCacheKey)
 	if !ok || first == nil || first.ExtraUsage == nil {
 		t.Fatalf("expected ExtraUsage stored after poll 1: %+v", first)
 	}
@@ -245,7 +166,7 @@ func TestRunRefresh_UsageExtraCarriedForward(t *testing.T) {
 		t.Fatalf("runRefresh() (poll 2) code = %d, want 0", code)
 	}
 
-	second, ok := cache.LoadAccountUsageRaw(accountCacheKey)
+	second, ok := cache.LoadAccountUsageRaw(cache.AccountCacheKey)
 	if !ok || second == nil {
 		t.Fatalf("expected envelope still present after poll 2")
 	}
@@ -302,7 +223,7 @@ func TestRunRefresh_UsageNoToken(t *testing.T) {
 	}
 
 	// No envelope should have been stored.
-	if _, _, ok := cache.LoadAccountUsage(accountCacheKey, now); ok {
+	if _, _, ok := cache.LoadAccountUsage(cache.AccountCacheKey, now); ok {
 		t.Error("no envelope should be stored on the no-token path")
 	}
 }

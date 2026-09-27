@@ -21,12 +21,6 @@ var (
 	}
 )
 
-// accountUsageKey is the shared account-usage cache key the probe writes to
-// and the render path (and the fields preview overlay in dsl.go) read from.
-// It must match cli's accountCacheKey (internal/cli/render.go), which is also
-// the fixed string "default" (statusloom uses a single, unkeyed account).
-const accountUsageKey = "default"
-
 // usageProbeResponse is the GET /api/usage/probe response body: whether the
 // authenticated OAuth usage API is reachable (gating oauth-usage-capability
 // DSL fields in the config UI's palette), why not when it isn't, and
@@ -88,7 +82,7 @@ func (s *server) handleUsageProbe(w http.ResponseWriter, r *http.Request) {
 }
 
 // persistAccountUsage maps a successful usage-API report onto the shared
-// account-usage cache envelope and best-effort stores it (accountUsageKey),
+// account-usage cache envelope and best-effort stores it (cache.AccountCacheKey),
 // so the render path and the fields preview overlay (handleDSLFields in
 // dsl.go) can pick up the user's real values instead of only synthetic
 // samples. Errors are ignored: this is an opportunistic side effect of the
@@ -115,5 +109,5 @@ func persistAccountUsage(report *usage.Report, now time.Time) {
 			Utilization:  report.Extra.Utilization,
 		}
 	}
-	_ = cache.StoreAccountUsage(accountUsageKey, env)
+	_ = cache.StoreAccountUsage(cache.AccountCacheKey, env)
 }

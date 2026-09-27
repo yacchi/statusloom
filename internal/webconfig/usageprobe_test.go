@@ -173,7 +173,7 @@ func TestUsageProbe_Unauthorized(t *testing.T) {
 
 // TestUsageProbe_Ok_PersistsAccountUsage verifies that a successful probe
 // (B1) stores the fetched report into the shared account-usage cache under
-// accountUsageKey, mapping usage.Report's window/Extra fields onto
+// cache.AccountCacheKey, mapping usage.Report's window/Extra fields onto
 // cache.RateWindowState/ExtraUsageState so the render path and the fields
 // preview overlay (handleDSLFields, B2) can read the user's real values.
 func TestUsageProbe_Ok_PersistsAccountUsage(t *testing.T) {
@@ -205,7 +205,7 @@ func TestUsageProbe_Ok_PersistsAccountUsage(t *testing.T) {
 		t.Errorf("probe = %+v, want %+v", got, want)
 	}
 
-	env, _, ok := cache.LoadAccountUsage(accountUsageKey, time.Now())
+	env, _, ok := cache.LoadAccountUsage(cache.AccountCacheKey, time.Now())
 	if !ok {
 		t.Fatal("cache.LoadAccountUsage() ok = false, want true (probe should have persisted)")
 	}
@@ -243,7 +243,7 @@ func TestUsageProbe_NoToken_DoesNotPersist(t *testing.T) {
 	ts := startTestServer(t, time.Hour)
 	_ = getUsageProbe(t, ts)
 
-	if _, _, ok := cache.LoadAccountUsage(accountUsageKey, time.Now()); ok {
+	if _, _, ok := cache.LoadAccountUsage(cache.AccountCacheKey, time.Now()); ok {
 		t.Error("cache.LoadAccountUsage() ok = true, want false (no-token probe must not persist)")
 	}
 }
@@ -261,7 +261,7 @@ func TestUsageProbe_Unauthorized_DoesNotPersist(t *testing.T) {
 	ts := startTestServer(t, time.Hour)
 	_ = getUsageProbe(t, ts)
 
-	if _, _, ok := cache.LoadAccountUsage(accountUsageKey, time.Now()); ok {
+	if _, _, ok := cache.LoadAccountUsage(cache.AccountCacheKey, time.Now()); ok {
 		t.Error("cache.LoadAccountUsage() ok = true, want false (401 probe must not persist)")
 	}
 }

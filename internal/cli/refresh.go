@@ -187,11 +187,11 @@ func refreshAccountUsage(now time.Time, ccVersion string) {
 		// unchanged so a merely-missing field in one poll never drops a
 		// value that is otherwise still fresh under its own long-lived
 		// retention window (cache.LoadExtraUsage).
-		if prev, ok := cache.LoadAccountUsageRaw(accountCacheKey); ok && prev != nil && prev.ExtraUsage != nil {
+		if prev, ok := cache.LoadAccountUsageRaw(cache.AccountCacheKey); ok && prev != nil && prev.ExtraUsage != nil {
 			env.ExtraUsage = prev.ExtraUsage
 		}
 	}
-	_ = cache.StoreAccountUsage(accountCacheKey, env)
+	_ = cache.StoreAccountUsage(cache.AccountCacheKey, env)
 	m.AccountUsage = cache.AccountUsageSchedule{
 		NextDueAt:   cache.NextUsageDue(now, 0),
 		LastAttempt: now,

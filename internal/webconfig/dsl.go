@@ -553,6 +553,27 @@ func selectedVariantIDs(doc *dsl.Document, selected map[*dsl.ResponsiveNode]int)
 // cached session (sessionId, as listed by GET /api/sessions), else a named
 // sample (defaulting to samples.DefaultForSection(section)). It writes the
 // error response and returns ok=false on failure.
+//
+// A cached session snapshot was frozen at the moment it was captured
+// (renderDocFromRaw in internal/cli/render.go stores it post
+// ApplyAccountCache/ApplyExtraUsageCache), so its account/extra-usage fields
+// may reflect a moment when the shared account cache happened to be empty or
+// stale - the render pass that captured it just got unlucky. Re-applying
+// cache.FillAccountFromCache and cache.ApplyExtraUsageCache here with the
+// current time overlays today's most recent (and, for extra usage,
+// carry-forward-backed) values on top of that frozen snapshot, so a
+// stale-empty capture doesn't pin the preview's account fields empty for as
+// long as that session stays selectable.
+//
+// This deliberately calls FillAccountFromCache rather than the render path's
+// ApplyAccountCache: previewing a past session must stay read-only against
+// the shared account cache. ApplyAccountCache's other half
+// (StoreAccountFromSnapshot) writes snap's five-hour/seven-day windows back
+// to that cache - appropriate for a real, current render, but wrong here,
+// where it would let opening a preview of an old session overwrite the
+// shared cache with stale windows stamped as observed just now.
+// ApplyExtraUsageCache, in contrast, is already read-only (it only calls
+// cache.LoadExtraUsage/cache.LoadAccountUsage), so it is reused as-is.
 func (s *server) previewSnapshot(w http.ResponseWriter, section, sample, sessionID string) (schema.StatusSnapshot, bool) {
 	if sessionID != "" {
 		entry, err := cache.LoadSnapshot(sessionID)
@@ -564,7 +585,17 @@ func (s *server) previewSnapshot(w http.ResponseWriter, section, sample, session
 			writeError(w, http.StatusBadRequest, "unknown session")
 			return schema.StatusSnapshot{}, false
 		}
-		return entry.Snapshot, true
+		snap := entry.Snapshot
+		now := time.Now()
+		// FillAccountFromCache only (never StoreAccountFromSnapshot /
+		// ApplyAccountCache): previewing a cached session must not rewrite
+		// the shared account cache with whatever stale five-hour/seven-day
+		// windows that session's frozen snapshot happened to carry. A
+		// preview is a read-only look at a past moment; it must not have a
+		// side effect on the render path's shared state.
+		cache.FillAccountFromCache(&snap, now)
+		cache.ApplyExtraUsageCache(&snap, now)
+		return snap, true
 	}
 	name := sample
 	if name == "" {
@@ -698,11 +729,11 @@ func (s *server) handleDSLFields(w http.ResponseWriter, r *http.Request) {
 // overlayRealAccountUsage replaces snap.Account's extra-usage / per-model
 // weekly-usage fields with the user's real cached values, when the usage-API
 // probe (handleUsageProbe in usageprobe.go) has successfully persisted them
-// to the shared account-usage cache (accountUsageKey). Fields with no cached
+// to the shared account-usage cache (cache.AccountCacheKey). Fields with no cached
 // value are left as the synthetic fullSample values so previews still look
 // realistic before the probe has ever run.
 func overlayRealAccountUsage(snap *schema.StatusSnapshot, now time.Time) {
-	env, _, ok := cache.LoadAccountUsage(accountUsageKey, now)
+	env, _, ok := cache.LoadAccountUsage(cache.AccountCacheKey, now)
 	if !ok {
 		return
 	}

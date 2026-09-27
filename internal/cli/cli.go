@@ -78,7 +78,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, version strin
 		return runFmt(args[1:], stdin, stdout, stderr)
 
 	case "setup":
-		return runSetup(args[1:], stdin, stdout, stderr)
+		return runSetup(args[1:], stdin, stdout, stderr, getenv)
 
 	case "doctor":
 		return runDoctor(args[1:], stdout, stderr, version)

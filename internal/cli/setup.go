@@ -42,7 +42,7 @@ func desiredSubagentStatusLine(refreshInterval int) map[string]any {
 	return m
 }
 
-func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
 	if len(args) == 0 || args[0] != "claude-code" {
 		fmt.Fprintln(stderr, "statusloom: usage: statusloom setup claude-code [--settings PATH] [--yes] [--dry-run] [--refresh-interval N]")
 		return 2
@@ -97,6 +97,13 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if hadStatusLine && statusLineChanged {
 		printStatusLineDiff(stdout, before, desired)
+		if statusLineReferencesOrca(before) {
+			hookDesc := "own claude-statusline hook"
+			if path := orcaStatusLineHookPath(getenv); path != "" {
+				hookDesc = "own " + path + " hook"
+			}
+			fmt.Fprintf(stdout, "Note: existing statusLine looks like Orca's %s. `statusloom claude` forwards rendered payloads to it automatically, so Orca's pane integration will keep working after this change.\n", hookDesc)
+		}
 	}
 	if hadSubagentStatusLine && subagentChanged {
 		printStatusLineDiff(stdout, beforeSubagent, desiredSubagent)

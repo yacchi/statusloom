@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,5 +125,85 @@ func TestRun_Claude_OrcaHookNotExecutableIsSkipped(t *testing.T) {
 	}
 	if _, err := os.Stat(capture); err == nil {
 		t.Errorf("non-executable hook was invoked, want skipped")
+	}
+}
+
+// TestSetupClaudeCode_OrcaNote verifies that `statusloom setup claude-code`
+// prints an explanatory note when the existing statusLine.command it is
+// about to replace looks like Orca's own claude-statusline hook - and that
+// this is judged purely from the existing command string, independent of
+// whether ~/.orca/agent-hooks/claude-statusline.sh actually exists on disk
+// (a machine can have the hook file present while statusLine already points
+// at statusloom, or vice versa).
+func TestSetupClaudeCode_OrcaNote(t *testing.T) {
+	const orcaCommand = `case "$(uname -s)" in Darwin*|Linux*) exec "${HOME-}/.orca/agent-hooks/claude-statusline.sh";; *) exec "${HOME-}/.orca/agent-hooks/claude-statusline.cmd";; esac`
+
+	tests := []struct {
+		name     string
+		command  string // "" -> no existing statusLine at all
+		home     string // "" -> no HOME override, "hook" -> HOME with the hook file present
+		wantNote bool
+	}{
+		{
+			name:     "orca command without hook file on disk",
+			command:  orcaCommand,
+			home:     "",
+			wantNote: true,
+		},
+		{
+			name:     "orca command with hook file present",
+			command:  orcaCommand,
+			home:     "hook",
+			wantNote: true,
+		},
+		{
+			name:     "unrelated existing command, hook file present",
+			command:  "old-status-line",
+			home:     "hook",
+			wantNote: false,
+		},
+		{
+			name:     "unrelated existing command, no hook file",
+			command:  "old-status-line",
+			home:     "",
+			wantNote: false,
+		},
+		{
+			name:     "fresh install, hook file present",
+			command:  "",
+			home:     "hook",
+			wantNote: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "settings.json")
+			if tt.command != "" {
+				initial, err := json.Marshal(map[string]any{
+					"statusLine": map[string]any{"type": "command", "command": tt.command},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, initial, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var env map[string]string
+			if tt.home == "hook" {
+				home := writeOrcaStatusLineHook(t, filepath.Join(t.TempDir(), "captured.json"))
+				env = map[string]string{"HOME": home}
+			}
+			args := []string{"setup", "claude-code", "--settings", path, "--yes"}
+			stdout, stderr, code := runCLI(t, args, nil, env)
+			if code != 0 {
+				t.Fatalf("exit = %d, want 0 (stderr: %s)", code, stderr)
+			}
+			gotNote := strings.Contains(stdout, "Orca's")
+			if gotNote != tt.wantNote {
+				t.Errorf("note present = %v, want %v\nstdout=%q", gotNote, tt.wantNote, stdout)
+			}
+		})
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -52,13 +53,8 @@ func runClaude(stdin io.Reader, stdout, stderr io.Writer, getenv func(string) st
 // payload Orca's own installer would have wired as statusLine is enough -
 // with zero cost on any machine where Orca (or the hook) isn't present.
 func forwardToOrcaStatusLine(raw []byte, getenv func(string) string) {
-	home := getenv("HOME")
-	if home == "" {
-		return
-	}
-	script := filepath.Join(home, ".orca", "agent-hooks", "claude-statusline.sh")
-	info, err := os.Stat(script)
-	if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+	script := orcaStatusLineHookPath(getenv)
+	if script == "" || !hasOrcaStatusLineHook(getenv) {
 		return
 	}
 
@@ -68,4 +64,57 @@ func forwardToOrcaStatusLine(raw []byte, getenv func(string) string) {
 	cmd := exec.CommandContext(ctx, script)
 	cmd.Stdin = bytes.NewReader(raw)
 	_ = cmd.Run()
+}
+
+// orcaStatusLineHookPath returns the path to Orca's own claude-statusline.sh
+// hook, or "" if HOME cannot be determined.
+func orcaStatusLineHookPath(getenv func(string) string) string {
+	home := getenv("HOME")
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".orca", "agent-hooks", "claude-statusline.sh")
+}
+
+// hasOrcaStatusLineHook reports whether Orca's claude-statusline.sh hook is
+// present and executable, i.e. whether forwardToOrcaStatusLine (and, by
+// extension, `statusloom claude`) will actually hand it the rendered
+// payload.
+func hasOrcaStatusLineHook(getenv func(string) string) bool {
+	script := orcaStatusLineHookPath(getenv)
+	if script == "" {
+		return false
+	}
+	info, err := os.Stat(script)
+	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
+}
+
+// orcaStatusLineHookMarker is the substring Orca's own installer embeds in
+// the statusLine.command it writes (observed as, e.g.,
+// "${HOME-}/.orca/agent-hooks/claude-statusline.sh" inside a larger
+// OS-dispatching shell case statement, or claude-statusline.cmd on
+// Windows). Matching on this substring - rather than checking whether the
+// hook file exists on disk - is what actually answers "is the statusLine
+// setup is about to overwrite Orca's own", since the two can disagree: a
+// machine can have the hook file present yet already have statusloom
+// configured as statusLine (nothing to warn about), or have an
+// Orca-authored statusLine command while the hook file itself is missing.
+const orcaStatusLineHookMarker = ".orca/agent-hooks/claude-statusline"
+
+// statusLineReferencesOrca reports whether value - an existing
+// statusLine/subagentStatusLine object as decoded from Claude Code settings
+// JSON (map[string]any) - has a "command" string that references Orca's own
+// claude-statusline hook. It is false for anything else (a differently
+// shaped value, a missing or non-string command, or a command that simply
+// doesn't mention Orca's hook).
+func statusLineReferencesOrca(value any) bool {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	command, ok := m["command"].(string)
+	if !ok {
+		return false
+	}
+	return strings.Contains(command, orcaStatusLineHookMarker)
 }

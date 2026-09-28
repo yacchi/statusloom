@@ -352,6 +352,8 @@ export interface FieldCatalogEntry {
     formats?: string[];
     // Names a runtime capability this field depends on (e.g. "oauth-usage"
     // for the authenticated usage API). Absent means always available.
+    // A capability tag does not by itself hide the field from the palette —
+    // see Palette.tsx for which capabilities are actually gated.
     capability?: string;
     // Single-field rendering against the full sample snapshot.
     preview: {
@@ -361,7 +363,9 @@ export interface FieldCatalogEntry {
 }
 
 // GET /api/usage/probe: whether the authenticated OAuth usage API is
-// reachable, gating oauth-usage-capability fields in the palette.
+// reachable. Does not gate whether oauth-usage-capability fields appear in
+// the palette (they always do); only gates the palette's "no live preview
+// data" note.
 export interface UsageProbe {
     available: boolean;
     reason: string;

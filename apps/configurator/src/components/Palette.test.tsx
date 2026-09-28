@@ -33,7 +33,7 @@ const SUBAGENT_EFFORT_FIELD: FieldCatalogEntry = {
 };
 
 describe("Palette", () => {
-    it("hides oauth-usage-capability fields and shows the note when the probe is unavailable", () => {
+    it("still shows oauth-usage-capability fields, and shows the note, when the probe is unavailable", () => {
         render(
             <Palette
                 fields={[PLAIN_FIELD, OAUTH_FIELD]}
@@ -43,9 +43,9 @@ describe("Palette", () => {
         );
 
         expect(screen.getByTestId("palette-field:model")).toBeTruthy();
-        expect(screen.queryByTestId("palette-field:extra-usage-percent")).toBeNull();
+        expect(screen.getByTestId("palette-field:extra-usage-percent")).toBeTruthy();
         expect(
-            screen.getByText(/Extra-usage fields are unavailable/i),
+            screen.getByText(/usage API isn't reachable on this device/i),
         ).toBeTruthy();
     });
 
@@ -60,7 +60,9 @@ describe("Palette", () => {
 
         expect(screen.getByTestId("palette-field:model")).toBeTruthy();
         expect(screen.getByTestId("palette-field:extra-usage-percent")).toBeTruthy();
-        expect(screen.queryByText(/Extra-usage fields are unavailable/i)).toBeNull();
+        expect(
+            screen.queryByText(/usage API isn't reachable on this device/i),
+        ).toBeNull();
     });
 
     it("shows no note when there are no oauth-usage-capability fields at all", () => {
@@ -68,7 +70,9 @@ describe("Palette", () => {
             <Palette fields={[PLAIN_FIELD]} onAdd={vi.fn()} oauthUsageAvailable={false} />,
         );
 
-        expect(screen.queryByText(/Extra-usage fields are unavailable/i)).toBeNull();
+        expect(
+            screen.queryByText(/usage API isn't reachable on this device/i),
+        ).toBeNull();
     });
 
     it("hides task-effort (subagent-effort capability) unconditionally", () => {

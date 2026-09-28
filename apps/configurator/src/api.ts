@@ -175,7 +175,8 @@ export interface Api {
     // GET /api/dsl/metrics — named metrics for when / color-rule editing.
     getMetrics(tool: string): Promise<Metric[]>;
     // GET /api/usage/probe — availability of the authenticated OAuth usage
-    // API, gating oauth-usage-capability fields in the palette.
+    // API. Gates only the palette's "no live preview data" note, not
+    // whether oauth-usage-capability fields appear in the palette.
     probeUsage(): Promise<UsageProbe>;
     // GET /api/history — tool's revision listing (oldest-first) plus refs.
     getHistory(tool: string): Promise<HistoryListResponse>;

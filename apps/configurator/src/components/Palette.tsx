@@ -14,8 +14,10 @@ interface Props {
     fields: FieldCatalogEntry[];
     onAdd: (key: string) => void;
     // Whether the authenticated OAuth usage API is reachable. Fields whose
-    // catalog entry carries `capability: "oauth-usage"` are hidden from the
-    // palette unless this is true (probe-gated: "駄目ならパレットに出さない").
+    // catalog entry carries `capability: "oauth-usage"` are always shown in
+    // the palette (whether they can be configured is independent of whether
+    // this particular probe happened to succeed just now); when this is
+    // false we only show a note that live preview data isn't available yet.
     oauthUsageAvailable: boolean;
 }
 
@@ -77,22 +79,19 @@ function PaletteChip({
 
 export function Palette({ fields, onAdd, oauthUsageAvailable }: Props) {
     const lang = useLang();
-    // Hide oauth-usage-capability fields until the probe confirms the
-    // authenticated usage API is reachable; never flash them in only to
-    // remove them a moment later. task-effort (capability "subagent-effort")
-    // has no probe at all — no environment currently supports it (see
-    // markup.md / DSL_API.md) — so it is hidden unconditionally, the same
-    // way any future never-available capability should be handled here.
-    const visibleFields = fields.filter((f) => {
-        if (f.capability === "oauth-usage") {
-            return oauthUsageAvailable;
-        }
-        if (f.capability === "subagent-effort") {
-            return false;
-        }
-        return true;
-    });
-    const hasHiddenOAuthUsage =
+    // oauth-usage-capability fields are always shown: whether the field can
+    // be *configured* is independent of whether this session's probe of the
+    // authenticated usage API happened to succeed (the actual render path
+    // runs on its own schedule/cache and may well succeed even when the
+    // configurator's probe just failed). When the probe is unavailable we
+    // only show a note below (see showOAuthUsageUnavailableNote) that live
+    // preview data isn't available right now — we never hide the fields
+    // themselves. task-effort (capability "subagent-effort") has no probe at
+    // all — no environment currently supports it (see markup.md /
+    // DSL_API.md) — so it is hidden unconditionally, the same way any future
+    // permanently-unavailable capability should be handled here.
+    const visibleFields = fields.filter((f) => f.capability !== "subagent-effort");
+    const showOAuthUsageUnavailableNote =
         !oauthUsageAvailable && fields.some((f) => f.capability === "oauth-usage");
     const categories = [
         ...CATEGORY_ORDER,
@@ -104,7 +103,7 @@ export function Palette({ fields, onAdd, oauthUsageAvailable }: Props) {
         <div className="panel">
             <h2>Fields</h2>
             <p className="hint">{t(lang, "paletteHint")}</p>
-            {hasHiddenOAuthUsage ? (
+            {showOAuthUsageUnavailableNote ? (
                 <p className="hint palette-oauth-usage-note">
                     {t(lang, "oauthUsageUnavailableNote")}
                 </p>

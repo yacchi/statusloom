@@ -906,8 +906,8 @@ selfメトリックを持たないfield（`model`、`git-branch`など）では�
 `internal/dsl`のfield定義は、値の取得元となる前提条件を`Capability`として持てる。extra-usage / per-model weekly rate-limit系の7 field（`extra-usage-cost`、`extra-usage-limit`、`extra-usage-percent`、`weekly-usage-opus`、`weekly-usage-sonnet`、`weekly-reset-opus`、`weekly-reset-sonnet`）は`Capability: "oauth-usage"`を持ち、Claude CodeのOAuth usage APIへ到達できることを要求する。
 
 * `oauth-usage`は`statusloom refresh --once`サブプロセスがusage APIから取得しaccountキャッシュへ書き込む。データが無ければ当該fieldは空（`optional`で自動非表示）になるだけで、validation errorにはしない
-* `statusloom config`は起動時に`GET /api/usage/probe`でcapability疎通を確認し、probeが成功した場合のみ`oauth-usage`系fieldをUIのfieldパレットへ表示する
-* `STATUSLOOM_NO_USAGE_API=1`が設定されている場合、probeは常に失敗扱いとなり、これらのfieldはパレットに現れない（既存DSLに直接記述されていれば、値が空のままレンダリングはされる）
+* `statusloom config`は起動時に`GET /api/usage/probe`でcapability疎通を確認するが、probeの成否に関わらず`oauth-usage`系fieldは常にUIのfieldパレットへ表示される（設定できるかどうかと、いま疎通確認が取れているかは別の話であり、実際のレンダーパスは設定UIの疎通確認とは独立したタイミング・キャッシュで動くため）。probeが失敗している間はパレットに「現在この端末では使用量APIに接続できずプレビューに実データが出ない」旨の注記が出るのみで、fieldそのものは隠れない
+* `STATUSLOOM_NO_USAGE_API=1`が設定されている場合、probeは常に失敗扱いとなり注記が出続けるが、これらのfieldはパレットから消えない（値は空のままレンダリングされる）
 
 ## compact・行omit・fallback
 

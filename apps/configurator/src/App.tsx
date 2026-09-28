@@ -231,10 +231,11 @@ function Configurator({ token }: { token: string }) {
 
     const [fields, setFields] = useState<FieldCatalogEntry[]>([]);
     const [metrics, setMetrics] = useState<Metric[]>([]);
-    // Whether the authenticated OAuth usage API is reachable, gating
-    // oauth-usage-capability fields (extra-usage-*, weekly-usage-*, ...) in
-    // the palette. Defaults to unavailable until the probe resolves, so
-    // those fields never flash in only to disappear a moment later.
+    // Whether the authenticated OAuth usage API is reachable. oauth-usage-
+    // capability fields (extra-usage-*, weekly-usage-*, ...) are always
+    // shown in the palette; this only controls whether the palette shows
+    // the "no live preview data" note. Defaults to unavailable until the
+    // probe resolves, so the note doesn't flash off and back on.
     const [oauthUsageAvailable, setOauthUsageAvailable] = useState(false);
     // Selection is an AST node ID (chips, incl. nested span children).
     const [selection, setSelection] = useState<string | null>(null);
@@ -579,7 +580,9 @@ function Configurator({ token }: { token: string }) {
 
     // Probe the authenticated usage API once on load. Best-effort and
     // fail-closed: any error (network, non-2xx, parsing) leaves
-    // oauth-usage fields hidden from the palette rather than crashing the UI.
+    // oauthUsageAvailable false, which just keeps the palette's "no live
+    // preview data" note showing rather than crashing the UI (oauth-usage
+    // fields themselves stay visible either way).
     //
     // A successful probe (reason "ok") means the server just persisted the
     // user's real usage values to the shared account-usage cache

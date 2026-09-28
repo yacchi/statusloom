@@ -23,9 +23,10 @@ var (
 )
 
 // usageProbeResponse is the GET /api/usage/probe response body: whether the
-// authenticated OAuth usage API is reachable (gating oauth-usage-capability
-// DSL fields in the config UI's palette), why not when it isn't, and
-// (only meaningful when available) whether the account has extra usage
+// authenticated OAuth usage API is reachable (the config UI's palette
+// always shows oauth-usage-capability DSL fields regardless — this only
+// gates the palette's "no live preview data" note), why not when it isn't,
+// and (only meaningful when available) whether the account has extra usage
 // enabled at all.
 type usageProbeResponse struct {
 	Available         bool   `json:"available"`
@@ -48,9 +49,12 @@ func recentToolVersion() string {
 
 // handleUsageProbe handles GET /api/usage/probe: a best-effort check of
 // whether the authenticated OAuth usage API is reachable from this machine.
-// The config UI uses this to decide whether to show oauth-usage-capability
-// fields (extra-usage-*, weekly-usage-*, weekly-reset-*) in the palette at
-// all ("駄目ならパレットに出さない").
+// The config UI's palette always shows oauth-usage-capability fields
+// (extra-usage-*, weekly-usage-*, weekly-reset-*) regardless of this
+// result — whether a field can be configured is independent of whether this
+// particular probe happened to succeed, since the actual render path runs
+// on its own schedule/cache. A failed probe only makes the palette show a
+// note that live preview data isn't available right now.
 //
 // This always responds 200: the probe result is data describing
 // availability, not an HTTP error condition.

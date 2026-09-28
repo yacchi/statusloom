@@ -312,10 +312,15 @@ OAuth usage API) for the extra-usage / weekly-usage / weekly-reset fields, or
 per-task reasoning effort, so this capability is unavailable in every
 environment today). Capability gating is entirely client-side: the server
 only tags the field, it never filters the response by availability. The
-configurator probes `"oauth-usage"` via `GET /api/usage/probe` and hides
-those fields from the palette when unreachable; there is no analogous probe
-for `"subagent-effort"` yet, so a `capability`-tagged field with no matching
-probe should be hidden unconditionally until one exists.
+configurator probes `"oauth-usage"` via `GET /api/usage/probe`, but a failed
+probe never hides those fields from the palette — whether a field can be
+*configured* is independent of whether this particular probe happened to
+succeed (the actual render path runs on its own schedule/cache); a failed
+probe only surfaces a note that live preview data isn't available right now.
+There is no analogous probe for `"subagent-effort"` yet, so a
+`capability`-tagged field with no matching probe at all should still be
+hidden unconditionally until one exists — that is a different situation from
+`"oauth-usage"`, which has a probe that can simply fail transiently.
 
 ### `GET /api/dsl/metrics?tool=claude-code`
 → `200 { "metrics": [ { "name", "displayName", "descriptions": {"en","ja"}, "percent", "text", "values" } ] }`
@@ -346,9 +351,10 @@ Capability detection for the authenticated OAuth usage API. Requires the same
 `Authorization: Bearer <token>` as every other `/api/*` route. **Always returns
 `200`** — the probe result is data describing availability, never an HTTP error.
 
-The configurator calls this once on load and uses `available` to decide whether
-to show `capability:"oauth-usage"` fields in the palette at all (hidden when
-unavailable). `reason` explains the outcome:
+The configurator calls this once on load and uses `available` to decide
+whether to show the palette's "no live preview data" note for
+`capability:"oauth-usage"` fields (the fields themselves are always shown
+regardless of `available`). `reason` explains the outcome:
 
 - `ok` — the usage API responded successfully (`available: true`).
 - `no-token` — no OAuth credential could be resolved (`available: false`).

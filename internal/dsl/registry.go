@@ -49,9 +49,11 @@ type FieldDef struct {
 	RequiresVar bool
 	// Capability, when non-empty, names a runtime capability the field
 	// depends on (e.g. "oauth-usage" fields need the authenticated usage
-	// API to be reachable). The configurator hides such fields from the
-	// palette until a capability probe confirms availability. Empty means
-	// always available.
+	// API to be reachable). Capability gating is entirely client-side and
+	// per-capability: for "oauth-usage" the configurator keeps the field in
+	// the palette regardless of probe result (only showing a note when the
+	// probe fails), while "subagent-effort" — which has no probe at all —
+	// is hidden unconditionally. Empty means always available.
 	Capability string
 }
 

@@ -39,7 +39,7 @@ const EN = {
     // hints
     paletteHint: "Click to add to the active line, or drag into the preview.",
     oauthUsageUnavailableNote:
-        "Extra-usage fields are unavailable (usage API not reachable).",
+        "The usage API isn't reachable on this device right now, so the preview won't show real data (you can still add these fields).",
     propertiesEmptyHint: "Click a chip in the preview to edit it.",
     removeHint: "or press Delete / Backspace",
     canvasFooterHint:
@@ -195,7 +195,7 @@ const EN = {
 const JA: Record<MessageKey, string> = {
     paletteHint: "クリックでアクティブな行に追加、ドラッグでプレビュー内に配置できます。",
     oauthUsageUnavailableNote:
-        "従量課金フィールドは利用できません（使用量APIに接続できません）。",
+        "現在この端末では使用量APIに接続できないため、プレビューでは実データが表示されません（設定自体は追加できます）。",
     propertiesEmptyHint: "プレビュー内のチップをクリックすると編集できます。",
     removeHint: "Delete / Backspace でも削除できます",
     canvasFooterHint:

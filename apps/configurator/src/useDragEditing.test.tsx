@@ -599,6 +599,89 @@ describe("useDragEditing", () => {
         expect(view.result.current.dropTarget).toEqual({ containerId: "L0.0", index: 1 });
     });
 
+    // Regression test for the palette-scroll drop position bug: dragging a
+    // chip out of a PRE-SCROLLED palette (aside.side) onto the canvas
+    // (.main) — two independent scroll containers — corrupts dnd-kit's own
+    // `e.delta` (see the regression note on pointerXOf in useDragEditing.ts):
+    // @dnd-kit/core tracks the scrollable ancestors of the hovered ("over")
+    // node once one exists, but does not re-baseline the scroll offset it
+    // diffs against when that tracked ancestor set switches from the
+    // palette's to the canvas's mid-drag, so `delta` ends up permanently
+    // offset by the palette's scrollTop. Fabricate exactly that: an
+    // over-event whose activatorEvent+delta-derived Y lands far off (as if
+    // still carrying the palette's stale scroll offset), while the REAL
+    // pointer (delivered the only way a browser ever delivers it — a native
+    // `pointermove`) sits over the second visual row. The hook must resolve
+    // against the real pointer, not the corrupted delta.
+    it("resolves against the LIVE pointer, not a scroll-corrupted delta (issue: palette-scroll drop position)", () => {
+        // One row, soft-wrapped into two visual rows: A on top (y 0-20), B
+        // below (y 500-520) — the corruption in the real bug was on the
+        // order of the palette's scrollTop (hundreds/thousands of px), so a
+        // wrong pointerY reads every chip as "above" or "below" its actual
+        // row instead of picking a horizontal gap within it.
+        const rows: ContainerView[] = [
+            { id: "L0.0", kind: "line", lineIndex: 0, childIds: ["L0.0.0", "L0.0.1"] },
+        ];
+        const rects = new Map([
+            ["L0.0.0", { left: 0, width: 10, top: 0, height: 20 }],
+            ["L0.0.1", { left: 0, width: 10, top: 500, height: 20 }],
+        ]);
+        const onDrop = vi.fn<(payload: DragPayload, target: DropTarget) => void>();
+        const makePaletteNode = vi.fn(() => ({
+            node: { id: "", kind: "field", name: "extra-usage-cost" } as LineChild,
+            label: "EXTRA-USAGE-COST",
+        }));
+        const view = renderHook(() =>
+            useDragEditing({
+                getContainers: () => rows,
+                getRects: () => rects,
+                makePaletteNode,
+                labelForNodeId: (id) => `node ${id}`,
+                kindForNodeId: () => "field",
+                onDrop,
+            }),
+        );
+
+        act(() =>
+            view.result.current.onDragStart({
+                active: { id: `${PALETTE_ID_PREFIX}field:extra-usage-cost`, rect: { current: { translated: null } } },
+                activatorEvent: { clientX: 5, clientY: 510 },
+            } as unknown as DragStartEvent),
+        );
+
+        // The real pointer, as only a genuine drag ever reports it: over the
+        // gap between A and B, on B's row.
+        act(() => {
+            // jsdom has no PointerEvent constructor; a plain MouseEvent with
+            // the same type/clientX/clientY is indistinguishable to a
+            // `pointermove` listener, which only reads those fields.
+            window.dispatchEvent(
+                new MouseEvent("pointermove", { clientX: 5, clientY: 510 }),
+            );
+        });
+
+        // A DragOverEvent whose activatorEvent/delta reconstruct a wildly
+        // different (corrupted) Y — as dnd-kit's own scrollAdjustment bug
+        // does — while `over` still addresses the same line.
+        const corrupted = overEvent(
+            `${PALETTE_ID_PREFIX}field:extra-usage-cost`,
+            `${LINE_ID_PREFIX}0`,
+            { pointerClientX: 5, pointerClientY: 510, deltaY: -1400 },
+        );
+        act(() => view.result.current.onDragOver(corrupted));
+
+        // With the corrupted delta (pointerY = 510 + (-1400) = -890), every
+        // chip would read as "below" the pointer and the gap would collapse
+        // to index 0 — the observed bug (always the line's start). With the
+        // live pointer (510), the gap resolves between A and B: index 1.
+        expect(view.result.current.dropTarget).toEqual({ containerId: "L0.0", index: 1 });
+
+        act(() => view.result.current.onDragEnd(corrupted as unknown as DragEndEvent));
+        expect(onDrop).toHaveBeenCalledTimes(1);
+        const [, target] = onDrop.mock.calls[0];
+        expect(target).toEqual({ containerId: "L0.0", index: 1 });
+    });
+
     it("canvas drags carry the existing node id", () => {
         const { view, onDrop } = setup();
 

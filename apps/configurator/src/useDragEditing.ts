@@ -27,7 +27,7 @@
 // happens exactly once, on drop (App.tsx turns it into applyDropEdit +
 // serialize).
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DragEndEvent, DragOverEvent, DragStartEvent } from "@dnd-kit/core";
 import type { LineChild } from "./types.ts";
 
@@ -543,7 +543,37 @@ function activeCenterXOf(e: DragOverEvent | DragEndEvent): number | null {
 // the pointer keeps before/after caret resolution aligned with where the user
 // actually points. Falls back to the dragged rect center when the activator
 // carries no usable clientX (defensive: non-pointer activators, test stubs).
-function pointerXOf(e: DragOverEvent | DragEndEvent): number | null {
+//
+// Regression note (palette-scroll drop position bug): `e.delta` is NOT a
+// plain "pointer movement since drag start" — dnd-kit derives it as
+// `translate + scrollAdjustment`, where `scrollAdjustment` compensates for
+// scrolling of the DRAGGED (or, once `over` is set, the HOVERED) node's own
+// scrollable ancestor during the drag (@dnd-kit/core's
+// `useScrollableAncestors` tracks `overNode ?? activeNode`). The palette
+// (`aside.side`) and the canvas (`.main`) are two independent scroll
+// containers. When a palette chip that was dragged out of a pre-scrolled
+// palette crosses onto a canvas droppable, dnd-kit's tracked scrollable
+// ancestor set switches from the palette's to the canvas's, but the
+// "baseline" scroll offset it diffs against is not re-captured for the new
+// ancestor set — it stays pinned to the palette's scrollTop from just before
+// the switch. The result is a `scrollAdjustment` stuck at
+// `-<palette scrollTop>` for the rest of the drag, corrupting `e.delta` (and
+// therefore this function) by exactly that amount, even though neither
+// container scrolled again. A pointerY off by hundreds/thousands of px makes
+// every row look like it is "below" the pointer (see `isBelowRow`), which is
+// why the drop always landed at index 0 of the line.
+//
+// The fix does not touch dnd-kit's delta at all: a live pointer position is
+// tracked independently via a raw `pointermove` listener for the whole drag
+// (see `useDragEditing`'s `pointerRef`) and passed in as `live` here, taking
+// priority over the (unreliable) delta-derived value. `live` is undefined in
+// the hook's own tests (which fabricate events without real DOM pointer
+// activity), so this function's delta-based fallback — and every existing
+// test — is unchanged.
+function pointerXOf(e: DragOverEvent | DragEndEvent, live?: number | null): number | null {
+    if (typeof live === "number") {
+        return live;
+    }
     const clientX = (e.activatorEvent as { clientX?: unknown } | null)?.clientX;
     if (typeof clientX === "number") {
         return clientX + (e.delta?.x ?? 0);
@@ -564,7 +594,13 @@ function activeCenterYOf(e: DragOverEvent | DragEndEvent): number | null {
     return r ? r.top + r.height / 2 : null;
 }
 
-function pointerYOf(e: DragOverEvent | DragEndEvent): number | null {
+// See the regression note on pointerXOf: `live` (the Y half of the same
+// independently-tracked live pointer position) takes priority over the
+// delta-derived value for the same reason.
+function pointerYOf(e: DragOverEvent | DragEndEvent, live?: number | null): number | null {
+    if (typeof live === "number") {
+        return live;
+    }
     const clientY = (e.activatorEvent as { clientY?: unknown } | null)?.clientY;
     if (typeof clientY === "number") {
         return clientY + (e.delta?.y ?? 0);
@@ -650,15 +686,64 @@ export function useDragEditing({
     // The payload resolved at drag start; identity is stable all drag.
     const payloadRef = useRef<DragPayload | null>(null);
 
+    // The real, live pointer position (viewport px), tracked independently of
+    // dnd-kit's own delta/translated-rect math for the whole drag — see the
+    // regression note on pointerXOf/pointerYOf. dnd-kit's `useScrollableAncestors`
+    // switches which scrollable ancestor it tracks between the dragged node
+    // and the hovered ("over") node mid-drag, without re-baselining the
+    // scroll offset it diffs against; the palette (`aside.side`) and the
+    // canvas (`.main`) are two independent scroll containers, so a drag that
+    // starts over a pre-scrolled palette and crosses onto the canvas gets a
+    // `delta` permanently corrupted by the palette's scrollTop. A raw
+    // `pointermove` listener sidesteps that computation entirely.
+    const pointerRef = useRef<{ x: number; y: number } | null>(null);
+    const pointerMoveHandlerRef = useRef<((e: PointerEvent) => void) | null>(null);
+
+    const stopTrackingPointer = useCallback(() => {
+        if (pointerMoveHandlerRef.current) {
+            window.removeEventListener("pointermove", pointerMoveHandlerRef.current, true);
+        }
+        pointerMoveHandlerRef.current = null;
+        pointerRef.current = null;
+    }, []);
+
+    // Starts (or restarts) live pointer tracking for a new drag, seeded from
+    // the activator event's own coordinates so the very first onDragOver
+    // (fired before any pointermove reaches the new listener) already has a
+    // real position.
+    const startTrackingPointer = useCallback(
+        (e: DragStartEvent) => {
+            stopTrackingPointer();
+            const activatorEvent = e.activatorEvent as
+                | { clientX?: unknown; clientY?: unknown }
+                | null;
+            if (
+                activatorEvent &&
+                typeof activatorEvent.clientX === "number" &&
+                typeof activatorEvent.clientY === "number"
+            ) {
+                pointerRef.current = { x: activatorEvent.clientX, y: activatorEvent.clientY };
+            }
+            const handler = (ev: PointerEvent) => {
+                pointerRef.current = { x: ev.clientX, y: ev.clientY };
+            };
+            pointerMoveHandlerRef.current = handler;
+            window.addEventListener("pointermove", handler, true);
+        },
+        [stopTrackingPointer],
+    );
+
     const reset = useCallback(() => {
         payloadRef.current = null;
+        stopTrackingPointer();
         setDragLabel(null);
         setDropTarget(null);
         setDragCategory(null);
-    }, []);
+    }, [stopTrackingPointer]);
 
     const onDragStart = useCallback(
         (e: DragStartEvent) => {
+            startTrackingPointer(e);
             const id = String(e.active.id);
             if (id.startsWith(PALETTE_ID_PREFIX)) {
                 const key = id.slice(PALETTE_ID_PREFIX.length);
@@ -688,7 +773,14 @@ export function useDragEditing({
                 setDragLabel(labelForNodeId(id));
             }
         },
-        [categoryForNodeId, categoryForPalette, kindForNodeId, labelForNodeId, makePaletteNode],
+        [
+            categoryForNodeId,
+            categoryForPalette,
+            kindForNodeId,
+            labelForNodeId,
+            makePaletteNode,
+            startTrackingPointer,
+        ],
     );
 
     // Resolves the current drop target for `payload` against `overId`,
@@ -745,9 +837,9 @@ export function useDragEditing({
                 ? resolveTarget(
                       payload,
                       String(e.over.id),
-                      pointerXOf(e),
+                      pointerXOf(e, pointerRef.current?.x),
                       overRectOf(e),
-                      pointerYOf(e),
+                      pointerYOf(e, pointerRef.current?.y),
                       overVRectOf(e),
                   )
                 : null;
@@ -765,9 +857,9 @@ export function useDragEditing({
                 const target = resolveTarget(
                     payload,
                     String(e.over.id),
-                    pointerXOf(e),
+                    pointerXOf(e, pointerRef.current?.x),
                     overRectOf(e),
-                    pointerYOf(e),
+                    pointerYOf(e, pointerRef.current?.y),
                     overVRectOf(e),
                 );
                 if (target) {
@@ -778,6 +870,10 @@ export function useDragEditing({
         },
         [onDrop, reset, resolveTarget],
     );
+
+    // Unmounting mid-drag (e.g. switching tools) must not leak the window
+    // listener.
+    useEffect(() => stopTrackingPointer, [stopTrackingPointer]);
 
     return { dragLabel, dropTarget, dragCategory, onDragStart, onDragOver, onDragEnd, onDragCancel: reset };
 }

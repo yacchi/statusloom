@@ -197,11 +197,12 @@ func TestRun_AccountCache_FillsFromPreviousRun(t *testing.T) {
 	}
 }
 
-func TestRun_AccountCache_SkipsExpiredWindow(t *testing.T) {
+func TestRun_AccountCache_ExpiredWindowRollsOver(t *testing.T) {
 	setupEnv(t)
 
-	// Pre-populate the account cache directly with one expired and one
-	// future window; only the future one may render.
+	// Pre-populate the account cache directly with one recently-expired
+	// window (within one window length - a just-happened reset) and one
+	// future window.
 	now := time.Now()
 	err := cache.StoreAccount("default", cache.AccountUsage{
 		Source:     "test",
@@ -226,8 +227,11 @@ func TestRun_AccountCache_SkipsExpiredWindow(t *testing.T) {
 	if !strings.Contains(got[1], "7d: 63%") {
 		t.Errorf("line 2 = %q, want 7d: 63%% (future cached window)", got[1])
 	}
-	if strings.Contains(got[1], "5h:") {
-		t.Errorf("line 2 = %q, want no 5h widget (expired cached window)", got[1])
+	// The five-hour window reset an hour ago (within one window length), so
+	// it must roll over to a fresh 0%-used widget rather than either the
+	// stale 42% or disappearing entirely (see internal/cache.rolledOverWindow).
+	if !strings.Contains(got[1], "5h: 0%") {
+		t.Errorf("line 2 = %q, want 5h: 0%% (rolled-over window, not blank or stale 42%%)", got[1])
 	}
 }
 

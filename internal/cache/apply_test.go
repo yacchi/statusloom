@@ -179,3 +179,71 @@ func TestFillAccountFromCache_DoesNotWrite(t *testing.T) {
 		t.Errorf("cache FiveHour = %v, want unchanged (UsedPercentage 5)", cached.FiveHour)
 	}
 }
+
+// TestFillAccountFromCache_JustRolledOver asserts that when the cached
+// SevenDay window's ResetsAt has just passed (within one window length), the
+// field is filled with a synthesized 0%-used window instead of being left
+// blank - regression test for the weekly reset causing the widget to
+// disappear until Claude Code's stdin reported the new window.
+func TestFillAccountFromCache_JustRolledOver(t *testing.T) {
+	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+	now := time.Now()
+	resetAt := now.Add(-10 * time.Minute)
+
+	seeded := AccountUsage{
+		Source:     "claude-code-stdin",
+		ObservedAt: now.Add(-time.Hour),
+		ExpiresAt:  now.Add(4 * time.Minute),
+		SevenDay:   &RateWindowState{UsedPercentage: 97, ResetsAt: resetAt},
+	}
+	if err := StoreAccount(AccountCacheKey, seeded); err != nil {
+		t.Fatalf("StoreAccount() error = %v", err)
+	}
+
+	snap := schema.StatusSnapshot{}
+	FillAccountFromCache(AccountCacheKey, &snap, now)
+
+	if snap.Account.SevenDay == nil {
+		t.Fatal("snap.Account.SevenDay = nil, want a synthesized rolled-over window, not blank")
+	}
+	if snap.Account.SevenDay.UsedPercentage != 0 {
+		t.Errorf("snap.Account.SevenDay.UsedPercentage = %v, want 0 (usage restarts at 0%% on reset)", snap.Account.SevenDay.UsedPercentage)
+	}
+	wantReset := resetAt.Add(sevenDayWindowLen)
+	if !snap.Account.SevenDay.ResetsAt.Equal(wantReset) {
+		t.Errorf("snap.Account.SevenDay.ResetsAt = %v, want %v (old ResetsAt + window length)", snap.Account.SevenDay.ResetsAt, wantReset)
+	}
+	if !snap.Account.Stale {
+		t.Error("snap.Account.Stale = false, want true (filled from cache)")
+	}
+}
+
+// TestFillAccountFromCache_LongStaleReset asserts that a cache whose window
+// reset more than one window length ago (e.g. statusloom hasn't run on this
+// machine in a while) is left unfilled rather than producing an unreliable
+// guess - preserves the pre-rollover-fix behavior for genuinely stale caches.
+func TestFillAccountFromCache_LongStaleReset(t *testing.T) {
+	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+	now := time.Now()
+	resetAt := now.Add(-8 * 24 * time.Hour) // more than one 7-day window ago
+
+	seeded := AccountUsage{
+		Source:     "claude-code-stdin",
+		ObservedAt: now.Add(-9 * 24 * time.Hour),
+		ExpiresAt:  now.Add(-8 * 24 * time.Hour).Add(4 * time.Minute),
+		SevenDay:   &RateWindowState{UsedPercentage: 40, ResetsAt: resetAt},
+	}
+	if err := StoreAccount(AccountCacheKey, seeded); err != nil {
+		t.Fatalf("StoreAccount() error = %v", err)
+	}
+
+	snap := schema.StatusSnapshot{}
+	FillAccountFromCache(AccountCacheKey, &snap, now)
+
+	if snap.Account.SevenDay != nil {
+		t.Errorf("snap.Account.SevenDay = %v, want nil (cache too stale to guess a rollover)", snap.Account.SevenDay)
+	}
+	if snap.Account.Stale {
+		t.Error("snap.Account.Stale = true, want false (nothing was filled)")
+	}
+}

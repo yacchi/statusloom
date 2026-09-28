@@ -275,7 +275,9 @@ function Configurator({ token }: { token: string }) {
     const [warnings, setWarnings] = useState<string[] | null>(null);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
-    const [closed, setClosed] = useState(false);
+    // null while open; "saved" after Save & Close, "discarded" after Close
+    // without saving — the closed screen's heading depends on which.
+    const [closed, setClosed] = useState<null | "saved" | "discarded">(null);
     const [showImport, setShowImport] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [showHistory, setShowHistory] = useState(false);
@@ -1176,8 +1178,15 @@ function Configurator({ token }: { token: string }) {
 
     // Warn on unload when there are unsaved changes — in the active tool or
     // in any stashed (previously opened) tool, since those keep unsaved edits
-    // alive in memory too.
+    // alive in memory too. Skipped once `closed` is set: doSaveClose/
+    // doDiscardClose already resolved the dirty state (saved, or the draft
+    // rewound to it) and told the user it's now safe to close this tab, so
+    // the app's own post-shutdown state shouldn't trigger the very prompt it
+    // just handled.
     useEffect(() => {
+        if (closed) {
+            return;
+        }
         const handler = (e: BeforeUnloadEvent) => {
             const stashedDirty = Object.values(stashRef.current).some(
                 (s) => s.history.present !== s.savedSource,
@@ -1189,7 +1198,7 @@ function Configurator({ token }: { token: string }) {
         };
         window.addEventListener("beforeunload", handler);
         return () => window.removeEventListener("beforeunload", handler);
-    }, [dirty]);
+    }, [dirty, closed]);
 
     // ---- tool (document) switching ----
 
@@ -1341,7 +1350,37 @@ function Configurator({ token }: { token: string }) {
         } catch {
             // The server may drop the connection as it exits; ignore.
         }
-        setClosed(true);
+        setClosed("saved");
+    }
+
+    // Closes without creating a new revision: on a dirty document, confirms
+    // first, then rewinds the shared draft to the last saved source (so the
+    // terminal side stops seeing the discarded in-progress edits) before
+    // shutting down. Follows doSave/doSaveClose's ref-captured pattern so a
+    // document switch mid-flight can't corrupt state that no longer belongs
+    // to the active tool.
+    async function doDiscardClose() {
+        const tool = activeToolRef.current;
+        const saved = savedSourceRef.current;
+        if (dirty) {
+            const confirmed = window.confirm(t(lang, "discardCloseConfirm"));
+            if (!confirmed) {
+                return;
+            }
+        }
+        // Settle any pending/in-flight draft write first, so a debounced
+        // flush from the just-discarded edits can't land after — and
+        // re-dirty — the draft we're about to reset to `saved`.
+        await settleDraftBeforeRestore();
+        if (tool !== null && saved !== null) {
+            await flushDraftNow(tool, saved);
+        }
+        try {
+            await api.shutdown();
+        } catch {
+            // The server may drop the connection as it exits; ignore.
+        }
+        setClosed("discarded");
     }
 
     // Export the *saved* document (not the in-progress editor buffer — the
@@ -1537,7 +1576,7 @@ function Configurator({ token }: { token: string }) {
         return (
             <div className="fullscreen-error">
                 <div>
-                    <h1>Saved</h1>
+                    <h1>{closed === "saved" ? "Saved" : "Changes discarded"}</h1>
                     <p>You can close this tab.</p>
                 </div>
             </div>
@@ -1585,6 +1624,7 @@ function Configurator({ token }: { token: string }) {
                 onRedo={() => setHistory((h) => (h ? redo(h) : h))}
                 onSave={doSave}
                 onSaveClose={doSaveClose}
+                onDiscardClose={doDiscardClose}
                 onExportMarkdown={doExportMarkdown}
                 onImport={() => setShowImport(true)}
                 onOpenSettings={() => setShowSettings(true)}

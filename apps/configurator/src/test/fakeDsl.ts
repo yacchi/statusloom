@@ -576,6 +576,8 @@ export interface FakeServer {
     // response, so tests can put a debounce deadline mid-flight to prove it
     // was settled beforehand rather than merely racing to finish first.
     restoreDelayMs: number;
+    // Number of POST /api/shutdown calls seen so far.
+    shutdownCalls: number;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -616,6 +618,7 @@ export function installFakeDslServer(initial: StatusloomNode): FakeServer {
         },
         historySources: { "rev-1": initialSource, "rev-2": initialSource },
         restoreDelayMs: 0,
+        shutdownCalls: 0,
     };
 
     server.fetchMock.mockImplementation(
@@ -624,6 +627,10 @@ export function installFakeDslServer(initial: StatusloomNode): FakeServer {
             const method = init?.method ?? "GET";
             const body = init?.body ? JSON.parse(String(init.body)) : undefined;
 
+            if (url.endsWith("/api/shutdown")) {
+                server.shutdownCalls += 1;
+                return jsonResponse({ ok: true });
+            }
             if (url.endsWith("/api/tools")) {
                 return jsonResponse({
                     tools: [{ id: "claude-code", displayName: "Claude Code" }],

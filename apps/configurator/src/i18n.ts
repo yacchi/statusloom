@@ -87,6 +87,7 @@ const EN = {
         "The DSL has errors. The preview shows the last valid state; visual editing and saving are disabled until the errors are fixed.",
     dslNoProblems: "No problems.",
     saveBlocked: "Cannot save: the document has errors.",
+    discardCloseConfirm: "Discard unsaved changes?",
     // settings
     settingsTitle: "Git settings",
     globalSettingsTitle: "Settings",
@@ -238,6 +239,7 @@ const JA: Record<MessageKey, string> = {
         "DSL にエラーがあります。プレビューは最後に正常だった状態を表示しています。エラーを修正するまでビジュアル編集と保存はできません。",
     dslNoProblems: "問題はありません。",
     saveBlocked: "保存できません: ドキュメントにエラーがあります。",
+    discardCloseConfirm: "保存されていない変更を破棄しますか？",
     settingsTitle: "Git設定",
     globalSettingsTitle: "設定",
     settingsAppSection: "エディタ",

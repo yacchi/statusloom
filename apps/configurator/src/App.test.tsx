@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "./App.tsx";
 import { defaultTestDoc, installFakeDslServer, type FakeServer } from "./test/fakeDsl.ts";
@@ -154,5 +154,185 @@ describe("App history restore vs draft autosave", () => {
         // margin before asserting no debounced write ever landed.
         await new Promise((r) => setTimeout(r, 300));
         expect(server.putDraftBodies.length).toBe(0);
+    });
+});
+
+// "Close without saving" (doDiscardClose): the escape hatch for closing the
+// tab without promoting the in-progress edits to a new saved revision. On a
+// dirty document it confirms first, then rewinds the shared draft back to
+// the last saved source before shutting down.
+describe("App discard-close", () => {
+    const TOKEN = "a".repeat(32);
+    let server: FakeServer;
+    let confirmSpy: MockInstance<(message?: string) => boolean>;
+
+    beforeEach(() => {
+        window.location.hash = `#token=${TOKEN}`;
+        server = installFakeDslServer(defaultTestDoc());
+        confirmSpy = vi.spyOn(window, "confirm");
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+        window.location.hash = "";
+        window.localStorage.clear();
+    });
+
+    async function makeDirty(): Promise<void> {
+        fireEvent.click(screen.getByTestId("palette-field:model"));
+        await waitFor(() =>
+            expect((screen.getByTitle(/Undo/i) as HTMLButtonElement).disabled).toBe(false),
+        );
+        await waitFor(() => expect(server.putDraftBodies.length).toBe(1));
+    }
+
+    it("confirms, rewinds the draft to the saved source, shuts down and closes when confirmed", async () => {
+        confirmSpy.mockReturnValue(true);
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("palette-field:model")).toBeTruthy(), {
+            timeout: 3000,
+        });
+
+        const savedDocument = server.document;
+        await makeDirty();
+        expect(server.draft).not.toBe(savedDocument);
+
+        fireEvent.click(screen.getByTestId("discard-close-button"));
+
+        expect(confirmSpy).toHaveBeenCalledWith("Discard unsaved changes?");
+        await waitFor(() => expect(server.draft).toBe(savedDocument));
+        await waitFor(() => expect(server.shutdownCalls).toBe(1));
+        await waitFor(() => expect(screen.getByText(/Changes discarded/i)).toBeTruthy());
+        // No new saved revision was created by discarding.
+        expect(server.putDocumentBodies.length).toBe(0);
+    });
+
+    it("does nothing when the confirmation is cancelled", async () => {
+        confirmSpy.mockReturnValue(false);
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("palette-field:model")).toBeTruthy(), {
+            timeout: 3000,
+        });
+
+        await makeDirty();
+        const draftBeforeClick = server.draft;
+
+        fireEvent.click(screen.getByTestId("discard-close-button"));
+
+        expect(confirmSpy).toHaveBeenCalled();
+        // Give any (wrongly fired) async work a chance to run, then confirm
+        // nothing changed: draft untouched, no shutdown, still open.
+        await new Promise((r) => setTimeout(r, 50));
+        expect(server.draft).toBe(draftBeforeClick);
+        expect(server.shutdownCalls).toBe(0);
+        expect(screen.queryByText(/You can close this tab/i)).toBeNull();
+        expect(screen.getByText(/unsaved/i)).toBeTruthy();
+    });
+
+    it("closes immediately without a confirmation dialog when there are no unsaved changes", async () => {
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("palette-field:model")).toBeTruthy(), {
+            timeout: 3000,
+        });
+
+        fireEvent.click(screen.getByTestId("discard-close-button"));
+
+        expect(confirmSpy).not.toHaveBeenCalled();
+        await waitFor(() => expect(server.shutdownCalls).toBe(1));
+        await waitFor(() => expect(screen.getByText(/You can close this tab/i)).toBeTruthy());
+    });
+
+    it("discards edits that never reached the server draft (settled before the debounce fires)", async () => {
+        confirmSpy.mockReturnValue(true);
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("palette-field:model")).toBeTruthy(), {
+            timeout: 3000,
+        });
+
+        // Start the 250ms draft-autosave debounce, then discard immediately
+        // — well before it would have fired — proving doDiscardClose settles
+        // the pending write instead of racing it.
+        fireEvent.click(screen.getByTestId("palette-field:model"));
+        await waitFor(() =>
+            expect((screen.getByTitle(/Undo/i) as HTMLButtonElement).disabled).toBe(false),
+        );
+        expect(server.putDraftBodies.length).toBe(0);
+
+        fireEvent.click(screen.getByTestId("discard-close-button"));
+
+        await waitFor(() => expect(server.shutdownCalls).toBe(1));
+        // The debounce's original 250ms deadline is long past by now; the
+        // discarded edit must never have reached the server as a draft PUT.
+        await new Promise((r) => setTimeout(r, 300));
+        expect(server.putDraftBodies.length).toBe(0);
+    });
+});
+
+// beforeunload: warns on tab/window close only while there are unsaved
+// edits, and stops warning once those edits are resolved (saved, discarded,
+// or the tab is already in its post-shutdown "closed" state).
+describe("App beforeunload warning", () => {
+    const TOKEN = "a".repeat(32);
+
+    beforeEach(() => {
+        window.location.hash = `#token=${TOKEN}`;
+        installFakeDslServer(defaultTestDoc());
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+        window.location.hash = "";
+        window.localStorage.clear();
+    });
+
+    function dispatchBeforeUnload(): Event {
+        const event = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event;
+    }
+
+    it("does not prevent unload while there are no unsaved changes", async () => {
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("palette-field:model")).toBeTruthy(), {
+            timeout: 3000,
+        });
+
+        const event = dispatchBeforeUnload();
+        expect(event.defaultPrevented).toBe(false);
+    });
+
+    it("prevents unload while there are unsaved changes", async () => {
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("palette-field:model")).toBeTruthy(), {
+            timeout: 3000,
+        });
+
+        fireEvent.click(screen.getByTestId("palette-field:model"));
+        await waitFor(() =>
+            expect((screen.getByTitle(/Undo/i) as HTMLButtonElement).disabled).toBe(false),
+        );
+
+        const event = dispatchBeforeUnload();
+        expect(event.defaultPrevented).toBe(true);
+    });
+
+    it("stops warning once the tab is closed (discarded), even though present still differs from savedSource", async () => {
+        vi.spyOn(window, "confirm").mockReturnValue(true);
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("palette-field:model")).toBeTruthy(), {
+            timeout: 3000,
+        });
+
+        fireEvent.click(screen.getByTestId("palette-field:model"));
+        await waitFor(() =>
+            expect((screen.getByTitle(/Undo/i) as HTMLButtonElement).disabled).toBe(false),
+        );
+        fireEvent.click(screen.getByTestId("discard-close-button"));
+        await waitFor(() => expect(screen.getByText(/Changes discarded/i)).toBeTruthy());
+
+        const event = dispatchBeforeUnload();
+        expect(event.defaultPrevented).toBe(false);
     });
 });

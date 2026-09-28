@@ -21,6 +21,7 @@ interface Props {
     onRedo: () => void;
     onSave: () => void;
     onSaveClose: () => void;
+    onDiscardClose: () => void;
     onExportMarkdown: () => void;
     onImport: () => void;
     onOpenSettings: () => void;
@@ -42,6 +43,7 @@ export function Header({
     onRedo,
     onSave,
     onSaveClose,
+    onDiscardClose,
     onExportMarkdown,
     onImport,
     onOpenSettings,
@@ -118,6 +120,17 @@ export function Header({
                     disabled={saving || !canSave}
                 >
                     Save &amp; Close
+                </button>
+                {/* Unlike Save/Save & Close, this is never gated on canSave:
+                    it's the escape hatch when the DSL has errors and the
+                    other two buttons are disabled. */}
+                <button
+                    data-testid="discard-close-button"
+                    onClick={onDiscardClose}
+                    disabled={saving}
+                    title="Discard unsaved changes and close"
+                >
+                    Close without saving
                 </button>
             </div>
         </header>

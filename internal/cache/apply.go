@@ -203,18 +203,23 @@ func mergeRateWindow(acc, other *RateWindowState, now time.Time) *RateWindowStat
 // background refresh worker (internal/cli's runRefresh -> usage.Fetch); most
 // callers only read it, keeping rendering network-free.
 //
-// It supplies the model-scoped (Opus/Sonnet) seven-day windows
-// unconditionally, since Claude Code's stdin never carries those at all.
-// For Account.FiveHour/Account.SevenDay - which by this point already
-// reflect whatever ApplyAccountCache resolved from stdin and its own cache -
-// it merges in this envelope's copy the same way FillAccountFromCache does
-// (see mergeRateWindow), rather than only using it as a last-resort fallback
-// when the field is still nil: this envelope is independently, genuinely
-// fetched data (the worker polls the OAuth usage API on its own schedule),
-// not a guess, and it is frequently already fresher than the stdin-side
-// cache - e.g. right at the moment of a reset, or when another concurrently
-// running session burned usage this session's own stdin has not caught up
-// to yet.
+// Every rate-limit window it touches - the model-scoped (Opus/Sonnet)
+// seven-day windows, which have only this one source since Claude Code's
+// stdin never carries those at all, and Account.FiveHour/Account.SevenDay,
+// which by this point already reflect whatever ApplyAccountCache resolved
+// from stdin and its own cache - goes through the same mergeRateWindow rule
+// FillAccountFromCache uses, rather than a bespoke "assign unconditionally"
+// for the single-source fields and a bespoke "only fall back when nil" for
+// the others. One rule for every rate window, regardless of how many
+// sources feed it, is easier to reason about and keep correct than one rule
+// per field would be: an already-reset value is never displayed or guessed
+// at, and when a field does have more than one source, the more current one
+// wins even when that is this envelope rather than stdin - it is
+// independently, genuinely fetched data (the worker polls the OAuth usage
+// API on its own schedule), not a guess, and it is frequently already
+// fresher than the stdin-side cache - e.g. right at the moment of a reset,
+// or when another concurrently running session burned usage this session's
+// own stdin has not caught up to yet.
 //
 // ExtraUsage and the seven-day windows are deliberately loaded from two
 // independent sources with different lifetimes: the windows follow
@@ -236,12 +241,16 @@ func ApplyExtraUsageCache(key string, snap *schema.StatusSnapshot, now time.Time
 		}
 	}
 	if env, _, ok := LoadAccountUsage(key, now); ok && env != nil {
-		if env.SevenDayOpus != nil {
-			snap.Account.SevenDayOpus = ToSchemaRateWindow(env.SevenDayOpus)
-		}
-		if env.SevenDaySonnet != nil {
-			snap.Account.SevenDaySonnet = ToSchemaRateWindow(env.SevenDaySonnet)
-		}
+		// SevenDayOpus/SevenDaySonnet have only this one source (Claude
+		// Code's stdin never carries per-model windows), but they still go
+		// through mergeRateWindow with a nil accumulator rather than being
+		// assigned unconditionally: a single-source field is no exception to
+		// "an already-reset value is never displayed, guessed at, or left to
+		// go stale forever" - the same one rule this whole cache package
+		// applies to every rate window, regardless of how many sources feed
+		// it.
+		snap.Account.SevenDayOpus = toSchemaRateWindowOrNil(mergeRateWindow(nil, env.SevenDayOpus, now))
+		snap.Account.SevenDaySonnet = toSchemaRateWindowOrNil(mergeRateWindow(nil, env.SevenDaySonnet, now))
 
 		beforeFiveHour := toRateWindowStateOrNil(snap.Account.FiveHour)
 		beforeSevenDay := toRateWindowStateOrNil(snap.Account.SevenDay)

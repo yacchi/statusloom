@@ -129,6 +129,32 @@ func TestApplyExtraUsageCache_Populates(t *testing.T) {
 	}
 }
 
+// TestApplyExtraUsageCache_DropsExpiredOpusSonnet asserts SevenDayOpus/
+// SevenDaySonnet are held to the same "an already-reset window is never
+// displayed" rule as every other rate window (via mergeRateWindow), even
+// though they have only this one source - regression test for an
+// inconsistency where they were assigned unconditionally instead.
+func TestApplyExtraUsageCache_DropsExpiredOpusSonnet(t *testing.T) {
+	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+	now := time.Now()
+	env := NewAccountUsageEnvelope(now)
+	env.SevenDayOpus = &RateWindowState{UsedPercentage: 99, ResetsAt: now.Add(-time.Minute)}
+	env.SevenDaySonnet = &RateWindowState{UsedPercentage: 3, ResetsAt: now.Add(4 * time.Hour)}
+	if err := StoreAccountUsage(AccountCacheKey, env); err != nil {
+		t.Fatalf("StoreAccountUsage() error = %v", err)
+	}
+
+	var snap schema.StatusSnapshot
+	ApplyExtraUsageCache(AccountCacheKey, &snap, now)
+
+	if snap.Account.SevenDayOpus != nil {
+		t.Errorf("SevenDayOpus = %v, want nil (its window already reset)", snap.Account.SevenDayOpus)
+	}
+	if snap.Account.SevenDaySonnet == nil || snap.Account.SevenDaySonnet.UsedPercentage != 3 {
+		t.Errorf("SevenDaySonnet = %v, want UsedPercentage 3 (still active)", snap.Account.SevenDaySonnet)
+	}
+}
+
 // TestApplyExtraUsageCache_StaleBoundary asserts Stale reflects the
 // ExpiresAt (fresh-TTL) boundary of the loaded envelope.
 func TestApplyExtraUsageCache_StaleBoundary(t *testing.T) {

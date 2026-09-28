@@ -7,6 +7,67 @@ import (
 	"github.com/yacchi/statusloom/internal/schema"
 )
 
+// TestMergeRateWindow covers mergeRateWindow's decision table directly:
+// nils on either side, the accumulator never expiry-filtered vs. the other
+// candidate always expiry-filtered, later-ResetsAt-wins across window
+// generations, and higher-UsedPercentage-wins within the same generation.
+func TestMergeRateWindow(t *testing.T) {
+	now := time.Now()
+	active := func(pct float64, in time.Duration) *RateWindowState {
+		return &RateWindowState{UsedPercentage: pct, ResetsAt: now.Add(in)}
+	}
+
+	tests := []struct {
+		name string
+		acc  *RateWindowState
+		want *RateWindowState
+	}{
+		{"both nil", nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mergeRateWindow(tt.acc, nil, now); got != tt.want {
+				t.Errorf("mergeRateWindow(%v, nil) = %v, want %v", tt.acc, got, tt.want)
+			}
+		})
+	}
+
+	if got := mergeRateWindow(nil, active(10, time.Hour), now); got == nil || got.UsedPercentage != 10 {
+		t.Errorf("mergeRateWindow(nil, active) = %v, want the active candidate", got)
+	}
+
+	if got := mergeRateWindow(active(10, time.Hour), nil, now); got == nil || got.UsedPercentage != 10 {
+		t.Errorf("mergeRateWindow(acc, nil) = %v, want the accumulator", got)
+	}
+
+	expired := &RateWindowState{UsedPercentage: 99, ResetsAt: now.Add(-time.Minute)}
+	if got := mergeRateWindow(nil, expired, now); got != nil {
+		t.Errorf("mergeRateWindow(nil, expired-other) = %v, want nil (expired candidates are never returned)", got)
+	}
+	if got := mergeRateWindow(expired, nil, now); got != expired {
+		t.Errorf("mergeRateWindow(expired-acc, nil) = %v, want the accumulator unchanged (only `other` is expiry-filtered)", got)
+	}
+
+	newer := active(0, 3*24*time.Hour)
+	older := active(90, 1*24*time.Hour)
+	if got := mergeRateWindow(older, newer, now); got != newer {
+		t.Errorf("mergeRateWindow(older-acc, newer-other) = %v, want the later ResetsAt to win regardless of usage", got)
+	}
+	if got := mergeRateWindow(newer, older, now); got != newer {
+		t.Errorf("mergeRateWindow(newer-acc, older-other) = %v, want the later ResetsAt to win", got)
+	}
+
+	resetAt := 5 * time.Hour
+	low := active(20, resetAt)
+	high := active(80, resetAt)
+	if got := mergeRateWindow(low, high, now); got != high {
+		t.Errorf("mergeRateWindow(low-acc, high-other) = %v, want the higher UsedPercentage for the same window", got)
+	}
+	if got := mergeRateWindow(high, low, now); got != high {
+		t.Errorf("mergeRateWindow(high-acc, low-other) = %v, want the accumulator to stay (tie/lower other doesn't win)", got)
+	}
+}
+
 // TestResolveAccountCacheKey covers the three cases ResolveAccountCacheKey
 // must handle: no profile, a profile with no OrganizationUUID (both fall back
 // to AccountCacheKey), and a profile with an OrganizationUUID (used as-is).
@@ -157,15 +218,16 @@ func TestFillAccountFromCache_DoesNotWrite(t *testing.T) {
 		t.Fatalf("StoreAccount() error = %v", err)
 	}
 
-	// A snapshot carrying its own, different FiveHour window - FillAccountFromCache
-	// must leave it alone (only fills windows the snapshot is missing) and
-	// must not write anything to the cache either way.
+	// A snapshot carrying its own FiveHour window that is more current than
+	// the cache (a later ResetsAt - a newer window generation), so the merge
+	// keeps it - and regardless of the merge outcome, FillAccountFromCache
+	// must never write anything to the cache itself.
 	snap := schema.StatusSnapshot{}
 	snap.Account.FiveHour = &schema.RateWindow{UsedPercentage: 99, ResetsAt: now.Add(3 * time.Hour)}
 	FillAccountFromCache(AccountCacheKey, &snap, now)
 
 	if snap.Account.FiveHour.UsedPercentage != 99 {
-		t.Errorf("snap.Account.FiveHour.UsedPercentage = %v, want unchanged (99): FillAccountFromCache must not overwrite a window already present", snap.Account.FiveHour.UsedPercentage)
+		t.Errorf("snap.Account.FiveHour.UsedPercentage = %v, want unchanged (99): its ResetsAt is later than the cache's, so it wins the merge", snap.Account.FiveHour.UsedPercentage)
 	}
 
 	cached, err := LoadAccount(AccountCacheKey)
@@ -245,6 +307,43 @@ func TestFillAccountFromCache_StillActiveNoSignal(t *testing.T) {
 	}
 }
 
+// TestFillAccountFromCache_CrossSessionUsageWins asserts the scenario the
+// merge redesign exists for: this render's own live stdin reports a lower
+// UsedPercentage than the shared stdin-cache holds for the *same* window
+// (another concurrently running session updated the shared cache with usage
+// this session's own stdin has not caught up to yet) - the higher, more
+// recently confirmed value wins rather than this session's own stdin being
+// trusted unconditionally.
+func TestFillAccountFromCache_CrossSessionUsageWins(t *testing.T) {
+	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+	now := time.Now()
+	resetAt := now.Add(2 * time.Hour)
+
+	seeded := AccountUsage{
+		Source:     "claude-code-stdin",
+		ObservedAt: now.Add(-time.Minute),
+		ExpiresAt:  now.Add(4 * time.Minute),
+		FiveHour:   &RateWindowState{UsedPercentage: 58, ResetsAt: resetAt},
+	}
+	if err := StoreAccount(AccountCacheKey, seeded); err != nil {
+		t.Fatalf("StoreAccount() error = %v", err)
+	}
+
+	snap := schema.StatusSnapshot{}
+	snap.Account.FiveHour = &schema.RateWindow{UsedPercentage: 30, ResetsAt: resetAt}
+	rolledOver := FillAccountFromCache(AccountCacheKey, &snap, now)
+
+	if snap.Account.FiveHour.UsedPercentage != 58 {
+		t.Errorf("snap.Account.FiveHour.UsedPercentage = %v, want 58 (cross-session cache value, more current than this render's own stdin)", snap.Account.FiveHour.UsedPercentage)
+	}
+	if rolledOver {
+		t.Error("rolledOver = true, want false (a usable window was found)")
+	}
+	if !snap.Account.Stale {
+		t.Error("snap.Account.Stale = false, want true (the cache's value won the merge)")
+	}
+}
+
 // TestApplyExtraUsageCache_FillsRolledOverSevenDayFromOAuthEnvelope asserts
 // that when Account.SevenDay is still nil after the stdin-side cache (e.g.
 // FillAccountFromCache just reported rolledOver because that cache had
@@ -272,25 +371,78 @@ func TestApplyExtraUsageCache_FillsRolledOverSevenDayFromOAuthEnvelope(t *testin
 	}
 }
 
-// TestApplyExtraUsageCache_DoesNotOverwriteStdinSevenDay asserts
-// ApplyExtraUsageCache never overwrites a SevenDay value the caller already
-// resolved from stdin/its own cache - the OAuth envelope is only a
-// last-resort fallback.
-func TestApplyExtraUsageCache_DoesNotOverwriteStdinSevenDay(t *testing.T) {
+// TestApplyExtraUsageCache_PrefersNewerWindowGeneration asserts
+// ApplyExtraUsageCache keeps the accumulator's SevenDay when the OAuth
+// envelope describes an *older* window generation (an earlier ResetsAt) for
+// the same field - the two are merged by which one is more current, not by
+// which source produced them.
+func TestApplyExtraUsageCache_PrefersNewerWindowGeneration(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 	now := time.Now()
 
 	env := NewAccountUsageEnvelope(now)
-	env.SevenDay = &RateWindowState{UsedPercentage: 0, ResetsAt: now.Add(7 * 24 * time.Hour)}
+	env.SevenDay = &RateWindowState{UsedPercentage: 0, ResetsAt: now.Add(3 * 24 * time.Hour)}
 	if err := StoreAccountUsage(AccountCacheKey, env); err != nil {
 		t.Fatalf("StoreAccountUsage() error = %v", err)
 	}
 
 	snap := schema.StatusSnapshot{}
-	snap.Account.SevenDay = &schema.RateWindow{UsedPercentage: 63, ResetsAt: now.Add(3 * 24 * time.Hour)}
+	snap.Account.SevenDay = &schema.RateWindow{UsedPercentage: 63, ResetsAt: now.Add(7 * 24 * time.Hour)}
 	ApplyExtraUsageCache(AccountCacheKey, &snap, now)
 
 	if snap.Account.SevenDay.UsedPercentage != 63 {
-		t.Errorf("snap.Account.SevenDay.UsedPercentage = %v, want unchanged (63)", snap.Account.SevenDay.UsedPercentage)
+		t.Errorf("snap.Account.SevenDay.UsedPercentage = %v, want unchanged (63): the accumulator's window (ResetsAt +7d) is a newer generation than the OAuth envelope's (+3d)", snap.Account.SevenDay.UsedPercentage)
+	}
+}
+
+// TestApplyExtraUsageCache_PrefersHigherUsageForSameWindow asserts that for
+// the *same* window instance (equal ResetsAt), ApplyExtraUsageCache prefers
+// whichever source reports the higher UsedPercentage - regression test for
+// the scenario the account-cache-key design exists to handle: another
+// concurrently running session (or this session's own independent
+// OAuth-usage-API poll) can observe usage this render's own stdin has not
+// caught up to yet, and the true value is a single per-account fact, not
+// "whatever this session's own stdin last said."
+func TestApplyExtraUsageCache_PrefersHigherUsageForSameWindow(t *testing.T) {
+	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+	now := time.Now()
+	resetAt := now.Add(3 * 24 * time.Hour)
+
+	env := NewAccountUsageEnvelope(now)
+	env.SevenDay = &RateWindowState{UsedPercentage: 71, ResetsAt: resetAt}
+	if err := StoreAccountUsage(AccountCacheKey, env); err != nil {
+		t.Fatalf("StoreAccountUsage() error = %v", err)
+	}
+
+	snap := schema.StatusSnapshot{}
+	snap.Account.SevenDay = &schema.RateWindow{UsedPercentage: 63, ResetsAt: resetAt}
+	ApplyExtraUsageCache(AccountCacheKey, &snap, now)
+
+	if snap.Account.SevenDay.UsedPercentage != 71 {
+		t.Errorf("snap.Account.SevenDay.UsedPercentage = %v, want 71 (the higher, more-recently-confirmed usage for the same window)", snap.Account.SevenDay.UsedPercentage)
+	}
+	if !snap.Account.Stale {
+		t.Error("snap.Account.Stale = false, want true (the OAuth envelope's value won the merge)")
+	}
+}
+
+// TestApplyExtraUsageCache_LiveStdinNeverExpiryFiltered asserts that a live
+// stdin value (this render's own, on the accumulator already) is never
+// dropped merely for its own ResetsAt being in the past - only cache-sourced
+// candidates are expiry-filtered. Claude Code's stdin is ground truth for
+// whatever it reports, full stop.
+func TestApplyExtraUsageCache_LiveStdinNeverExpiryFiltered(t *testing.T) {
+	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+	now := time.Now()
+
+	snap := schema.StatusSnapshot{}
+	snap.Account.SevenDay = &schema.RateWindow{UsedPercentage: 99, ResetsAt: now.Add(-time.Minute)}
+	ApplyExtraUsageCache(AccountCacheKey, &snap, now)
+
+	if snap.Account.SevenDay == nil || snap.Account.SevenDay.UsedPercentage != 99 {
+		t.Errorf("snap.Account.SevenDay = %v, want unchanged (UsedPercentage 99, live stdin value never dropped)", snap.Account.SevenDay)
+	}
+	if snap.Account.Stale {
+		t.Error("snap.Account.Stale = true, want false (nothing from the cache won)")
 	}
 }

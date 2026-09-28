@@ -37,13 +37,14 @@ const accountCacheTTL = 5 * time.Minute
 
 // ApplyAccountCache folds account-scoped rate-limit state (five-hour and
 // seven-day usage) between the current snapshot and the shared account
-// cache, per plan section 3.3:
+// cache, per plan section 3.3 (generalized - see FillAccountFromCache):
 //
-//  1. Any window present in the stdin-derived snapshot is stored to the
+//  1. Whatever window this render's own stdin carries is stored to the
 //     cache so other concurrently running sessions can observe it
 //     (StoreAccountFromSnapshot).
-//  2. Any window absent from the snapshot is filled in from the cache, if
-//     available there, and Account.Stale is set when that happens
+//  2. The snapshot's window is then merged against the cache, keeping
+//     whichever more currently reflects the account's true state, and
+//     Account.Stale is set when the cache's copy wins that merge
 //     (FillAccountFromCache).
 //
 // It is a thin wrapper kept for the render path (internal/cli), which wants
@@ -89,58 +90,111 @@ func StoreAccountFromSnapshot(key string, snap *schema.StatusSnapshot, now time.
 	_ = StoreAccount(key, u)
 }
 
-// FillAccountFromCache fills in any five-hour/seven-day window snap is
-// missing from the shared account cache, if available there, and sets
-// Account.Stale when it does (plan section 3.3, step 2). It is read-only: it
-// never writes to the shared cache, only to snap itself.
+// FillAccountFromCache merges the shared stdin-side account cache into
+// snap's five-hour/seven-day windows and sets Account.Stale when the merge
+// changes what snap already carried (plan section 3.3, step 2, generalized -
+// see mergeRateWindow). It is read-only: it never writes to the shared
+// cache, only to snap itself.
+//
+// The account's five-hour/seven-day usage is a single fact per account, not
+// a fact "as this session's own stdin last heard it": Claude Code's stdin
+// payload for this render can lag behind usage a concurrently running
+// session just burned, or behind this session's own process not having
+// refreshed its internal state yet. So rather than treating whatever snap
+// already carries (this render's live stdin value, if any) as unconditionally
+// authoritative and only consulting the cache when stdin omitted a window,
+// it is merged against the cache - see mergeRateWindow for the merge rule -
+// and the more current of the two survives, regardless of which one that is.
 //
 // Cache errors are deliberately ignored: the shared cache is a best-effort
 // convenience, and a caller must never fail (or even go stale-empty) just
 // because the cache directory is unreadable.
 //
-// rolledOver reports whether a needed window was found in the cache but its
-// ResetsAt is no longer after now - i.e. it has definitely reset, so its
-// UsedPercentage is wrong and it is skipped rather than displayed (this
-// applies only to cache fills; windows arriving via stdin are Claude's own
-// ground truth and are always displayed as-is, however their ResetsAt
-// compares to now). Unlike an ordinary "still within its freshness TTL"
-// staleness, this is a known-for-certain fact, not a guess: the render path
-// uses it to make an account-usage refresh due immediately, instead of
-// guessing at the new window's shape (its length, its exact reset time) to
-// paper over the gap - see internal/cli's maybeStartRefresh.
+// rolledOver reports whether a window the cache has some record of came out
+// of the merge as nil - i.e. every candidate for that window (this render's
+// own stdin value, if any, and the cached one) has definitely already
+// reset, so nothing safe to display exists yet anywhere. Unlike an ordinary
+// "still within its freshness TTL" staleness, this is a known-for-certain
+// fact, not a guess: the render path uses it to make an account-usage
+// refresh due immediately, instead of guessing at the new window's shape
+// (its length, its exact reset time) to paper over the gap - see
+// internal/cli's maybeStartRefresh.
 func FillAccountFromCache(key string, snap *schema.StatusSnapshot, now time.Time) (rolledOver bool) {
-	needFiveHour := snap.Account.FiveHour == nil
-	needSevenDay := snap.Account.SevenDay == nil
-	if !needFiveHour && !needSevenDay {
-		return false
-	}
-
 	cached, err := LoadAccount(key)
 	if err != nil || cached == nil {
 		return false
 	}
 
-	filled := false
-	if needFiveHour && cached.FiveHour != nil {
-		if cached.FiveHour.ResetsAt.After(now) {
-			snap.Account.FiveHour = ToSchemaRateWindow(cached.FiveHour)
-			filled = true
-		} else {
-			rolledOver = true
-		}
-	}
-	if needSevenDay && cached.SevenDay != nil {
-		if cached.SevenDay.ResetsAt.After(now) {
-			snap.Account.SevenDay = ToSchemaRateWindow(cached.SevenDay)
-			filled = true
-		} else {
-			rolledOver = true
-		}
-	}
-	if filled {
+	liveFiveHour := toRateWindowStateOrNil(snap.Account.FiveHour)
+	liveSevenDay := toRateWindowStateOrNil(snap.Account.SevenDay)
+
+	mergedFiveHour := mergeRateWindow(liveFiveHour, cached.FiveHour, now)
+	mergedSevenDay := mergeRateWindow(liveSevenDay, cached.SevenDay, now)
+
+	if !rateWindowEqual(mergedFiveHour, liveFiveHour) {
+		snap.Account.FiveHour = toSchemaRateWindowOrNil(mergedFiveHour)
 		snap.Account.Stale = true
 	}
+	if !rateWindowEqual(mergedSevenDay, liveSevenDay) {
+		snap.Account.SevenDay = toSchemaRateWindowOrNil(mergedSevenDay)
+		snap.Account.Stale = true
+	}
+
+	if mergedFiveHour == nil && cached.FiveHour != nil {
+		rolledOver = true
+	}
+	if mergedSevenDay == nil && cached.SevenDay != nil {
+		rolledOver = true
+	}
 	return rolledOver
+}
+
+// mergeRateWindow folds other - a candidate freshly read from some cache -
+// into acc, an accumulator that is either nil, this render's own live stdin
+// value (never expiry-filtered: stdin is Claude's own ground truth for
+// whatever it reports, full stop, even in the rare case its own ResetsAt
+// happens to already be in the past), or the already-validated result of a
+// previous mergeRateWindow call. It returns whichever of the two most
+// currently reflects the window's true state:
+//
+//   - other is dropped up front (treated as nil) if its own window has
+//     already reset (ResetsAt not after now): unlike acc, a bare cache read
+//     is not inherently trustworthy just for having arrived this render, so
+//     a cached value that is definitely stale is never displayed rather
+//     than guessed at.
+//   - If both remain, a later ResetsAt always wins: it reflects a newer
+//     window generation (e.g. one source has already picked up the
+//     post-reset window while the other still reports the just-expired
+//     one).
+//   - Between two candidates for the *same* window instance (equal
+//     ResetsAt), the higher UsedPercentage wins: usage only accumulates
+//     within a window, so whichever observation saw more usage is the more
+//     recently confirmed one (e.g. another concurrently running session, or
+//     an independent background poll, observed usage this render's own
+//     stdin has not caught up to yet).
+//
+// The account's five-hour/seven-day usage is a single fact per account, not
+// a fact "as this session last heard it" - this is what lets ApplyAccountCache
+// and ApplyExtraUsageCache each fold in one more source with a single,
+// shared rule instead of layering ad hoc fallback-only-when-nil logic.
+func mergeRateWindow(acc, other *RateWindowState, now time.Time) *RateWindowState {
+	if other != nil && !other.ResetsAt.After(now) {
+		other = nil
+	}
+	switch {
+	case acc == nil:
+		return other
+	case other == nil:
+		return acc
+	case other.ResetsAt.After(acc.ResetsAt):
+		return other
+	case acc.ResetsAt.After(other.ResetsAt):
+		return acc
+	case other.UsedPercentage > acc.UsedPercentage:
+		return other
+	default:
+		return acc
+	}
 }
 
 // ApplyExtraUsageCache folds the OAuth-usage-API-sourced account cache
@@ -149,18 +203,18 @@ func FillAccountFromCache(key string, snap *schema.StatusSnapshot, now time.Time
 // background refresh worker (internal/cli's runRefresh -> usage.Fetch); most
 // callers only read it, keeping rendering network-free.
 //
-// It only supplies the model-scoped (Opus/Sonnet) seven-day windows
+// It supplies the model-scoped (Opus/Sonnet) seven-day windows
 // unconditionally, since Claude Code's stdin never carries those at all.
-// Account.FiveHour/Account.SevenDay stay stdin/stdin-cache driven first
-// (ApplyAccountCache is Claude's own ground truth and runs before this), but
-// if a window is still missing after that - most often right after it has
-// just reset and the stdin-side cache was deliberately not used for it (see
-// FillAccountFromCache's rolledOver) - this fills it in from the same
-// OAuth-usage-API envelope, provided that copy is itself a genuinely still-
-// active window (ResetsAt after now). That is real, independently-fetched
-// data (the worker polls this API on its own schedule), not a guess, and it
-// is frequently already fresher than the stdin-side cache at the exact
-// moment of a reset, since the two sources refresh independently.
+// For Account.FiveHour/Account.SevenDay - which by this point already
+// reflect whatever ApplyAccountCache resolved from stdin and its own cache -
+// it merges in this envelope's copy the same way FillAccountFromCache does
+// (see mergeRateWindow), rather than only using it as a last-resort fallback
+// when the field is still nil: this envelope is independently, genuinely
+// fetched data (the worker polls the OAuth usage API on its own schedule),
+// not a guess, and it is frequently already fresher than the stdin-side
+// cache - e.g. right at the moment of a reset, or when another concurrently
+// running session burned usage this session's own stdin has not caught up
+// to yet.
 //
 // ExtraUsage and the seven-day windows are deliberately loaded from two
 // independent sources with different lifetimes: the windows follow
@@ -188,12 +242,18 @@ func ApplyExtraUsageCache(key string, snap *schema.StatusSnapshot, now time.Time
 		if env.SevenDaySonnet != nil {
 			snap.Account.SevenDaySonnet = ToSchemaRateWindow(env.SevenDaySonnet)
 		}
-		if snap.Account.FiveHour == nil && env.FiveHour != nil && env.FiveHour.ResetsAt.After(now) {
-			snap.Account.FiveHour = ToSchemaRateWindow(env.FiveHour)
+
+		beforeFiveHour := toRateWindowStateOrNil(snap.Account.FiveHour)
+		beforeSevenDay := toRateWindowStateOrNil(snap.Account.SevenDay)
+		mergedFiveHour := mergeRateWindow(beforeFiveHour, env.FiveHour, now)
+		mergedSevenDay := mergeRateWindow(beforeSevenDay, env.SevenDay, now)
+
+		if !rateWindowEqual(mergedFiveHour, beforeFiveHour) {
+			snap.Account.FiveHour = toSchemaRateWindowOrNil(mergedFiveHour)
 			snap.Account.Stale = true
 		}
-		if snap.Account.SevenDay == nil && env.SevenDay != nil && env.SevenDay.ResetsAt.After(now) {
-			snap.Account.SevenDay = ToSchemaRateWindow(env.SevenDay)
+		if !rateWindowEqual(mergedSevenDay, beforeSevenDay) {
+			snap.Account.SevenDay = toSchemaRateWindowOrNil(mergedSevenDay)
 			snap.Account.Stale = true
 		}
 	}
@@ -209,4 +269,24 @@ func ToRateWindowState(w *schema.RateWindow) *RateWindowState {
 // schema.RateWindow for use on a StatusSnapshot.
 func ToSchemaRateWindow(w *RateWindowState) *schema.RateWindow {
 	return &schema.RateWindow{UsedPercentage: w.UsedPercentage, ResetsAt: w.ResetsAt}
+}
+
+// toRateWindowStateOrNil is ToRateWindowState's nil-safe counterpart, for
+// merge callers that may be handed a snapshot field that is itself nil
+// (e.g. this render's stdin omitted the window).
+func toRateWindowStateOrNil(w *schema.RateWindow) *RateWindowState {
+	if w == nil {
+		return nil
+	}
+	return ToRateWindowState(w)
+}
+
+// toSchemaRateWindowOrNil is ToSchemaRateWindow's nil-safe counterpart, for
+// assigning a mergeRateWindow result (which may be nil) straight back onto a
+// snapshot field.
+func toSchemaRateWindowOrNil(w *RateWindowState) *schema.RateWindow {
+	if w == nil {
+		return nil
+	}
+	return ToSchemaRateWindow(w)
 }

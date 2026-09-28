@@ -163,8 +163,7 @@ func TestRun_AccountCache_FillsFromPreviousRun(t *testing.T) {
 	setupEnv(t)
 
 	// Make five_hour already expired and seven_day still in the future,
-	// independent of the fixture's absolute timestamps: only the future
-	// window may be filled from the cache on the second run.
+	// independent of the fixture's absolute timestamps.
 	full := fixture(t, "full.json")
 	full = rewriteResetsAt(t, full, "five_hour", 1000000000) // 2001, long past
 	full = rewriteResetsAt(t, full, "seven_day", time.Now().Add(24*time.Hour).Unix())
@@ -192,18 +191,23 @@ func TestRun_AccountCache_FillsFromPreviousRun(t *testing.T) {
 	if !strings.Contains(got[1], "7d: 79%") {
 		t.Errorf("line 2 = %q, want it to contain 7d: 79%% (future window filled from account cache)", got[1])
 	}
-	if strings.Contains(got[1], "5h:") {
-		t.Errorf("line 2 = %q, want no 5h widget (expired cached window must not be filled)", got[1])
+	// The five-hour window is filled too, even though its own ResetsAt is
+	// long past: a known-stale value is the best information available and
+	// is never hidden just for being stale (only ever superseded by
+	// something more current - see cache.mergeRateWindow).
+	if !strings.Contains(got[1], "5h: 27%") {
+		t.Errorf("line 2 = %q, want it to contain 5h: 27%% (expired cached window still filled, not hidden)", got[1])
 	}
 }
 
-func TestRun_AccountCache_SkipsExpiredWindow(t *testing.T) {
+func TestRun_AccountCache_FillsExpiredWindow(t *testing.T) {
 	setupEnv(t)
 
 	// Pre-populate the account cache directly with one expired and one
-	// future window; only the future one may render (the expired one is
-	// never guessed at - internal/cli's maybeStartRefresh instead uses its
-	// presence to force an immediate account-usage refresh).
+	// future window; both must render - an expired cached window is still
+	// the best information available and is never hidden (internal/cli's
+	// maybeStartRefresh separately uses its presence to force an immediate
+	// account-usage refresh, so it also does not linger unrefreshed).
 	now := time.Now()
 	err := cache.StoreAccount("default", cache.AccountUsage{
 		Source:     "test",
@@ -228,8 +232,8 @@ func TestRun_AccountCache_SkipsExpiredWindow(t *testing.T) {
 	if !strings.Contains(got[1], "7d: 63%") {
 		t.Errorf("line 2 = %q, want 7d: 63%% (future cached window)", got[1])
 	}
-	if strings.Contains(got[1], "5h:") {
-		t.Errorf("line 2 = %q, want no 5h widget (expired cached window)", got[1])
+	if !strings.Contains(got[1], "5h: 42%") {
+		t.Errorf("line 2 = %q, want 5h: 42%% (expired cached window still filled, not hidden)", got[1])
 	}
 }
 

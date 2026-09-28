@@ -8,62 +8,63 @@ import (
 )
 
 // TestMergeRateWindow covers mergeRateWindow's decision table directly:
-// nils on either side, the accumulator never expiry-filtered vs. the other
-// candidate always expiry-filtered, later-ResetsAt-wins across window
-// generations, and higher-UsedPercentage-wins within the same generation.
+// nils on either side, later-ResetsAt-wins across window generations, and
+// higher-UsedPercentage-wins within the same generation - and, critically,
+// that an already-reset candidate is never dropped: mergeRateWindow must
+// never hide a real value a caller holds, only decide which of two real
+// values is more current.
 func TestMergeRateWindow(t *testing.T) {
 	now := time.Now()
 	active := func(pct float64, in time.Duration) *RateWindowState {
 		return &RateWindowState{UsedPercentage: pct, ResetsAt: now.Add(in)}
 	}
 
-	tests := []struct {
-		name string
-		acc  *RateWindowState
-		want *RateWindowState
-	}{
-		{"both nil", nil, nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := mergeRateWindow(tt.acc, nil, now); got != tt.want {
-				t.Errorf("mergeRateWindow(%v, nil) = %v, want %v", tt.acc, got, tt.want)
-			}
-		})
+	if got := mergeRateWindow(nil, nil); got != nil {
+		t.Errorf("mergeRateWindow(nil, nil) = %v, want nil", got)
 	}
 
-	if got := mergeRateWindow(nil, active(10, time.Hour), now); got == nil || got.UsedPercentage != 10 {
+	if got := mergeRateWindow(nil, active(10, time.Hour)); got == nil || got.UsedPercentage != 10 {
 		t.Errorf("mergeRateWindow(nil, active) = %v, want the active candidate", got)
 	}
 
-	if got := mergeRateWindow(active(10, time.Hour), nil, now); got == nil || got.UsedPercentage != 10 {
+	if got := mergeRateWindow(active(10, time.Hour), nil); got == nil || got.UsedPercentage != 10 {
 		t.Errorf("mergeRateWindow(acc, nil) = %v, want the accumulator", got)
 	}
 
+	// An already-reset candidate is never dropped - it is still the best
+	// available information until something more current shows up.
 	expired := &RateWindowState{UsedPercentage: 99, ResetsAt: now.Add(-time.Minute)}
-	if got := mergeRateWindow(nil, expired, now); got != nil {
-		t.Errorf("mergeRateWindow(nil, expired-other) = %v, want nil (expired candidates are never returned)", got)
+	if got := mergeRateWindow(nil, expired); got != expired {
+		t.Errorf("mergeRateWindow(nil, expired-other) = %v, want the expired candidate itself, not nil (a known-stale value is never hidden)", got)
 	}
-	if got := mergeRateWindow(expired, nil, now); got != expired {
-		t.Errorf("mergeRateWindow(expired-acc, nil) = %v, want the accumulator unchanged (only `other` is expiry-filtered)", got)
+	if got := mergeRateWindow(expired, nil); got != expired {
+		t.Errorf("mergeRateWindow(expired-acc, nil) = %v, want the accumulator unchanged", got)
+	}
+
+	// Between two expired candidates, the less-overdue (later ResetsAt) one
+	// still wins - it is the newer generation, even though both are stale.
+	moreOverdue := &RateWindowState{UsedPercentage: 50, ResetsAt: now.Add(-2 * time.Hour)}
+	lessOverdue := &RateWindowState{UsedPercentage: 10, ResetsAt: now.Add(-time.Hour)}
+	if got := mergeRateWindow(moreOverdue, lessOverdue); got != lessOverdue {
+		t.Errorf("mergeRateWindow(more-overdue-acc, less-overdue-other) = %v, want the less-overdue (newer generation) candidate", got)
 	}
 
 	newer := active(0, 3*24*time.Hour)
 	older := active(90, 1*24*time.Hour)
-	if got := mergeRateWindow(older, newer, now); got != newer {
+	if got := mergeRateWindow(older, newer); got != newer {
 		t.Errorf("mergeRateWindow(older-acc, newer-other) = %v, want the later ResetsAt to win regardless of usage", got)
 	}
-	if got := mergeRateWindow(newer, older, now); got != newer {
+	if got := mergeRateWindow(newer, older); got != newer {
 		t.Errorf("mergeRateWindow(newer-acc, older-other) = %v, want the later ResetsAt to win", got)
 	}
 
 	resetAt := 5 * time.Hour
 	low := active(20, resetAt)
 	high := active(80, resetAt)
-	if got := mergeRateWindow(low, high, now); got != high {
+	if got := mergeRateWindow(low, high); got != high {
 		t.Errorf("mergeRateWindow(low-acc, high-other) = %v, want the higher UsedPercentage for the same window", got)
 	}
-	if got := mergeRateWindow(high, low, now); got != high {
+	if got := mergeRateWindow(high, low); got != high {
 		t.Errorf("mergeRateWindow(high-acc, low-other) = %v, want the accumulator to stay (tie/lower other doesn't win)", got)
 	}
 }
@@ -133,8 +134,13 @@ func TestApplyExtraUsageCache_Populates(t *testing.T) {
 // SevenDaySonnet are held to the same "an already-reset window is never
 // displayed" rule as every other rate window (via mergeRateWindow), even
 // though they have only this one source - regression test for an
-// inconsistency where they were assigned unconditionally instead.
-func TestApplyExtraUsageCache_DropsExpiredOpusSonnet(t *testing.T) {
+// inconsistency where they were assigned unconditionally instead of going
+// through the same mergeRateWindow every other rate window uses. Since
+// mergeRateWindow never hides an already-reset value, both still display -
+// this test's point is that Opus/Sonnet share the exact same rule as
+// FiveHour/SevenDay/each other, not that an expired one gets special-cased
+// away.
+func TestApplyExtraUsageCache_OpusSonnetShareOneRule(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 	now := time.Now()
 	env := NewAccountUsageEnvelope(now)
@@ -147,8 +153,8 @@ func TestApplyExtraUsageCache_DropsExpiredOpusSonnet(t *testing.T) {
 	var snap schema.StatusSnapshot
 	ApplyExtraUsageCache(AccountCacheKey, &snap, now)
 
-	if snap.Account.SevenDayOpus != nil {
-		t.Errorf("SevenDayOpus = %v, want nil (its window already reset)", snap.Account.SevenDayOpus)
+	if snap.Account.SevenDayOpus == nil || snap.Account.SevenDayOpus.UsedPercentage != 99 {
+		t.Errorf("SevenDayOpus = %v, want UsedPercentage 99 (an already-reset value is still the best known one, never hidden)", snap.Account.SevenDayOpus)
 	}
 	if snap.Account.SevenDaySonnet == nil || snap.Account.SevenDaySonnet.UsedPercentage != 3 {
 		t.Errorf("SevenDaySonnet = %v, want UsedPercentage 3 (still active)", snap.Account.SevenDaySonnet)
@@ -292,14 +298,14 @@ func TestFillAccountFromCache_RolledOverReportsSignal(t *testing.T) {
 	snap := schema.StatusSnapshot{}
 	rolledOver := FillAccountFromCache(AccountCacheKey, &snap, now)
 
-	if snap.Account.SevenDay != nil {
-		t.Errorf("snap.Account.SevenDay = %v, want nil (a reset window is never guessed at, only reported)", snap.Account.SevenDay)
+	if snap.Account.SevenDay == nil || snap.Account.SevenDay.UsedPercentage != 97 {
+		t.Errorf("snap.Account.SevenDay = %v, want the cached value (UsedPercentage 97) - the best known one, even though its own window has reset", snap.Account.SevenDay)
 	}
 	if !rolledOver {
-		t.Error("rolledOver = false, want true (cached window's ResetsAt has passed)")
+		t.Error("rolledOver = false, want true (the value being displayed is itself already past its own ResetsAt - fresher data is warranted)")
 	}
-	if snap.Account.Stale {
-		t.Error("snap.Account.Stale = true, want false (nothing was actually filled)")
+	if !snap.Account.Stale {
+		t.Error("snap.Account.Stale = false, want true (filled from cache)")
 	}
 }
 

@@ -52,9 +52,14 @@ const accountCacheTTL = 5 * time.Minute
 // look at a cached session snapshot, not rewrite the shared cache with
 // whatever stale windows that snapshot happened to carry - should call
 // FillAccountFromCache directly instead.
-func ApplyAccountCache(key string, snap *schema.StatusSnapshot, now time.Time) {
+//
+// rolledOver reports whether a cached window was found to have already
+// reset (see FillAccountFromCache) - the render path uses this to know for
+// certain that a fresh account-usage fetch is warranted right now, rather
+// than waiting for the worker's normal polling schedule.
+func ApplyAccountCache(key string, snap *schema.StatusSnapshot, now time.Time) (rolledOver bool) {
 	StoreAccountFromSnapshot(key, snap, now)
-	FillAccountFromCache(key, snap, now)
+	return FillAccountFromCache(key, snap, now)
 }
 
 // StoreAccountFromSnapshot writes any five-hour/seven-day window present on
@@ -92,81 +97,50 @@ func StoreAccountFromSnapshot(key string, snap *schema.StatusSnapshot, now time.
 // Cache errors are deliberately ignored: the shared cache is a best-effort
 // convenience, and a caller must never fail (or even go stale-empty) just
 // because the cache directory is unreadable.
-func FillAccountFromCache(key string, snap *schema.StatusSnapshot, now time.Time) {
+//
+// rolledOver reports whether a needed window was found in the cache but its
+// ResetsAt is no longer after now - i.e. it has definitely reset, so its
+// UsedPercentage is wrong and it is skipped rather than displayed (this
+// applies only to cache fills; windows arriving via stdin are Claude's own
+// ground truth and are always displayed as-is, however their ResetsAt
+// compares to now). Unlike an ordinary "still within its freshness TTL"
+// staleness, this is a known-for-certain fact, not a guess: the render path
+// uses it to make an account-usage refresh due immediately, instead of
+// guessing at the new window's shape (its length, its exact reset time) to
+// paper over the gap - see internal/cli's maybeStartRefresh.
+func FillAccountFromCache(key string, snap *schema.StatusSnapshot, now time.Time) (rolledOver bool) {
 	needFiveHour := snap.Account.FiveHour == nil
 	needSevenDay := snap.Account.SevenDay == nil
 	if !needFiveHour && !needSevenDay {
-		return
+		return false
 	}
 
 	cached, err := LoadAccount(key)
 	if err != nil || cached == nil {
-		return
+		return false
 	}
 
-	// A cached window whose ResetsAt is not after now has since reset. Right
-	// at that boundary, Claude Code's own stdin can lag by a few renders
-	// before it reports the new window, so falling back to the raw cached
-	// values would show a stale near-limit percentage, and the countdown
-	// widget would render a permanent "0m". Neither of those is as wrong as
-	// simply blanking the field, though: real post-reset usage restarts at
-	// 0%, so rolledOverWindow synthesizes that 0%-used state (with an
-	// estimated next reset) for a bounded grace period after the rollover,
-	// bridging the gap until stdin catches up. This applies only to cache
-	// fills - windows arriving via stdin are Claude's ground truth and are
-	// displayed as-is.
 	filled := false
 	if needFiveHour && cached.FiveHour != nil {
-		if w := rolledOverWindow(cached.FiveHour, fiveHourWindowLen, now); w != nil {
-			snap.Account.FiveHour = w
+		if cached.FiveHour.ResetsAt.After(now) {
+			snap.Account.FiveHour = ToSchemaRateWindow(cached.FiveHour)
 			filled = true
+		} else {
+			rolledOver = true
 		}
 	}
 	if needSevenDay && cached.SevenDay != nil {
-		if w := rolledOverWindow(cached.SevenDay, sevenDayWindowLen, now); w != nil {
-			snap.Account.SevenDay = w
+		if cached.SevenDay.ResetsAt.After(now) {
+			snap.Account.SevenDay = ToSchemaRateWindow(cached.SevenDay)
 			filled = true
+		} else {
+			rolledOver = true
 		}
 	}
 	if filled {
 		snap.Account.Stale = true
 	}
-}
-
-// Window lengths used by rolledOverWindow to estimate a rolled-over window's
-// next reset. Duplicated from internal/render's fiveHourWindow/sevenDayWindow
-// rather than imported, to keep this cache-only package free of a
-// render-package dependency.
-const (
-	fiveHourWindowLen = 5 * time.Hour
-	sevenDayWindowLen = 7 * 24 * time.Hour
-)
-
-// rolledOverWindow returns the schema.RateWindow to display for a cached
-// window that FillAccountFromCache is about to fill in.
-//
-// If the window is still active (ResetsAt after now), it is returned
-// unchanged - stale, but still Claude's own last-reported values.
-//
-// If it has just rolled over - ResetsAt no more than one windowLen in the
-// past - a fresh, 0%-used window is synthesized with an estimated next
-// reset (the old ResetsAt plus windowLen). Actual usage restarts at 0% the
-// moment a window resets, so this is a much closer approximation of the
-// truth than either the stale near-limit percentage or an absent field, for
-// however long it takes Claude Code's stdin to report the real new window.
-//
-// If the cache is older than that (e.g. statusloom hasn't run on this
-// machine in a while), the one-windowLen guess is unreliable, so nil is
-// returned and the caller leaves the field unset - matching prior behavior
-// for genuinely stale caches.
-func rolledOverWindow(w *RateWindowState, windowLen time.Duration, now time.Time) *schema.RateWindow {
-	if w.ResetsAt.After(now) {
-		return ToSchemaRateWindow(w)
-	}
-	if now.Sub(w.ResetsAt) > windowLen {
-		return nil
-	}
-	return &schema.RateWindow{UsedPercentage: 0, ResetsAt: w.ResetsAt.Add(windowLen)}
+	return rolledOver
 }
 
 // ApplyExtraUsageCache folds the OAuth-usage-API-sourced account cache
@@ -175,10 +149,18 @@ func rolledOverWindow(w *RateWindowState, windowLen time.Duration, now time.Time
 // background refresh worker (internal/cli's runRefresh -> usage.Fetch); most
 // callers only read it, keeping rendering network-free.
 //
-// Unlike ApplyAccountCache it never touches Account.FiveHour /
-// Account.SevenDay: those stay stdin/stdin-cache driven. It only supplies
-// the fields Claude Code's stdin never carries: extra-usage billing state
-// and the model-scoped (Opus/Sonnet) seven-day windows.
+// It only supplies the model-scoped (Opus/Sonnet) seven-day windows
+// unconditionally, since Claude Code's stdin never carries those at all.
+// Account.FiveHour/Account.SevenDay stay stdin/stdin-cache driven first
+// (ApplyAccountCache is Claude's own ground truth and runs before this), but
+// if a window is still missing after that - most often right after it has
+// just reset and the stdin-side cache was deliberately not used for it (see
+// FillAccountFromCache's rolledOver) - this fills it in from the same
+// OAuth-usage-API envelope, provided that copy is itself a genuinely still-
+// active window (ResetsAt after now). That is real, independently-fetched
+// data (the worker polls this API on its own schedule), not a guess, and it
+// is frequently already fresher than the stdin-side cache at the exact
+// moment of a reset, since the two sources refresh independently.
 //
 // ExtraUsage and the seven-day windows are deliberately loaded from two
 // independent sources with different lifetimes: the windows follow
@@ -205,6 +187,14 @@ func ApplyExtraUsageCache(key string, snap *schema.StatusSnapshot, now time.Time
 		}
 		if env.SevenDaySonnet != nil {
 			snap.Account.SevenDaySonnet = ToSchemaRateWindow(env.SevenDaySonnet)
+		}
+		if snap.Account.FiveHour == nil && env.FiveHour != nil && env.FiveHour.ResetsAt.After(now) {
+			snap.Account.FiveHour = ToSchemaRateWindow(env.FiveHour)
+			snap.Account.Stale = true
+		}
+		if snap.Account.SevenDay == nil && env.SevenDay != nil && env.SevenDay.ResetsAt.After(now) {
+			snap.Account.SevenDay = ToSchemaRateWindow(env.SevenDay)
+			snap.Account.Stale = true
 		}
 	}
 }

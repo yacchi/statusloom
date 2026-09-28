@@ -180,12 +180,13 @@ func TestFillAccountFromCache_DoesNotWrite(t *testing.T) {
 	}
 }
 
-// TestFillAccountFromCache_JustRolledOver asserts that when the cached
-// SevenDay window's ResetsAt has just passed (within one window length), the
-// field is filled with a synthesized 0%-used window instead of being left
-// blank - regression test for the weekly reset causing the widget to
-// disappear until Claude Code's stdin reported the new window.
-func TestFillAccountFromCache_JustRolledOver(t *testing.T) {
+// TestFillAccountFromCache_RolledOverReportsSignal asserts that when the
+// cached SevenDay window's ResetsAt has passed, FillAccountFromCache leaves
+// the field unset (no guessed replacement) but reports rolledOver=true, so
+// the caller (internal/cli's renderDocFromRaw) knows for certain a fresh
+// account-usage fetch is warranted right now rather than waiting on the
+// worker's normal schedule - see maybeStartRefresh's forceUsage.
+func TestFillAccountFromCache_RolledOverReportsSignal(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 	now := time.Now()
 	resetAt := now.Add(-10 * time.Minute)
@@ -201,49 +202,95 @@ func TestFillAccountFromCache_JustRolledOver(t *testing.T) {
 	}
 
 	snap := schema.StatusSnapshot{}
-	FillAccountFromCache(AccountCacheKey, &snap, now)
+	rolledOver := FillAccountFromCache(AccountCacheKey, &snap, now)
 
-	if snap.Account.SevenDay == nil {
-		t.Fatal("snap.Account.SevenDay = nil, want a synthesized rolled-over window, not blank")
+	if snap.Account.SevenDay != nil {
+		t.Errorf("snap.Account.SevenDay = %v, want nil (a reset window is never guessed at, only reported)", snap.Account.SevenDay)
 	}
-	if snap.Account.SevenDay.UsedPercentage != 0 {
-		t.Errorf("snap.Account.SevenDay.UsedPercentage = %v, want 0 (usage restarts at 0%% on reset)", snap.Account.SevenDay.UsedPercentage)
+	if !rolledOver {
+		t.Error("rolledOver = false, want true (cached window's ResetsAt has passed)")
 	}
-	wantReset := resetAt.Add(sevenDayWindowLen)
-	if !snap.Account.SevenDay.ResetsAt.Equal(wantReset) {
-		t.Errorf("snap.Account.SevenDay.ResetsAt = %v, want %v (old ResetsAt + window length)", snap.Account.SevenDay.ResetsAt, wantReset)
-	}
-	if !snap.Account.Stale {
-		t.Error("snap.Account.Stale = false, want true (filled from cache)")
+	if snap.Account.Stale {
+		t.Error("snap.Account.Stale = true, want false (nothing was actually filled)")
 	}
 }
 
-// TestFillAccountFromCache_LongStaleReset asserts that a cache whose window
-// reset more than one window length ago (e.g. statusloom hasn't run on this
-// machine in a while) is left unfilled rather than producing an unreliable
-// guess - preserves the pre-rollover-fix behavior for genuinely stale caches.
-func TestFillAccountFromCache_LongStaleReset(t *testing.T) {
+// TestFillAccountFromCache_StillActiveNoSignal asserts the common case: a
+// still-active cached window fills in normally and rolledOver stays false.
+func TestFillAccountFromCache_StillActiveNoSignal(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 	now := time.Now()
-	resetAt := now.Add(-8 * 24 * time.Hour) // more than one 7-day window ago
 
 	seeded := AccountUsage{
 		Source:     "claude-code-stdin",
-		ObservedAt: now.Add(-9 * 24 * time.Hour),
-		ExpiresAt:  now.Add(-8 * 24 * time.Hour).Add(4 * time.Minute),
-		SevenDay:   &RateWindowState{UsedPercentage: 40, ResetsAt: resetAt},
+		ObservedAt: now.Add(-time.Hour),
+		ExpiresAt:  now.Add(4 * time.Minute),
+		SevenDay:   &RateWindowState{UsedPercentage: 40, ResetsAt: now.Add(2 * 24 * time.Hour)},
 	}
 	if err := StoreAccount(AccountCacheKey, seeded); err != nil {
 		t.Fatalf("StoreAccount() error = %v", err)
 	}
 
 	snap := schema.StatusSnapshot{}
-	FillAccountFromCache(AccountCacheKey, &snap, now)
+	rolledOver := FillAccountFromCache(AccountCacheKey, &snap, now)
 
-	if snap.Account.SevenDay != nil {
-		t.Errorf("snap.Account.SevenDay = %v, want nil (cache too stale to guess a rollover)", snap.Account.SevenDay)
+	if snap.Account.SevenDay == nil || snap.Account.SevenDay.UsedPercentage != 40 {
+		t.Errorf("snap.Account.SevenDay = %v, want UsedPercentage 40 from cache", snap.Account.SevenDay)
 	}
-	if snap.Account.Stale {
-		t.Error("snap.Account.Stale = true, want false (nothing was filled)")
+	if rolledOver {
+		t.Error("rolledOver = true, want false (window is still active)")
+	}
+	if !snap.Account.Stale {
+		t.Error("snap.Account.Stale = false, want true (filled from cache)")
+	}
+}
+
+// TestApplyExtraUsageCache_FillsRolledOverSevenDayFromOAuthEnvelope asserts
+// that when Account.SevenDay is still nil after the stdin-side cache (e.g.
+// FillAccountFromCache just reported rolledOver because that cache had
+// reset), ApplyExtraUsageCache fills it from the independently-fetched
+// OAuth-usage-API envelope instead, provided that copy is itself still an
+// active window - real fetched data, not a guess.
+func TestApplyExtraUsageCache_FillsRolledOverSevenDayFromOAuthEnvelope(t *testing.T) {
+	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+	now := time.Now()
+
+	env := NewAccountUsageEnvelope(now)
+	env.SevenDay = &RateWindowState{UsedPercentage: 0, ResetsAt: now.Add(7 * 24 * time.Hour)}
+	if err := StoreAccountUsage(AccountCacheKey, env); err != nil {
+		t.Fatalf("StoreAccountUsage() error = %v", err)
+	}
+
+	snap := schema.StatusSnapshot{}
+	ApplyExtraUsageCache(AccountCacheKey, &snap, now)
+
+	if snap.Account.SevenDay == nil || snap.Account.SevenDay.UsedPercentage != 0 {
+		t.Errorf("snap.Account.SevenDay = %v, want UsedPercentage 0 from the OAuth envelope", snap.Account.SevenDay)
+	}
+	if !snap.Account.Stale {
+		t.Error("snap.Account.Stale = false, want true (filled from the OAuth-usage cache)")
+	}
+}
+
+// TestApplyExtraUsageCache_DoesNotOverwriteStdinSevenDay asserts
+// ApplyExtraUsageCache never overwrites a SevenDay value the caller already
+// resolved from stdin/its own cache - the OAuth envelope is only a
+// last-resort fallback.
+func TestApplyExtraUsageCache_DoesNotOverwriteStdinSevenDay(t *testing.T) {
+	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
+	now := time.Now()
+
+	env := NewAccountUsageEnvelope(now)
+	env.SevenDay = &RateWindowState{UsedPercentage: 0, ResetsAt: now.Add(7 * 24 * time.Hour)}
+	if err := StoreAccountUsage(AccountCacheKey, env); err != nil {
+		t.Fatalf("StoreAccountUsage() error = %v", err)
+	}
+
+	snap := schema.StatusSnapshot{}
+	snap.Account.SevenDay = &schema.RateWindow{UsedPercentage: 63, ResetsAt: now.Add(3 * 24 * time.Hour)}
+	ApplyExtraUsageCache(AccountCacheKey, &snap, now)
+
+	if snap.Account.SevenDay.UsedPercentage != 63 {
+		t.Errorf("snap.Account.SevenDay.UsedPercentage = %v, want unchanged (63)", snap.Account.SevenDay.UsedPercentage)
 	}
 }

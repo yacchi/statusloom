@@ -70,18 +70,28 @@ var startRefreshProcess = func(args ...string) error {
 // Two independent work items can make a refresh due:
 //   - transcript analytics for the current session, and
 //   - the account-usage OAuth poll (gated by the STATUSLOOM_NO_USAGE_API
-//     kill switch).
+//     kill switch), due either on its normal schedule (cache.AccountUsageDue)
+//     or immediately when forceUsage is set.
+//
+// forceUsage is set by the caller (renderDocFromRaw, via
+// cache.ApplyAccountCache's rolledOver return) when it has just found that a
+// five-hour/seven-day window has definitely reset with no fresh replacement
+// available - a known fact, not a mere schedule elapsing, so it bypasses
+// AccountUsageDue's normal cadence (and any accumulated failure backoff) to
+// get real data again as soon as possible instead of guessing at the new
+// window's shape. This is naturally rate-limited by AcquireRefreshLease's
+// refreshLeaseTTL (2 minutes), same as any other spawn here.
 //
 // A single lease covers both: the spawned worker re-checks each item's
 // due-ness itself, so passing an empty session-id/transcript (usage-only
 // spawn) is fine.
-func maybeStartRefresh(raw []byte, now time.Time) {
+func maybeStartRefresh(raw []byte, now time.Time, forceUsage bool) {
 	var id refreshIdentity
 	if json.Unmarshal(raw, &id) != nil {
 		return
 	}
 	transcriptDue := id.SessionID != "" && id.Transcript != "" && cache.RefreshDue(id.SessionID, now)
-	usageDue := usageAPIEnabled() && cache.AccountUsageDue(now)
+	usageDue := usageAPIEnabled() && (forceUsage || cache.AccountUsageDue(now))
 	if !transcriptDue && !usageDue {
 		return
 	}
@@ -90,7 +100,11 @@ func maybeStartRefresh(raw []byte, now time.Time) {
 	if err != nil || !ok {
 		return
 	}
-	if startRefreshProcess("refresh", "--once", "--session-id", id.SessionID, "--transcript", id.Transcript, "--lease-id", leaseID, "--cc-version", id.Version) != nil {
+	args := []string{"refresh", "--once", "--session-id", id.SessionID, "--transcript", id.Transcript, "--lease-id", leaseID, "--cc-version", id.Version}
+	if forceUsage {
+		args = append(args, "--force-usage")
+	}
+	if startRefreshProcess(args...) != nil {
 		cache.ReleaseRefreshLease(leaseID)
 	}
 }
@@ -111,6 +125,7 @@ func runRefresh(args []string, stdout, stderr io.Writer) int {
 	transcript := fs.String("transcript", "", "Claude transcript JSONL path")
 	leaseID := fs.String("lease-id", "", "internal lease handoff")
 	ccVersion := fs.String("cc-version", "", "Claude Code version for the usage API User-Agent")
+	forceUsage := fs.Bool("force-usage", false, "bypass the account-usage poll's normal schedule (set by the caller when a window is known to have just reset)")
 	// Note: session-id/transcript may legitimately be empty (a usage-only
 	// spawn). Only --once and a clean arg list are hard requirements.
 	if fs.Parse(args) != nil || !*once || fs.NArg() != 0 {
@@ -144,8 +159,10 @@ func runRefresh(args []string, stdout, stderr io.Writer) int {
 		_ = cache.StoreRefreshManifest(m)
 	}
 
-	// Account-usage poll: gated by the kill switch and its own schedule.
-	if usageAPIEnabled() && cache.AccountUsageDue(now) {
+	// Account-usage poll: gated by the kill switch and its own schedule,
+	// unless the caller already determined a fetch is warranted right now
+	// (--force-usage - see maybeStartRefresh).
+	if usageAPIEnabled() && (*forceUsage || cache.AccountUsageDue(now)) {
 		refreshAccountUsage(now, *ccVersion)
 	}
 	return 0

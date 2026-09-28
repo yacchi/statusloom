@@ -92,12 +92,12 @@ func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool strin
 	accountCacheKey := cache.ResolveAccountCacheKey(profileProvider())
 
 	now := time.Now()
-	cache.ApplyAccountCache(accountCacheKey, &snap, now)
+	rolledOver := cache.ApplyAccountCache(accountCacheKey, &snap, now)
 	cache.ApplyExtraUsageCache(accountCacheKey, &snap, now)
 	applyTranscriptCache(&snap, now)
 	applyGitStatus(&snap, config.DocumentGitConfig(doc), now)
 	storeSessionSnapshot(&snap, now)
-	maybeStartRefresh(raw, now)
+	maybeStartRefresh(raw, now, rolledOver)
 
 	width := parseWidth(getenv("COLUMNS"))
 	out := render.RenderDocumentString(snap, doc, render.Options{

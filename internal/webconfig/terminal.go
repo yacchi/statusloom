@@ -261,12 +261,31 @@ func (ts *terminalSession) close() {
 				_, _ = ts.cmd.Process.Wait()
 				close(done)
 			}()
+			// Keep the PTY master drained from SIGTERM until the child is
+			// reaped. An exiting process whose tty still holds unread output
+			// waits for that output to drain (macOS), so an undrained master
+			// wedges the child even after SIGKILL. The drainer exits on the
+			// first read error (child gone and tty empty, or master closed).
+			go func() {
+				buf := make([]byte, terminalReadBuffer)
+				for {
+					if _, err := ts.pty.Read(buf); err != nil {
+						return
+					}
+				}
+			}()
 			_ = ts.cmd.Process.Signal(syscall.SIGTERM)
 			select {
 			case <-done:
 			case <-time.After(terminalKillGrace):
 				_ = ts.cmd.Process.Kill()
-				<-done
+				// Bounded: a child that still has not been reaped after SIGKILL
+				// is abandoned (its waiter goroutine lingers) so close always
+				// returns.
+				select {
+				case <-done:
+				case <-time.After(terminalKillGrace):
+				}
 			}
 		}
 

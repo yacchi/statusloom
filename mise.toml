@@ -1,5 +1,5 @@
 [tools]
-go = "1.27.1"
+go = "latest"
 node = "22"
 pnpm = "10"
 goreleaser = "latest"

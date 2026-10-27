@@ -7,7 +7,7 @@ Claude Code等コーディングエージェント向けステータスライン
 
 ## 開発環境・コマンド
 
-- ツールチェーンは `mise.toml` でpin（Go 1.26.5 / Node 22 / pnpm 10）。`mise install` を先に実行
+- ツールチェーンは `mise.toml` で管理（Goは常に最新＝`latest`、govulncheckが標準ライブラリの脆弱性で落ちるため古いGoに固定しない / Node 22 / pnpm 10）。`mise install` を先に実行
 - Go標準ライブラリのみ使用（例外: webconfigのWebSocketに限り `github.com/coder/websocket`、webconfigの埋め込み端末に限り `github.com/creack/pty` を許可）。フロントの外部UI依存はdnd-kitのみ許可
 - モノレポ構成: `cmd/statusloom`, `internal/{adapters,cache,claudeaccount,claudecfg,cli,config,detect,gitstatus,render,samples,schema,webconfig}`, `apps/configurator`（React設定UI）, `packages/ansi`（ANSI→span共有パッケージ）。詳細は計画書 4章
 - 動作確認:

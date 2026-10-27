@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -34,18 +36,68 @@ func (e unsupportedToolError) Error() string {
 	return fmt.Sprintf("tool %q not implemented yet", e.tool)
 }
 
+// runRender implements `statusloom render [--tool ID] [--draft]`. Arguments
+// and the stdin terminal check are validated before stdin is read.
+func runRender(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
+	fs := flag.NewFlagSet("render", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	tool := fs.String("tool", "", "explicit tool id (e.g. claude-code); detected from stdin when omitted")
+	draft := fs.Bool("draft", false, "render the tool's draft working node instead of the saved document")
+	var overrides metricOverrides
+	fs.Var(&overrides, "set", setFlagUsage)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if rejectInvocation("render", fs, stdin, stderr) {
+		return 2
+	}
+	return runRenderPipeline(stdin, stdout, stderr, getenv, *tool, *draft, &overrides)
+}
+
+// setFlagUsage is the shared usage text of the `--set` flag on `claude` and
+// `render`.
+const setFlagUsage = "override a metric for this render (repeatable), e.g. --set extra-usage-limit-usd=50"
+
+// rejectInvocation reports whether a `claude` or `render` invocation must be
+// refused before stdin is read. It refuses a leftover positional argument and
+// an interactive terminal on stdin (nothing is piped in, so the read would
+// block). On refusal it writes the reason to stderr and returns true.
+func rejectInvocation(cmd string, fs *flag.FlagSet, stdin io.Reader, stderr io.Writer) bool {
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "statusloom %s: unexpected argument %q\n", cmd, fs.Arg(0))
+		return true
+	}
+	if stdinIsTerminal(stdin) {
+		fmt.Fprintf(stderr, "statusloom %s: stdin is a terminal; pipe a Claude Code statusline JSON payload (e.g. statusloom %s < sample.json)\n", cmd, cmd)
+		return true
+	}
+	return false
+}
+
+// stdinIsTerminal reports whether r is an *os.File attached to a character
+// device, i.e. an interactive terminal. Pipes, regular files, and any
+// non-file reader are not terminals.
+func stdinIsTerminal(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
 // runRenderPipeline implements the render pipeline described in plan
 // section 3.1/5: read stdin, detect the tool, decode, load config, fold in
 // the account/repo caches, and render. explicitTool is "" for `statusloom
-// render` without --tool, or a fixed tool id for dedicated subcommands
-// (e.g. "claude-code" for `statusloom claude`).
-func runRenderPipeline(stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, explicitTool string) int {
+// render` without --tool, or a fixed tool id for dedicated subcommands.
+// draft selects the tool's draft working node (see renderDocFromRaw).
+func runRenderPipeline(stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string, explicitTool string, draft bool, overrides *metricOverrides) int {
 	raw, err := io.ReadAll(io.LimitReader(stdin, maxStdinBytes))
 	if err != nil {
 		return fail(stderr, fmt.Errorf("reading stdin: %w", err))
 	}
 
-	lines, err := renderDocFromRaw(raw, getenv, explicitTool, stderr, false)
+	lines, err := renderDocFromRaw(raw, getenv, explicitTool, stderr, draft, overrides, draft || overrides.active())
 	return writeRenderResult(stdout, stderr, lines, nil, err)
 }
 
@@ -61,9 +113,20 @@ func runRenderPipeline(stdin io.Reader, stdout, stderr io.Writer, getenv func(st
 // is absent or invalid. The saved-document path (draft=false) keeps
 // `statusloom claude` output byte-identical regardless of caller.
 //
+// overrides (`--set`, nil for none) are applied after every cache merge and
+// cache write of the pass, so they win over cached/stdin values and are never
+// persisted; a render with overrides also never spawns the refresh
+// subprocess, since it is a manual preview rather than a live status line.
+//
+// preview marks a manual preview (`--draft` / `--set` with a sample payload):
+// the sample must not pollute the real shared caches, so the account cache is
+// only read (FillAccountFromCache), the session snapshot is not stored, and
+// the refresh subprocess is never spawned. Live sessions (including
+// `monitor --draft`) pass false and keep feeding the caches.
+//
 // It performs no network I/O (only the local account/repo/session caches and
 // git status collection), keeping the render path network-free.
-func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool string, stderr io.Writer, draft bool) ([]string, error) {
+func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool string, stderr io.Writer, draft bool, overrides *metricOverrides, preview bool) ([]string, error) {
 	toolID, err := detect.Detect(explicitTool, raw)
 	if err != nil {
 		return nil, err
@@ -92,19 +155,32 @@ func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool strin
 	accountCacheKey := cache.ResolveAccountCacheKey(profileProvider())
 
 	now := time.Now()
-	rolledOver := cache.ApplyAccountCache(accountCacheKey, &snap, now)
+	var rolledOver bool
+	if preview {
+		rolledOver = cache.FillAccountFromCache(accountCacheKey, &snap, now)
+	} else {
+		rolledOver = cache.ApplyAccountCache(accountCacheKey, &snap, now)
+	}
 	cache.ApplyExtraUsageCache(accountCacheKey, &snap, now)
 	applyTranscriptCache(&snap, now)
 	applyGitStatus(&snap, config.DocumentGitConfig(doc), now)
-	storeSessionSnapshot(&snap, now)
-	maybeStartRefresh(raw, now, rolledOver)
+	if !preview {
+		storeSessionSnapshot(&snap, now)
+	}
+	profile := profileProvider
+	if overrides.active() {
+		overrides.applySnapshot(&snap)
+		profile = overrides.wrapProfile(profileProvider)
+	} else if !preview {
+		maybeStartRefresh(raw, now, rolledOver)
+	}
 
 	width := parseWidth(getenv("COLUMNS"))
 	out := render.RenderDocumentString(snap, doc, render.Options{
 		Width:   width,
 		Now:     now,
 		Env:     getenv,
-		Profile: profileProvider,
+		Profile: profile,
 	})
 	if out == "" {
 		return nil, nil
@@ -150,22 +226,39 @@ func resolveRenderDocument(tool string, draft bool, stderr io.Writer) *dsl.Docum
 // loadDraftDocument parses and validates the tool's draft working node
 // (config.LoadDraftDocument). ok is true only when a draft is present and
 // parses without error-severity diagnostics; otherwise the caller falls back
-// to the saved document. Diagnostics (and a fallback notice, only when a
-// draft was actually present but invalid) are written to stderr.
+// to the saved document. Diagnostics are written to stderr, and every
+// fallback (absent, unreadable, or invalid draft) emits exactly one notice
+// line so a requested --draft never silently renders the saved document.
 func loadDraftDocument(tool string, stderr io.Writer) (*dsl.Document, bool) {
 	if !config.DraftExists(tool) {
+		fmt.Fprintf(stderr, "statusloom: %s draft absent; rendering the saved document\n", tool)
 		return nil, false
 	}
 	doc, diags, ok, err := config.LoadDraftDocument(tool)
 	if err != nil {
+		fmt.Fprintf(stderr, "statusloom: %s draft unreadable (%v); rendering the saved document\n", tool, err)
+		return nil, false
+	}
+	if !ok {
+		fmt.Fprintf(stderr, "statusloom: %s draft invalid%s; rendering the saved document\n", tool, draftDiagnosticSummary(diags))
 		return nil, false
 	}
 	writeDiagnostics(stderr, tool+" draft", diags)
-	if !ok {
-		fmt.Fprintf(stderr, "statusloom: %s draft invalid; rendering the saved document\n", tool)
-		return nil, false
-	}
 	return doc, true
+}
+
+// draftDiagnosticSummary folds an invalid draft's diagnostics into a single
+// parenthesized suffix, so the fallback notice stays one stderr line. It
+// returns "" when there are no diagnostics.
+func draftDiagnosticSummary(diags []dsl.Diagnostic) string {
+	if len(diags) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(diags))
+	for _, d := range diags {
+		parts = append(parts, fmt.Sprintf("%s: %s", d.Severity, d.Message))
+	}
+	return " (" + strings.Join(parts, "; ") + ")"
 }
 
 // writeDiagnostics prints DSL parse/validation diagnostics to stderr, one per

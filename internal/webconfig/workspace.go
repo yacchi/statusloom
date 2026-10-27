@@ -104,6 +104,17 @@ Render the status line for a representative payload without any live session:
 
     statusloom claude < sample.json
 
+To preview the draft you are editing instead of the saved document, add ` + "`--draft`" + `
+(falls back to the saved document if the draft is missing or invalid):
+
+    statusloom claude --draft < sample.json
+
+Account-derived values (extra-usage, five-hour/seven-day percent, account-*)
+are not in sample.json; use ` + "`--set METRIC=VALUE`" + ` (repeatable, never
+persisted) to exercise when/color-rule branches:
+
+    statusloom claude --draft --set extra-usage-limit-usd=50 --set extra-usage-percent=72 < sample.json
+
 The agent panel row has the same kind of preview, but built-in: no JSON file
 is needed since ` + "`--preview`" + ` renders a bundled representative
 tasks[] payload:
@@ -127,8 +138,14 @@ line tool (for example ccstatusline, whose config lives at
 2. Express the same layout in statusloom markup (see the DSL summary below),
    mapping each item to a ` + "`<field>`" + ` and reproducing separators, labels,
    colors, and conditional visibility.
-3. Push it to the draft working node with ` + "`statusloom draft push`" + ` and preview it
-   with ` + "`statusloom claude < sample.json`" + ` (or the ` + "`--draft`" + ` monitor render).
+3. Push it to the draft working node with ` + "`statusloom draft push`" + ` and preview it:
+
+    statusloom draft push
+    statusloom claude --draft < sample.json
+
+   Account-derived values (extra-usage, five-hour/seven-day percent, account-*)
+   are not in sample.json; use ` + "`--set`" + ` to exercise those when/color-rule
+   branches, e.g. ` + "`statusloom claude --draft --set extra-usage-limit-usd=50 --set extra-usage-percent=72 < sample.json`" + `.
 4. Compare against the original and iterate until it matches, then let the user
    Save it from the web UI.
 

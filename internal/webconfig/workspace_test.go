@@ -110,6 +110,7 @@ func TestProvision_WritesWorkspaceDocs(t *testing.T) {
 	for _, want := range []string{
 		"statusloom draft pull", "statusloom draft push", "statusloom claude < sample.json", "<statusloom",
 		"<subagent>", "subagentStatusLine", "statusloom claude-subagent --draft",
+		"statusloom claude --draft < sample.json",
 	} {
 		if !strings.Contains(string(claudeMD), want) {
 			t.Errorf("CLAUDE.md missing %q", want)

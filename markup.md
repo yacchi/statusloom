@@ -840,6 +840,18 @@ Claude Codeのpay-as-you-go overage（サブスクリプション上限超過後
 
 `extra-usage-cost`は、usage creditsを有効化しかつサブスクリプション上限を超過した場合のみ値を持つ（`optional="extra-usage-cost"`で自動非表示になる）。上限内のユーザーでは常に空。`session-cost`とは独立（`session-cost`はセッション単位の見積り、`extra-usage-cost`は課金期間単位のmetered実費）。
 
+extra-usage の利用枠（allocation）が割り当てられていないアカウントでは、`extra-usage-limit`は空ではなく`$0.00`（`extra-usage-limit-usd` = 0）になり、`extra-usage-percent`は空になる。そのため`optional="extra-usage-limit"`では非表示にならず、`Extra: $0.00 ()`のような出力になる。枠の有無で表示を分けるには`when`で数値を判定する。
+
+```xml
+<text dim="true" when="extra-usage-limit-usd eq 0">Extra: none</text>
+<span prefix="Extra: " when="extra-usage-limit-usd gt 0">
+    <field name="extra-usage-limit"/>
+    <field name="extra-usage-percent" prefix=" (" suffix=")" optional="extra-usage-percent"/>
+</span>
+```
+
+この分岐は `statusloom claude --draft --set extra-usage-limit-usd=50 < sample.json` でプレビューできる（`--set`は1回の描画にだけ値を上書きし保存しない。アカウント由来の値は`sample.json`に含まれないため）。
+
 これらのfieldは`internal/dsl`レジストリ上でcapability `oauth-usage` を持ち（→「Capability」参照）、認証済みusage APIに到達できない環境では値を返さない。
 
 #### アカウントfield / `env` field

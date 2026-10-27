@@ -51,7 +51,7 @@ func runMonitor(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv
 	// working node, falling back to the saved document when the draft is
 	// absent or invalid. Without --draft, output is byte-identical to
 	// `statusloom claude`.
-	lines, rerr := renderDocFromRaw(raw, getenv, "claude-code", stderr, *draft)
+	lines, rerr := renderDocFromRaw(raw, getenv, "claude-code", stderr, *draft, nil, false)
 	code := writeRenderResult(stdout, stderr, lines, nil, rerr)
 
 	// Best-effort emit of the raw payload; failures are intentionally ignored

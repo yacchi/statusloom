@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -83,16 +84,35 @@ func hasEnvWithPrefix(prefix string) bool {
 // that tool's own integration, and configuring the tool's script instead
 // silently drops statusloom's own status line - only one command can
 // occupy the slot.
-func runClaude(stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
+//
+// --draft renders the web-configurator's draft working node instead of the
+// saved document. A manual preview with --draft is never forwarded to the
+// hooks, so sample payloads do not leak to third-party tools. The same holds
+// for a --set preview.
+func runClaude(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
+	fs := flag.NewFlagSet("claude", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	draft := fs.Bool("draft", false, "render the claude-code document's draft working node instead of the saved document")
+	var overrides metricOverrides
+	fs.Var(&overrides, "set", setFlagUsage)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if rejectInvocation("claude", fs, stdin, stderr) {
+		return 2
+	}
+
 	raw, err := io.ReadAll(io.LimitReader(stdin, maxStdinBytes))
 	if err != nil {
 		return fail(stderr, fmt.Errorf("reading stdin: %w", err))
 	}
 
-	lines, rerr := renderDocFromRaw(raw, getenv, "claude-code", stderr, false)
+	lines, rerr := renderDocFromRaw(raw, getenv, "claude-code", stderr, *draft, &overrides, *draft || overrides.active())
 	code := writeRenderResult(stdout, stderr, lines, nil, rerr)
 
-	forwardToKnownStatusLineHooks(raw, getenv)
+	if !*draft && !overrides.active() {
+		forwardToKnownStatusLineHooks(raw, getenv)
+	}
 
 	return code
 }

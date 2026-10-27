@@ -28,7 +28,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, version strin
 	case "claude":
 		// Explicit tool: skip stdin sniffing entirely. Also forwards to
 		// Orca's own statusline hook, if present (see runClaude).
-		return runClaude(stdin, stdout, stderr, getenv)
+		return runClaude(args[1:], stdin, stdout, stderr, getenv)
 
 	case "claude-subagent":
 		// Claude Code's subagentStatusLine: a distinct stdin shape (a
@@ -44,13 +44,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, version strin
 		return runRefresh(args[1:], stdout, stderr)
 
 	case "render":
-		fs := flag.NewFlagSet("render", flag.ContinueOnError)
-		fs.SetOutput(stderr)
-		tool := fs.String("tool", "", "explicit tool id (e.g. claude-code); detected from stdin when omitted")
-		if err := fs.Parse(args[1:]); err != nil {
-			return 2
-		}
-		return runRenderPipeline(stdin, stdout, stderr, getenv, *tool)
+		return runRender(args[1:], stdin, stdout, stderr, getenv)
 
 	case "config":
 		fs := flag.NewFlagSet("config", flag.ContinueOnError)
@@ -96,9 +90,35 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, version strin
 // runConfig starts the local configurator web server and blocks until it
 // shuts down, either via POST /api/shutdown, its idle timeout, or the
 // process receiving SIGINT/SIGTERM.
+//
+// The first SIGINT/SIGTERM cancels the context for a graceful shutdown. Any
+// later one, while still running, forces the process to exit with status
+// 130, so a hung shutdown can never leave Ctrl-C without effect. This also
+// holds when the shutdown was started by POST /api/shutdown.
 func runConfig(stdout, stderr io.Writer, port int, openBrowser bool) int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-sigs:
+		case <-done:
+			return
+		}
+		cancel()
+		select {
+		case <-sigs:
+			fmt.Fprintln(stderr, "statusloom: forced exit")
+			os.Exit(130)
+		case <-done:
+		}
+	}()
 
 	if err := webconfig.Serve(ctx, webconfig.Options{
 		Port:        port,
@@ -116,11 +136,11 @@ func printUsage(w io.Writer) {
 	fmt.Fprint(w, `statusloom - status line toolkit for coding agents
 
 Usage:
-  statusloom claude               render the status line for Claude Code
+  statusloom claude [--draft] [--set METRIC=VALUE]...   render the status line for Claude Code; --draft renders the web-configurator's draft instead of the saved document; --set overrides a metric for this render only (preview)
   statusloom claude-subagent [--draft] [--preview]   render Claude Code's subagentStatusLine (one JSON line per task); --preview uses a built-in payload instead of stdin
   statusloom monitor --emit-url URL --token TOK   render like claude, forwarding the payload to a config server for live preview
   statusloom refresh --once --session-id ID --transcript PATH   refresh transcript-derived cache data
-  statusloom render [--tool ID]   render the status line, detecting the tool from stdin if --tool is omitted
+  statusloom render [--tool ID] [--draft] [--set METRIC=VALUE]...   render the status line, detecting the tool from stdin if --tool is omitted; --draft renders the web-configurator's draft instead of the saved document
   statusloom draft pull|push [file]   pull the web-configurator's draft to a file, or push an edited file back
   statusloom history list|show <id>|diff <id> [<id2>]|restore <id> [--force] [--tool ID]   view or restore the config revision history; restore refuses (unless --force) to discard an unsaved draft that differs from current
   statusloom import [--tool ID] <file>   import a *.sloom.md Markdown exchange document (or - for stdin) as a new revision

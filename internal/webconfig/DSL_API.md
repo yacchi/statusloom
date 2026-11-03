@@ -64,7 +64,7 @@ per responsive in the response's `selectedVariants` map — see
 
 - Attribute keys are the DSL attribute names verbatim (`color`, `bold`,
   `padding`, `padding-left`, `prefix`, `role`, `name`, `format`, `precision`,
-  `currency`, `raw`, `hyperlink`, `min-width`, `align`, `optional`, `when`,
+  `currency`, `raw`, `hyperlink`, `min-width`, `align`, `path`, `optional`, `when`,
   `size`, `color-level`, `compact-threshold`, ...).
 - **Omitted attributes are absent from the object** (not `null`/`""`). A bool
   attribute present as `false` means an explicit `false` (e.g. `bold="false"`
@@ -90,7 +90,7 @@ per responsive in the response's `selectedVariants` map — see
 | `line` | *common* | `children[]` |
 | `span` | *common* | `children[]`, `colorRules[]?` |
 | `text` | `role`, `value`, *common* | `colorRules[]?` |
-| `field` | `name`, `format`, `precision`, `currency`, `raw`, `hyperlink`, `min-width`, `align`, `var`, `unmask`, `source`, `select`, `fallback`, *common* | `colorRules[]?` |
+| `field` | `name`, `format`, `precision`, `currency`, `raw`, `hyperlink`, `min-width`, `align`, `path`, `var`, `unmask`, `source`, `select`, `fallback`, *common* | `colorRules[]?` |
 | `flex` | `size` | — |
 | `raw-text` | `value` | — |
 | `comment` | `value` | — |
@@ -301,7 +301,20 @@ is set. Only the refresh worker and the explicit source test endpoint
 (`POST /api/sources/{id}/test`, see Sources API) fetch.
 
 ### `GET /api/dsl/fields?tool=claude-code`
-→ `200 { "fields": [ { "name", "displayName", "descriptions": {"en","ja"}, "category", "linkable"?, "requiresVar"?, "requiresSource"?, "selfMetric"?, "formats"?, "capability"?, "preview": {"text","ansi"} } ] }`
+→ `200 { "fields": [ { "name", "displayName", "descriptions": {"en","ja"}, "category", "linkable"?, "requiresVar"?, "requiresSource"?, "selfMetric"?, "formats"?, "pathStyles"?, "pathDefault"?, "capability"?, "preview": {"text","ansi"} } ] }`
+
+`pathStyles` (string array, omitted when absent) lists the values the `path`
+attribute accepts on this field: `base`, `home`, or `full` for the directory
+fields `current-directory`, `project-directory`, and `git-root`. A field without
+it takes no `path` attribute. `pathDefault` is the value used when `path` is
+unset (`base` for `current-directory`, `full` for the other two) and is always
+present together with `pathStyles`. The properties panel shows a path select
+only for a field that has `pathStyles`, and it writes the `path` attribute only
+when the value differs from `pathDefault`.
+
+A `<field>` AST node carries `"path"` (string) when the attribute is set. A
+`path` on a field without `pathStyles`, or a value outside them, is a
+validation error.
 
 `requiresVar` marks a field parameterized by a `var` attribute (`env` is the
 only one today): the properties panel must render a variable-name input for it,

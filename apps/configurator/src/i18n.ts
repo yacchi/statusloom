@@ -126,6 +126,8 @@ const EN = {
     helpColorRules:
         "Recolor this node by condition (self = its own metric). Rules are checked top to bottom and the first match wins; the Color above is the fallback when none match.",
     helpFormat: "Formatter applied to the field value.",
+    helpPath:
+        "How a directory is shown. base: last element only. home: absolute path with the home directory as ~. full: absolute path.",
     helpPrecision: 'Formatter precision (digits, or "adaptive" for currency).',
     helpRole:
         'Marks this text as a collapsing segment boundary. In Powerline output, an empty separator becomes the transition between adjacent segments; explicit text is preserved.',
@@ -301,6 +303,8 @@ const JA: Record<MessageKey, string> = {
     helpColorRules:
         "条件に応じて色を変えます（self = このノード自身のメトリック）。ルールは上から順に評価され、最初に一致したものが優先されます。どれも一致しない場合は上の Color がフォールバックになります。",
     helpFormat: "フィールド値に適用するフォーマッタです。",
+    helpPath:
+        "ディレクトリの表示方法です。base: 最後の要素のみ。home: ホームディレクトリを ~ にした絶対パス。full: 絶対パス。",
     helpPrecision: '桁数などのフォーマッタ精度です（currency では "adaptive" も指定可）。',
     helpRole:
         '自動折りたたみされるセグメント境界として扱います。Powerline出力では空のseparatorが隣接セグメント間の遷移になり、文字を指定した場合はその文字を維持します。',

@@ -697,11 +697,15 @@ type dslFieldEntry struct {
 	RequiresVar  bool            `json:"requiresVar,omitempty"`
 	// RequiresSource is true for the `source` field (dsl.FieldDef.RequiresSource);
 	// the properties panel shows source/select/fallback inputs for it.
-	RequiresSource bool          `json:"requiresSource,omitempty"`
-	SelfMetric     string        `json:"selfMetric,omitempty"`
-	Formats        []string      `json:"formats,omitempty"`
-	Capability     string        `json:"capability,omitempty"`
-	Preview        widgetPreview `json:"preview"`
+	RequiresSource bool     `json:"requiresSource,omitempty"`
+	SelfMetric     string   `json:"selfMetric,omitempty"`
+	Formats        []string `json:"formats,omitempty"`
+	// PathStyles lists the values the `path` attribute accepts (absent = the
+	// field takes no path attribute); PathDefault is the one used when it is unset.
+	PathStyles  []string      `json:"pathStyles,omitempty"`
+	PathDefault string        `json:"pathDefault,omitempty"`
+	Capability  string        `json:"capability,omitempty"`
+	Preview     widgetPreview `json:"preview"`
 }
 
 // handleDSLFields handles GET /api/dsl/fields?tool=: the field catalog for the
@@ -733,6 +737,8 @@ func (s *server) handleDSLFields(w http.ResponseWriter, r *http.Request) {
 			RequiresSource: f.RequiresSource,
 			SelfMetric:     f.SelfMetric,
 			Formats:        f.Formats,
+			PathStyles:     f.PathStyles,
+			PathDefault:    f.PathDefault,
 			Capability:     f.Capability,
 			Preview:        previewFor(tool, f.Name, snap, now),
 		})

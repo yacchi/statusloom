@@ -650,6 +650,8 @@ func (p *parser) parseField(se xml.StartElement, start int) *FieldNode {
 			n.MinWidth = p.parsePositiveIntAttr("min-width", a.Value, tagRange)
 		case "align":
 			n.Align = a.Value
+		case "path":
+			n.Path = a.Value
 		default:
 			if !cb.consume(p, a, tagRange) {
 				p.errf(tagRange, "unknown attribute %q on <field>", a.Name.Local)

@@ -63,6 +63,12 @@ type FieldDef struct {
 	// (schema.SessionAnalytics), which only the background refresh worker computes.
 	// The render path schedules transcript refreshes only for documents that use one.
 	Transcript bool
+	// PathStyles lists the values the `path` attribute accepts on this field
+	// (markup.md "path"). Empty means the field takes no path attribute at all.
+	PathStyles []string
+	// PathDefault is the path style used when the `path` attribute is absent.
+	// It is one of PathStyles and is empty exactly when PathStyles is.
+	PathDefault string
 }
 
 // MetricDef describes one named metric usable in `when`/`color-rule`
@@ -94,6 +100,18 @@ type MetricDef struct {
 	// Transcript marks a metric derived from schema.SessionAnalytics (see FieldDef.Transcript).
 	Transcript bool
 }
+
+// Path styles accepted by the `path` attribute on a directory field (markup.md
+// "path"). base is the last path element, home is the absolute path with a
+// leading $HOME shown as ~, full is the absolute path unchanged.
+const (
+	PathBase = "base"
+	PathHome = "home"
+	PathFull = "full"
+)
+
+// pathStylesDirectory is the PathStyles of every field that names a directory.
+var pathStylesDirectory = []string{PathBase, PathHome, PathFull}
 
 // SourceSelfMetric is the SelfMetric of the "source" field. It is NOT a registered
 // metric: the renderer resolves `self` on a source field to the field's own value
@@ -136,8 +154,8 @@ var claudeCodeFields = []FieldDef{
 	{Name: "output-style", Category: "claude", DisplayName: "Output Style", Formats: []string{"enum"}, Descriptions: Descriptions{EN: "The active Claude Code output style.", JA: "現在のClaude Code出力スタイルです。"}},
 	{Name: "session-id", Category: "claude", DisplayName: "Session ID", Descriptions: Descriptions{EN: "The current session identifier.", JA: "現在のセッションIDです。"}},
 	{Name: "thinking-enabled", Category: "claude", DisplayName: "Thinking Enabled", SelfMetric: "thinking-enabled", Formats: []string{"enum"}, Descriptions: Descriptions{EN: "Whether extended thinking is enabled.", JA: "拡張思考が有効かどうかです。"}},
-	{Name: "project-directory", Category: "common", DisplayName: "Project Directory", Descriptions: Descriptions{EN: "The absolute project directory path.", JA: "プロジェクトディレクトリの絶対パスです。"}},
-	{Name: "git-root", Category: "common", DisplayName: "Git Root", Descriptions: Descriptions{EN: "The git repository root path.", JA: "gitリポジトリのルートパスです。"}},
+	{Name: "project-directory", Category: "common", DisplayName: "Project Directory", PathStyles: pathStylesDirectory, PathDefault: PathFull, Descriptions: Descriptions{EN: "The absolute project directory path.", JA: "プロジェクトディレクトリの絶対パスです。"}},
+	{Name: "git-root", Category: "common", DisplayName: "Git Root", PathStyles: pathStylesDirectory, PathDefault: PathFull, Descriptions: Descriptions{EN: "The git repository root path.", JA: "gitリポジトリのルートパスです。"}},
 	{
 		Name: "git-branch", Category: "common", DisplayName: "Git Branch",
 		Descriptions: Descriptions{EN: "The current git branch name.", JA: "現在のgitブランチ名です。"},
@@ -152,6 +170,7 @@ var claudeCodeFields = []FieldDef{
 	},
 	{
 		Name: "current-directory", Category: "common", DisplayName: "Current Directory",
+		PathStyles: pathStylesDirectory, PathDefault: PathBase,
 		Descriptions: Descriptions{EN: "The base name of the current working directory.", JA: "現在の作業ディレクトリ名（最後の要素のみ）です。"},
 	},
 	{

@@ -227,7 +227,10 @@ type FieldNode struct {
 	MinWidth *int
 	// Align is the raw `align` attribute: "" (defaults to left) | "left" |
 	// "right". It selects which side MinWidth padding is added to.
-	Align  string
+	Align string
+	// Path is the raw `path` attribute: how a directory field
+	// (FieldDef.PathStyles) shows its path. "" means the field's PathDefault.
+	Path   string
 	Common CommonAttributes
 }
 

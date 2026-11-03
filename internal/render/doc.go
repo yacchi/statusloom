@@ -735,10 +735,16 @@ func (e *docEval) fieldExists(ref string) bool {
 // fieldText resolves a field's display text: the renderContent default
 // (honoring compact/raw), overridden by an explicit formatter on the field's
 // self metric when one applies (markup.md item 4). raw takes precedence over
-// a formatter, matching its precedence over compact.
+// a formatter, matching its precedence over compact. An explicit path style
+// (markup.md "path") replaces the default text of a directory field.
 func (e *docEval) fieldText(f *dsl.FieldNode) string {
 	spec := config.WidgetSpec{Type: f.Name, RawValue: f.Raw, Var: f.Var, Unmask: f.Unmask}
 	txt := renderContent(spec, e.snap, e.cfg, e.opts, e.compact)
+	if f.Path != "" {
+		if abs, ok := pathFieldValue(f.Name, e.snap); ok {
+			txt = applyPathStyle(abs, f.Path, homeDir(e.opts))
+		}
+	}
 	if !f.Raw && f.Formatter.Name != "" {
 		if formatted, ok := e.applyFormat(f); ok {
 			txt = formatted

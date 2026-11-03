@@ -471,6 +471,9 @@ func serializeField(b *strings.Builder, depth int, n *FieldNode) {
 	if n.Align != "" {
 		writeAttr(b, "align", n.Align)
 	}
+	if n.Path != "" {
+		writeAttr(b, "path", n.Path)
+	}
 	writeCommon(b, n.Common)
 	if len(n.Common.ColorRules) == 0 {
 		b.WriteString("/>\n")

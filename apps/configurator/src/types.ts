@@ -92,6 +92,9 @@ export interface FieldNode extends AstBase, CommonAttrs {
     select?: string;
     // Built-in field rendered when a name="source" field has no value.
     fallback?: string;
+    // How a directory field shows its path: base | home | full. Absent means
+    // the field's pathDefault (FieldCatalogEntry.pathStyles).
+    path?: string;
     colorRules?: ColorRuleNode[];
 }
 
@@ -359,6 +362,10 @@ export interface FieldCatalogEntry {
     selfMetric?: string;
     // Formatter names applicable to this field (absent = no formatter).
     formats?: string[];
+    // Values the `path` attribute accepts on this field (absent = the field
+    // takes no path attribute), and the value used when it is unset.
+    pathStyles?: string[];
+    pathDefault?: string;
     // Names a runtime capability this field depends on (e.g. "oauth-usage"
     // for the authenticated usage API). Absent means always available.
     // A capability tag does not by itself hide the field from the palette —

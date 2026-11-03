@@ -389,6 +389,10 @@ Recently added:
   `cache-creation-tokens`, `cache-read-tokens`, `exceeds-200k`
 - repository detail: `project-directory`, `git-root`, `git-staged`,
   `git-unstaged`, `git-untracked`, `git-ahead`, `git-behind`, `git-clean`
+- directory fields (`current-directory`, `project-directory`, `git-root`)
+  take a `path` attribute: `base` (last element), `home` (`~/...` under your
+  home directory), or `full` (absolute). For example,
+  `<field name="current-directory" path="home"/>`; see markup.md `path`.
 - `lines-added` / `lines-removed` — separate session line counts
 
 The `<subagent>` region (see [Subagent status

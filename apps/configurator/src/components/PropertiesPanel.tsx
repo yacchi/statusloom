@@ -699,6 +699,50 @@ function SourceSection({
     );
 }
 
+// Path select for a directory field (FieldCatalogEntry.pathStyles). Choosing
+// the field's default, or the unset entry, removes the path attribute so the
+// document only carries an explicit path when it differs from the default.
+function PathSelect({
+    node,
+    entry,
+    onPatch,
+}: {
+    node: FieldNode;
+    entry: FieldCatalogEntry;
+    onPatch: (patch: AttrPatch) => void;
+}) {
+    const styles = entry.pathStyles ?? [];
+    const defaultStyle = entry.pathDefault ?? "";
+    const value = node.path ?? "";
+    return (
+        <div className="field">
+            <label>
+                Path <HelpTip k="helpPath" />
+            </label>
+            <select
+                data-testid="attr-path"
+                value={value}
+                onChange={(e) => {
+                    const v = e.target.value;
+                    onPatch({ path: v === "" || v === defaultStyle ? undefined : v });
+                }}
+            >
+                <option value="">{`(default: ${defaultStyle})`}</option>
+                {styles.map((p) => (
+                    <option key={p} value={p}>
+                        {p}
+                    </option>
+                ))}
+                {/* Keep an out-of-list path (written in the DSL editor)
+                    selectable, so opening the panel does not reset it. */}
+                {node.path && !styles.includes(node.path) ? (
+                    <option value={node.path}>{node.path}</option>
+                ) : null}
+            </select>
+        </div>
+    );
+}
+
 function FieldSection({
     node,
     entry,
@@ -794,6 +838,9 @@ function FieldSection({
                         ))}
                     </select>
                 </div>
+            ) : null}
+            {entry?.pathStyles && entry.pathStyles.length > 0 ? (
+                <PathSelect node={node} entry={entry} onPatch={onPatch} />
             ) : null}
             {node.format ? (
                 <TextAttr

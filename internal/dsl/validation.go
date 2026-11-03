@@ -2,6 +2,7 @@ package dsl
 
 import (
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/yacchi/statusloom/internal/jsonselect"
@@ -220,6 +221,7 @@ func (v *validator) validateField(f *FieldNode, inSubagent bool) {
 			}
 			v.validateVar(f, def)
 			v.validateSource(f, def)
+			v.validatePath(f, def)
 			v.diags = append(v.diags, ValidateFormatter(def, f.Formatter, f.Meta.SourceRange)...)
 		} else {
 			v.errf(f.Meta.SourceRange, "unknown field %q for tool %q", f.Name, v.tool)
@@ -268,6 +270,23 @@ func (v *validator) validateVar(f *FieldNode, def FieldDef) {
 		v.warnf(r, "var %q looks like a credential and unmask renders it in clear text; it will be visible in screenshots and screen shares", f.Var)
 	case IsSecretEnvName(f.Var):
 		v.warnf(r, "var %q looks like a credential, so its value renders as %q; add unmask to show it anyway", f.Var, SecretMask)
+	}
+}
+
+// validatePath checks the `path` attribute against the field definition
+// (markup.md "path"). Only a field that lists PathStyles takes it, and only one
+// of those values. An absent path is never diagnosed.
+func (v *validator) validatePath(f *FieldNode, def FieldDef) {
+	if f.Path == "" {
+		return
+	}
+	r := f.Meta.SourceRange
+	if len(def.PathStyles) == 0 {
+		v.errf(r, "field %q does not take a path attribute", f.Name)
+		return
+	}
+	if !slices.Contains(def.PathStyles, f.Path) {
+		v.errf(r, "invalid path %q for field %q: expected one of %s", f.Path, f.Name, strings.Join(def.PathStyles, ", "))
 	}
 }
 

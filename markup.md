@@ -365,6 +365,7 @@ Claude Codeの`subagentStatusLine`（実行中subagentタスクのパネル。**
 * `fallback` — 値が無いときに表示する組み込みfield名（`name="source"`専用。後述）
 * `min-width` — フィールドの整形済み値を最低N桁までパディングする（後述）
 * `align` — `min-width`のパディング方向（後述）
+* `path` — ディレクトリfieldの表示形式 `base` / `home` / `full`（`current-directory`・`project-directory`・`git-root`専用。後述）
 * `prefix`
 * `suffix`
 * 文字装飾属性
@@ -400,6 +401,27 @@ fieldが存在しない、または値が空の場合、field本体は空文字�
 <field name="task-tokens" prefix=" · ↓ " format="compact-number" min-width="6" align="right"/>
 <!-- "8.2k"(4桁) -> " · ↓   8.2k" / "146.3k"(6桁) -> " · ↓ 146.3k"（桁が揃う） -->
 ```
+
+#### `path`属性
+
+`name="current-directory"`・`name="project-directory"`・`name="git-root"`（ディレクトリを表すfield）の表示形式を選ぶ。値は次の3つ。
+
+* `base` — 最後のパス要素のみ（例: `statusloom`）
+* `home` — 絶対パスの先頭にあるホームディレクトリ（`$HOME`）を `~` に置き換える（例: `~/projects/private/oss/statusloom`）。`$HOME` そのものは `~`。ホームの外のパスは絶対パスのまま
+* `full` — 絶対パスをそのまま出す
+
+省略時の既定値はfieldごとに決まる: `current-directory` は `base`、`project-directory` と `git-root` は `full`。既定値を明示しても構わないが、設定UIは既定値と同じ値を書き込まない（属性を外す）。
+
+ホームの置換は**パス境界**で判定する。`$HOME` が `/Users/fujie` のとき `/Users/fujie/x` は `~/x` になるが、`/Users/fujieX` は別ディレクトリなので絶対パスのまま。ホーム判定に使う`HOME`は描画環境（`render`のenv注入。テストでは差し替え可能）から読む。
+
+`path`を指定できるのはこの3 fieldだけで、他のfieldに付けた場合や3つの値以外を指定した場合はvalidation error。
+
+```xml
+<field name="current-directory" path="home"/>
+<field name="project-directory" path="base"/>
+```
+
+`path`は表示文字列だけを変える。ディレクトリfieldはlinkableでないため`hyperlink`とは組み合わせない。`optional`/`when`の表示判定も変わらない（値が空かどうかは既定の表示と同じ）。
 
 #### `env`（`var`/`unmask`属性）
 

@@ -386,6 +386,9 @@ func (b *astBuilder) node(n dsl.Node, id string) map[string]any {
 		if t.Align != "" {
 			m["align"] = t.Align
 		}
+		if t.Path != "" {
+			m["path"] = t.Path
+		}
 		b.common(m, t.Common, id)
 		return m
 	case *dsl.FlexNode:
@@ -547,6 +550,7 @@ type astNodeJSON struct {
 	Fallback  string `json:"fallback"`
 	MinWidth  *int   `json:"min-width"`
 	Align     string `json:"align"`
+	Path      string `json:"path"`
 
 	// flex
 	Size string `json:"size"`
@@ -707,6 +711,7 @@ func jsonToNode(j astNodeJSON) dsl.Node {
 		n.Fallback = j.Fallback
 		n.MinWidth = j.MinWidth
 		n.Align = j.Align
+		n.Path = j.Path
 		return n
 	case "flex":
 		return &dsl.FlexNode{Meta: metaJSON(j), Size: j.Size}

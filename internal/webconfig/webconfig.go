@@ -80,7 +80,8 @@ func Serve(ctx context.Context, opts Options) error {
 	// Serve returns through. The stable monitor workspace dir itself persists.
 	defer s.closeAllTerminals()
 
-	httpServer := &http.Server{Handler: s.routes()}
+	unused := newUnusedConns()
+	httpServer := &http.Server{Handler: s.routes(), ConnState: unused.track}
 
 	url := fmt.Sprintf("http://127.0.0.1:%d/#token=%s", port, token)
 	fmt.Fprintf(stdout, "Statusloom configurator: %s\n", url)
@@ -108,6 +109,11 @@ func Serve(ctx context.Context, opts Options) error {
 
 	s.stopIdleTimer()
 
+	// Close connections that have not sent a request yet before draining:
+	// Shutdown would otherwise wait out shutdownGrace for them (see
+	// unusedConns).
+	unused.closeAll()
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
@@ -118,6 +124,51 @@ func Serve(ctx context.Context, opts Options) error {
 		return err
 	}
 	return nil
+}
+
+// unusedConns tracks connections that have been accepted but have not sent
+// their first request yet (http.StateNew). Such a connection has no work in
+// flight, but net/http's Server.Shutdown treats it as active for 5 seconds
+// (golang/go#22682), so a client that opens a socket and sends nothing (a
+// browser preconnect, or a client transport's unused dial) would otherwise
+// hold Shutdown for its whole grace period. Serve closes these explicitly
+// before draining.
+type unusedConns struct {
+	mu     sync.Mutex
+	conns  map[net.Conn]struct{}
+	closed bool
+}
+
+func newUnusedConns() *unusedConns {
+	return &unusedConns{conns: make(map[net.Conn]struct{})}
+}
+
+// track is an http.Server.ConnState hook.
+func (u *unusedConns) track(c net.Conn, st http.ConnState) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if st != http.StateNew {
+		delete(u.conns, c)
+		return
+	}
+	if u.closed {
+		_ = c.Close()
+		return
+	}
+	u.conns[c] = struct{}{}
+}
+
+// closeAll closes every connection still waiting for its first request, and
+// closes any connection accepted from now on as soon as it appears (the
+// listener is closed by Shutdown afterwards).
+func (u *unusedConns) closeAll() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.closed = true
+	for c := range u.conns {
+		_ = c.Close()
+	}
+	clear(u.conns)
 }
 
 // server holds the configurator's runtime state: the bearer token, the

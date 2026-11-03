@@ -216,14 +216,20 @@ Configures Claude Code to run `statusloom claude` (`statusLine`) and
 are backed up, and replacing a different status-line command requires
 confirmation.
 
-`--refresh-interval <seconds>` sets Claude Code's own `refreshInterval`
-setting (minimum 1 second), applied to both `statusLine` and
-`subagentStatusLine`. We recommend 30–60 seconds; one render costs roughly
-5–10 ms, so a short interval is cheap. Claude Code doesn't emit new
-statusline events while idle, so countdown widgets like `five-hour-reset`
-and `weekly-reset` otherwise freeze until the next event; use this flag if
-you configure those widgets. `statusloom doctor` warns when
-`refreshInterval` is unset while a countdown widget is configured.
+Setup also writes Claude Code's `refreshInterval` to both `statusLine` and
+`subagentStatusLine`, so the status line re-renders every 30 seconds while
+the session is idle. One render costs roughly 5–10 ms, so this is cheap.
+Claude Code doesn't emit new statusline events while idle, so countdown
+widgets like `five-hour-reset` and `weekly-reset` would otherwise freeze
+until the next event.
+
+- `--refresh-interval <seconds>` (minimum 1) sets a different interval.
+- `--refresh-interval 0` leaves `refreshInterval` unset (opt out).
+- Without the flag, an existing `refreshInterval` of 1 or more in your
+  settings is kept, so your own choice is not overwritten.
+
+`statusloom doctor` warns when `refreshInterval` is unset while a countdown
+widget is configured.
 
 The same value also sets how often statusloom refreshes what the status
 line derives from the transcript. When `refreshInterval` is unset that
@@ -580,8 +586,8 @@ when the probe succeeds.
 
 Like other countdown fields, `weekly-reset-opus` and
 `weekly-reset-sonnet` only update when the status line re-renders; set
-`--refresh-interval` (see [Setup](#setup)) so they keep counting down
-during idle sessions.
+the default re-render interval from [Setup](#setup) (30 seconds unless
+changed) so they keep counting down during idle sessions.
 
 ### Which account am I logged in as?
 
@@ -659,8 +665,8 @@ things to know before you use them:
   these fields render empty until then.
 - Claude Code re-renders the status line when the previous `expires_at` is
   reached, so a "went cold" state shows up on its own. A countdown that
-  ticks down between events needs `refreshInterval` (see
-  [Setup](#setup)).
+  ticks down between events relies on the `refreshInterval` that
+  [Setup](#setup) configures by default.
 
 `expires_at` is epoch seconds; the fields take care of the conversion.
 

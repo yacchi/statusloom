@@ -645,7 +645,7 @@ WidgetSpecは`showWhen`・`colorRules`・`hyperlink`も受け付ける（詳細�
 補足:
 
 - 色はANSI16色名（`cyan`、`brightBlack`など）、256色番号（`"ansi256:242"`）、hex（`"#8be9fd"`）をサポートする。`colorLevel`（`none` / `ansi16` / `ansi256` / `truecolor`）に応じてダウングレードする
-- `refreshInterval`はClaude Code側`settings.json`の設定項目であり、このファイルには持たせない（setupコマンドの責務）。`statusloom setup claude-code --refresh-interval <seconds>`（最小1秒、Claude Code公式仕様）で設定できる
+- `refreshInterval`はClaude Code側`settings.json`の設定項目であり、このファイルには持たせない（setupコマンドの責務）。`statusloom setup claude-code`は既定で30秒を書き込む（`statusLine`と`subagentStatusLine`の両方）。`--refresh-interval <seconds>`（最小1秒、Claude Code公式仕様）で変更し、`0`で未設定にする
 
 ---
 
@@ -921,7 +921,7 @@ statusloom setup claude-code --refresh-interval 60
 }
 ```
 
-`refreshInterval`は既定では書き込まない（Claude Codeはイベント駆動＝応答ごと・/compact後・permission mode変更時などに更新するため通常不要）。時刻カウントダウン系Widget（`five-hour-reset` / `weekly-reset`）を使う場合、Claude Codeはアイドル中に更新イベントを送らず表示が固まるため、`--refresh-interval <seconds>`（最小1秒、Claude Code公式仕様）での設定を推奨する。`statusloom doctor`はこれらのWidgetが設定済みかつ`refreshInterval`未設定の場合に警告する。
+`refreshInterval`は既定で30秒を書き込む（Claude Codeはイベント駆動＝応答ごと・/compact後・permission mode変更時などに更新するが、時刻カウントダウン系Widget（`five-hour-reset` / `weekly-reset`）はアイドル中に更新イベントが届かず表示が固まるため、アイドル中も一定間隔で再描画させる）。再描画はネットワークを使わず5〜10ms程度で安価なため既定を有効にしている。既存の`refreshInterval`（1以上の数値）がある場合はその値を保持し上書きしない（`--refresh-interval`を明示した場合を除く）。`--refresh-interval <seconds>`（最小1秒、Claude Code公式仕様）で変更し、`0`で未設定（オプトアウト）にする。`statusloom doctor`はこれらのWidgetが設定済みかつ`refreshInterval`未設定の場合に警告する。
 
 Windowsでは`statusLine.command`のパスをスラッシュ区切りにする（バックスラッシュ区切りはGit Bashがエスケープ文字として消費してしまうため）。
 

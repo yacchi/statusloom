@@ -231,36 +231,75 @@ func TestSetupClaudeCodeRefreshInterval(t *testing.T) {
 	}
 }
 
-// TestSetupClaudeCodeRefreshIntervalOmitted confirms that not passing the
-// flag never writes a refreshInterval key, preserving prior behavior.
-func TestSetupClaudeCodeRefreshIntervalOmitted(t *testing.T) {
+// TestSetupClaudeCodeRefreshIntervalDefault confirms a fresh setup without
+// the flag writes refreshInterval 30 to both statusLine and
+// subagentStatusLine.
+func TestSetupClaudeCodeRefreshIntervalDefault(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	if _, _, code := runCLI(t, []string{"setup", "claude-code", "--settings", path}, nil, nil); code != 0 {
 		t.Fatal(code)
 	}
-	statusLine := readStatusLine(t, path)
-	if _, ok := statusLine["refreshInterval"]; ok {
-		t.Errorf("refreshInterval should be absent: %v", statusLine)
+	if n, ok := readStatusLine(t, path)["refreshInterval"].(float64); !ok || n != 30 {
+		t.Fatalf("statusLine.refreshInterval = %v", n)
+	}
+	if n, ok := readSettingsKey(t, path, "subagentStatusLine")["refreshInterval"].(float64); !ok || n != 30 {
+		t.Fatalf("subagentStatusLine.refreshInterval = %v", n)
 	}
 }
 
-// TestSetupClaudeCodeRefreshIntervalInvalid confirms an explicit N < 1
-// exits 2 with an error and never touches the settings file.
-func TestSetupClaudeCodeRefreshIntervalInvalid(t *testing.T) {
-	for _, n := range []string{"0", "-1"} {
-		t.Run(n, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "settings.json")
-			_, stderr, code := runCLI(t, []string{"setup", "claude-code", "--settings", path, "--refresh-interval", n}, nil, nil)
-			if code != 2 {
-				t.Fatalf("code=%d stderr=%q", code, stderr)
-			}
-			if stderr == "" {
-				t.Error("expected an error message on stderr")
-			}
-			if _, err := os.Stat(path); err == nil {
-				t.Error("settings file should not have been created")
-			}
-		})
+// TestSetupClaudeCodeRefreshIntervalKeepsExisting confirms an existing
+// refreshInterval >= 1 is kept when the flag is omitted: the settings
+// already match, so the run reports "already configured" with no backup.
+func TestSetupClaudeCodeRefreshIntervalKeepsExisting(t *testing.T) {
+	initial := `{"statusLine":{"type":"command","command":"statusloom claude","refreshInterval":60},` +
+		`"subagentStatusLine":{"type":"command","command":"statusloom claude-subagent","refreshInterval":60}}`
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, code := runCLI(t, []string{"setup", "claude-code", "--settings", path}, nil, nil)
+	got, _ := os.ReadFile(path)
+	if code != 0 || out != "already configured\n" || string(got) != initial {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+	if matches, _ := filepath.Glob(path + ".bak.*"); len(matches) != 0 {
+		t.Errorf("unexpected backups=%v", matches)
+	}
+}
+
+// TestSetupClaudeCodeRefreshIntervalZeroUnsets confirms --refresh-interval 0
+// removes an existing refreshInterval from both objects.
+func TestSetupClaudeCodeRefreshIntervalZeroUnsets(t *testing.T) {
+	initial := `{"statusLine":{"type":"command","command":"statusloom claude","refreshInterval":60},` +
+		`"subagentStatusLine":{"type":"command","command":"statusloom claude-subagent","refreshInterval":60}}`
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, code := runCLI(t, []string{"setup", "claude-code", "--settings", path, "--refresh-interval", "0", "--yes"}, nil, nil); code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	if _, ok := readStatusLine(t, path)["refreshInterval"]; ok {
+		t.Error("statusLine.refreshInterval should be removed")
+	}
+	if _, ok := readSettingsKey(t, path, "subagentStatusLine")["refreshInterval"]; ok {
+		t.Error("subagentStatusLine.refreshInterval should be removed")
+	}
+}
+
+// TestSetupClaudeCodeRefreshIntervalNegative confirms a negative N exits 2
+// with an error and never touches the settings file.
+func TestSetupClaudeCodeRefreshIntervalNegative(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	_, stderr, code := runCLI(t, []string{"setup", "claude-code", "--settings", path, "--refresh-interval", "-1"}, nil, nil)
+	if code != 2 {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stderr, "--refresh-interval must be >= 0") {
+		t.Errorf("stderr=%q", stderr)
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Error("settings file should not have been created")
 	}
 }
 

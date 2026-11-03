@@ -189,8 +189,7 @@ func doctorClaudeCode(report func(string, string, string), path string) {
 // countdown field (five-hour-reset / weekly-reset) but Claude Code's
 // statusLine.refreshInterval is not set to configure a re-render timer —
 // without it, those fields can visibly stall while idle (no events are
-// firing to trigger a re-render). See statusloom setup claude-code
-// --refresh-interval.
+// firing to trigger a re-render). See statusloom setup claude-code.
 //
 // It reads tool's current committed document from the internal store: the
 // DSL document is what the render path uses. When the store holds no current
@@ -222,7 +221,7 @@ func doctorRefreshInterval(report func(string, string, string), settingsPath str
 			}
 		}
 	}
-	report("WARN", "refresh", "countdown widgets (five-hour-reset/weekly-reset) can stall while idle; run statusloom setup claude-code --refresh-interval 60")
+	report("WARN", "refresh", "countdown widgets (five-hour-reset/weekly-reset) can stall while idle; run statusloom setup claude-code")
 }
 
 // idleUpdatedFields is the set of DSL field names whose value only advances

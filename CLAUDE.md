@@ -27,7 +27,7 @@ Claude Code等コーディングエージェント向けステータスライン
 - stdin JSONに `context_window`（used_percentage等）・`rate_limits.five_hour/seven_day`（epoch秒、Pro/Maxプランのみ・初回API応答後に出現、各windowは独立に欠落しうる）・`effort.level` が全て含まれる。**transcriptファイルの解析は不要**
 - stdin JSONの`prompt_cache`（v2.1.251+。初回API応答後に出現、subagentのリクエストは集計に含まれない）は `warm`(bool)・`ttl`(`"5m"`/`"1h"`)・`expires_at`(epoch秒。キャッシュトークンが無ければnull)・`hit_ratio`(0〜1、nullあり)・`requests`・`misses`・`last_miss_at`・`last_miss_cause`(v2.1.260+)・`recache_tokens_if_cold` を含む。Claude Codeは`expires_at`到達時と`rate_limits`の`resets_at`到達時にも描き直すので、タイマー無しでも「切れた」表示へ切り替わる。残り時間を進めて見せたいときだけ`refreshInterval`が要る（固定値でstatusloomから動的変更不可）。statusloomは組み込みの`cache-*` field/metricとして公開する。公式: https://code.claude.com/docs/en/statusline （"Prompt cache fields"）
 - 端末幅は環境変数 `COLUMNS`/`LINES` から取得（stdoutは端末非接続のため `tput` 不可）。**これらの環境変数はv2.1.153以降でのみ渡される。** v2.1.132〜2.1.152ではflex-separatorの幅展開が効かず1スペース固定になり、`compactThreshold` も発動しない（劣化動作。README・計画書9章に明記済み）。複数行出力に対応する
-- 更新はイベント駆動+300msデバウンス。トリガーはassistantメッセージ後・`/compact`完了後・permission mode変更・vim mode切替など。実行中のレンダーコマンドはキャンセルされ得る。アイドル中は更新イベントが来ないため、countdown系widget（five-hour-reset/weekly-reset）を使う場合は`statusloom setup claude-code --refresh-interval`の設定を推奨
+- 更新はイベント駆動+300msデバウンス。トリガーはassistantメッセージ後・`/compact`完了後・permission mode変更・vim mode切替など。実行中のレンダーコマンドはキャンセルされ得る。アイドル中は更新イベントが来ないため、countdown系widget（five-hour-reset/weekly-reset）のためにアイドル中も再描画させるため、`statusloom setup claude-code`は`refreshInterval`を既定で30秒書き込む（`statusLine`・`subagentStatusLine`の両方。`--refresh-interval 0`で未設定にオプトアウト、既存の1以上の値は保持、`--refresh-interval N`で変更）
 - `context_window.exceeds_200k_tokens` はcontext window sizeによらず固定200k閾値での判定。`used_percentage` はinput系トークンのみの計算（output tokenは含まない、公式仕様）
 - サポート最低バージョンは **v2.1.132**（それ以前は `total_input_tokens` が累積値でセマンティクスが異なる）
 

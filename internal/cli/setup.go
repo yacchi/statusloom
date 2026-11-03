@@ -14,18 +14,23 @@ import (
 	"github.com/yacchi/statusloom/internal/claudecfg"
 )
 
+// defaultRefreshInterval is the re-render period (seconds) that setup writes
+// when --refresh-interval is not given and the existing settings don't
+// already carry a usable refreshInterval for that object.
+const defaultRefreshInterval = 30
+
 // desiredStatusLine builds the statusLine object statusloom wants written
-// to Claude Code settings. refreshInterval < 1 means "unspecified": the
-// key is omitted entirely so existing configs without it stay untouched.
+// to Claude Code settings. refreshInterval < 1 means "unset": the key is
+// omitted entirely (what `--refresh-interval 0` asks for).
 //
-// refreshInterval is stored as float64 (not int) so this value compares
-// equal, via reflect.DeepEqual, to a statusLine round-tripped through
-// json.Unmarshal into map[string]any — encoding/json always decodes JSON
-// numbers as float64 regardless of how they were written.
-func desiredStatusLine(refreshInterval int) map[string]any {
+// refreshInterval is a float64 so this value compares equal, via
+// reflect.DeepEqual, to a statusLine round-tripped through json.Unmarshal
+// into map[string]any — encoding/json always decodes JSON numbers as
+// float64 regardless of how they were written.
+func desiredStatusLine(refreshInterval float64) map[string]any {
 	m := map[string]any{"type": "command", "command": "statusloom claude"}
 	if refreshInterval >= 1 {
-		m["refreshInterval"] = float64(refreshInterval)
+		m["refreshInterval"] = refreshInterval
 	}
 	return m
 }
@@ -34,12 +39,32 @@ func desiredStatusLine(refreshInterval int) map[string]any {
 // wants written to Claude Code settings, mirroring desiredStatusLine's
 // shape and refreshInterval handling for the `statusloom claude-subagent`
 // command (Claude Code's subagentStatusLine feature).
-func desiredSubagentStatusLine(refreshInterval int) map[string]any {
+func desiredSubagentStatusLine(refreshInterval float64) map[string]any {
 	m := map[string]any{"type": "command", "command": "statusloom claude-subagent"}
 	if refreshInterval >= 1 {
-		m["refreshInterval"] = float64(refreshInterval)
+		m["refreshInterval"] = refreshInterval
 	}
 	return m
+}
+
+// resolveRefreshInterval decides the refreshInterval for one settings object
+// (existing is its current value, nil when absent). An explicit flag always
+// wins: N >= 1 is written, 0 yields unset. Without the flag, an existing
+// numeric refreshInterval >= 1 is kept so a user's own choice is not
+// overwritten; otherwise the default applies.
+func resolveRefreshInterval(flagSet bool, flagValue int, existing any) float64 {
+	if flagSet {
+		if flagValue >= 1 {
+			return float64(flagValue)
+		}
+		return 0
+	}
+	if obj, ok := existing.(map[string]any); ok {
+		if n, ok := obj["refreshInterval"].(float64); ok && n >= 1 {
+			return n
+		}
+	}
+	return defaultRefreshInterval
 }
 
 func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
@@ -52,7 +77,7 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 	settingsFlag := fs.String("settings", "", "Claude Code settings file")
 	yes := fs.Bool("yes", false, "replace an existing statusLine without prompting")
 	dryRun := fs.Bool("dry-run", false, "show changes without writing")
-	refreshInterval := fs.Int("refresh-interval", 0, "seconds between forced statusline re-renders while idle (min 1); omit to leave unset")
+	refreshInterval := fs.Int("refresh-interval", 0, "seconds between forced statusline re-renders while idle (default 30; 0 leaves it unset)")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return 2
 	}
@@ -62,12 +87,10 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 			refreshIntervalSet = true
 		}
 	})
-	if refreshIntervalSet && *refreshInterval < 1 {
-		fmt.Fprintln(stderr, "statusloom: --refresh-interval must be >= 1")
+	if refreshIntervalSet && *refreshInterval < 0 {
+		fmt.Fprintln(stderr, "statusloom: --refresh-interval must be >= 0 (0 leaves it unset)")
 		return 2
 	}
-	desired := desiredStatusLine(*refreshInterval)
-	desiredSubagent := desiredSubagentStatusLine(*refreshInterval)
 	settings, err := claudeSettingsPath(*settingsFlag)
 	if err != nil {
 		fmt.Fprintf(stderr, "statusloom: %v\n", err)
@@ -87,8 +110,10 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 		}
 	}
 	before, hadStatusLine := doc["statusLine"]
+	desired := desiredStatusLine(resolveRefreshInterval(refreshIntervalSet, *refreshInterval, before))
 	statusLineChanged := !hadStatusLine || !reflect.DeepEqual(before, desired)
 	beforeSubagent, hadSubagentStatusLine := doc["subagentStatusLine"]
+	desiredSubagent := desiredSubagentStatusLine(resolveRefreshInterval(refreshIntervalSet, *refreshInterval, beforeSubagent))
 	subagentChanged := !hadSubagentStatusLine || !reflect.DeepEqual(beforeSubagent, desiredSubagent)
 
 	if !statusLineChanged && !subagentChanged {

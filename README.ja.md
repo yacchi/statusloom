@@ -581,6 +581,113 @@ Unicode（分解済み結合文字）が含まれる場合のみ Claude Code 本
 <field name="env" var="KEYBOARD_LAYOUT" unmask="true"/>
 ```
 
+### セッション状態の書き出し
+
+statusloom は、どの Claude Code プロセスがどのセッションを表示しているかを
+公開します。これにより ccprofile などの他のツールが、推測せずにプロセスから
+セッション ID・transcript・設定ディレクトリを対応づけられます。
+
+#### 書き出されるタイミング
+
+- 書き出しはライブ描画のときだけ行われます。`statusloom claude` と
+  `statusloom render`（`--draft` / `--set` なし）、および `statusloom monitor`
+  （`--draft` の有無は問いません。実行中の Claude Code セッションだからです）。
+- プレビュー（`--draft` / `--set`）、`statusloom claude-subagent`（stdin の
+  ペイロードが別物のため）、stdin が通常ファイルのときは何も書きません。
+- Claude Code プロセスは、Claude Code が実行するコマンドに設定する
+  `CLAUDE_PID` から特定します。その pid は、ステータスラインコマンドの親で
+  ある場合か、親からシェルだけを（最大 4 段）辿って到達できる場合にのみ
+  採用します。それ以外は、推測せず何も書きません。
+- 対応は macOS と Linux のみです。プロセス情報は sysctl（macOS）または
+  procfs（Linux）から取得し、`ps` は使いません。他のプラットフォームでは
+  何も書きません。
+
+#### 書き出し先
+
+`<base>` は、`XDG_STATE_HOME` が絶対パスで設定されているときは
+`$XDG_STATE_HOME/statusloom`、それ以外は `~/.local/state/statusloom` です
+（macOS でも同じです）。相対パスの `XDG_STATE_HOME`（例: `relative/dir`）は
+無視され、既定値が使われます。ほかに上書き手段はありません。
+
+- 公開ファイル: `<base>/sessions.json`
+- 詳細ファイル: `<base>/sessions/<pid>-<startedAt>.json`
+
+#### 誰が何を書くか
+
+ステータスラインコマンドは、自分の詳細ファイルだけを書きます。要約欄が変わった
+ときはマーカーも置きます。既存のバックグラウンド・サブプロセス
+`statusloom refresh --once`（一度に 1 つだけ、既存の refresh リースの下で
+動きます。常駐プロセスはありません）が `sessions.json` を作り直し、終了した
+プロセスの詳細ファイルを削除します。そのため `sessions.json` は画面より遅れる
+ことがあり、次の refresh が走るまで終了済みのプロセスを載せたままのこともあります。
+
+#### 公開ファイルのスキーマ（version 1）
+
+```json
+{
+  "version": 1,
+  "mergedAt": 1793673034,
+  "sessions": [
+    {
+      "pid": 12345,
+      "startedAt": 1793672985,
+      "sessionId": "af886782-68bc-4068-9dbd-dde79c7823fb",
+      "transcriptPath": "/Users/u/.config/ccprofile/profiles/max/projects/-x/af886782-....jsonl",
+      "configDir": "/Users/u/.config/ccprofile/profiles/max",
+      "cwd": "/Users/u/projects/x",
+      "model": "claude-opus-5-5",
+      "promptCache": { "ttl": "1h", "expiresAt": 1793676625 },
+      "seenAt": 1793673030,
+      "detailPath": "/Users/u/.local/state/statusloom/sessions/12345-1793672985.json"
+    }
+  ]
+}
+```
+
+- すべての時刻は整数の epoch 秒です。
+- `pid` は Claude Code プロセス本体の pid です。ステータスラインコマンドを
+  実行しているシェルでも、statusloom でもありません。間にシェルがある場合は
+  親を辿って Claude Code プロセスを見つけます。Claude Code プロセスを特定
+  できない場合は何も書きません。
+- `startedAt` はそのプロセスの開始時刻を秒未満切り捨てにしたものです
+  （`ps -o lstart` と同じ精度）。読み手は ±1 秒の許容誤差で照合してください。
+- `configDir` は、ステータスラインコマンドの環境で見えるプロセスの
+  `CLAUDE_CONFIG_DIR` です。未設定のときは空文字列になり、`~/.claude` を
+  意味します。
+- `model` は stdin の `model.id` です（無ければ空文字列）。
+- `promptCache` は stdin の `prompt_cache`（`ttl`・`expires_at`）から取ります。
+  stdin に `prompt_cache` が無いときはキーごと省略されます。
+- `seenAt` は、その行の要約が最後に変わった時刻です。ハートビートではない
+  ので、生存確認には使わないでください。
+- `sessions` は `pid` の昇順に並びます。
+- 読み手は未知のキーを無視してください。`version` が 1 でない場合、読み手は
+  ファイル全体を無視します。
+- `mergedAt` はファイルが最後に書かれた時刻（epoch 秒）です。
+- `detailPath` はそのプロセスの詳細ファイルを指します。
+
+#### ファイルの読み方
+
+このファイルを読むすべてのツールに対する読み取り契約は次のとおりです。
+
+1. 読むのは `sessions.json` だけです。詳細ファイルは読まないでください。
+2. ファイルが無い、読めない、パースできない、または `version` が 1 でない
+   場合は、ファイルが無いときと全く同じように動作してください。
+3. 行は、`pid` のプロセスが生存しており、そのプロセスの開始時刻が
+   `startedAt` と ±1 秒以内で一致するときだけ採用してください。
+4. 採用された行は、そのプロセスのセッション ID・transcript パス・設定
+   ディレクトリの正として扱ってください。採用された行が無いプロセスは、
+   読み手自身の検出方法をそのまま使います。
+
+`seenAt` はハートビートではありません。生存確認には `seenAt` も `mergedAt` も
+使わないでください。
+
+詳細ファイルは内部用です。ステータスラインの stdin のペイロードと行の内容を
+保持しており、形式はどのリリースでも変わることがあります。他のツールは
+読まないでください。
+
+このファイルは statusloom 独自のものです。外部ソースの例で使っている
+`~/.local/state/ccprofile/sessions.json` とは無関係です。
+
 ## 設定
 
 Statusloom の設定は単一の内部ストア `~/.config/statusloom/statusloom.json`

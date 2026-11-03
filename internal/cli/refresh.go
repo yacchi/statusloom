@@ -18,6 +18,7 @@ import (
 
 	"github.com/yacchi/statusloom/internal/cache"
 	"github.com/yacchi/statusloom/internal/claudeaccount"
+	"github.com/yacchi/statusloom/internal/sessionexport"
 	"github.com/yacchi/statusloom/internal/sources"
 	"github.com/yacchi/statusloom/internal/usage"
 )
@@ -70,6 +71,15 @@ var startRefreshProcess = func(args ...string) error {
 	return cmd.Process.Release()
 }
 
+// mergeSessions merges the per-process session-state detail files into the
+// public sessions.json and drops ended processes. Only the --once worker calls
+// it, while it holds the refresh lease. Tests replace it with a stub.
+var mergeSessions = sessionexport.Merge
+
+// sessionMergePending reports whether a render left the marker that asks for a
+// session-state merge. Tests replace it with a stub.
+var sessionMergePending = sessionexport.MergePending
+
 // refreshRequest is everything a render hands to the refresh scheduler.
 type refreshRequest struct {
 	Raw             []byte // stdin payload: session_id, transcript_path, version
@@ -88,7 +98,7 @@ type refreshRequest struct {
 // schedule is loaded once), and every network fetch or external command runs
 // only inside the spawned subprocess (runRefresh).
 //
-// Three independent work items can make a refresh due, each with its own
+// Four independent work items can make a refresh due, each with its own
 // schedule entry:
 //   - transcript analytics for the current session, only when the document
 //     uses transcript-derived values (Transcripts[session_id]);
@@ -96,7 +106,10 @@ type refreshRequest struct {
 //     STATUSLOOM_NO_USAGE_API kill switch), due on Usage[AccountKey]'s
 //     schedule or immediately when ForceUsage is set;
 //   - the command/http external sources the document references that are
-//     due per sources.DueIDs.
+//     due per sources.DueIDs;
+//   - a pending session-state merge (sessionexport.MergePending, the marker a
+//     render leaves when its session summary changed). It is checked last,
+//     only when nothing else is due, since every worker run merges anyway.
 //
 // ForceUsage is set by renderDocFromRaw (via cache.ApplyAccountCache's
 // rolledOver return) when a five-hour/seven-day window has definitely reset
@@ -120,7 +133,7 @@ func maybeStartRefresh(req refreshRequest) {
 	if len(req.SourceRefs) > 0 && req.Sources != nil {
 		due = sources.DueIDs(req.Sources(), req.SourceRefs, s, req.Now)
 	}
-	if !transcriptDue && !usageDue && len(due) == 0 {
+	if !transcriptDue && !usageDue && len(due) == 0 && !sessionMergePending() {
 		return
 	}
 	leaseID := randomLeaseID()
@@ -257,6 +270,12 @@ func runRefresh(args []string, stdout, stderr io.Writer) int {
 	if len(ids) > 0 {
 		sources.Refresh(context.Background(), ids, now, ri, fetchSource)
 	}
+
+	// Session-state merge: every --once worker merges the detail files into
+	// sessions.json and drops ended processes while still holding the lease
+	// (the deferred release above runs after this). A merge error never
+	// changes the exit code.
+	_ = mergeSessions(time.Now())
 	return 0
 }
 

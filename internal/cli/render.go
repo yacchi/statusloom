@@ -171,6 +171,7 @@ func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool strin
 	applyGitStatus(&snap, config.DocumentGitConfig(doc), now)
 	if !preview {
 		storeSessionSnapshot(&snap, now)
+		exportSession(raw, getenv, now)
 	}
 	profile := profileProvider
 	if overrides.active() {

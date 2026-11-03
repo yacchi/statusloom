@@ -1,9 +1,10 @@
 // Package testenv is a safety net for test binaries: Main points every
 // location statusloom (and Claude Code path resolution) reads or writes at a
 // throwaway directory before any test runs, so a test that forgets its own
-// isolation can never touch the developer's real config, cache or Claude
-// settings. Tests still isolate themselves per test (t.Setenv overrides these
-// defaults); this only guarantees the fallback is harmless.
+// isolation can never touch the developer's real config, state, cache or
+// Claude settings. It also unsets CLAUDE_PID, which names the developer's real
+// Claude Code process. Tests still isolate themselves per test (t.Setenv
+// overrides these defaults); this only guarantees the fallback is harmless.
 package testenv
 
 import (
@@ -15,14 +16,18 @@ import (
 
 // isolatedVars are the environment variables that decide where statusloom and
 // claudecfg resolve files. HOME covers the XDG defaults (~/.config,
-// ~/.cache) and ~/.claude / ~/.claude.json.
+// ~/.cache, ~/.local/state) and ~/.claude / ~/.claude.json. XDG_STATE_HOME
+// decides the state dir. CLAUDE_PID names the user's real Claude Code process,
+// so it is unset.
 var isolatedVars = []string{
 	"HOME",
 	"XDG_CONFIG_HOME",
 	"XDG_CACHE_HOME",
+	"XDG_STATE_HOME",
 	"STATUSLOOM_CONFIG",
 	"STATUSLOOM_CACHE_DIR",
 	"CLAUDE_CONFIG_DIR",
+	"CLAUDE_PID",
 }
 
 // Main isolates the environment, runs the tests and exits. Use it as the
@@ -49,9 +54,11 @@ func run(m *testing.M) int {
 		"HOME":                 home,
 		"XDG_CONFIG_HOME":      filepath.Join(home, ".config"),
 		"XDG_CACHE_HOME":       filepath.Join(home, ".cache"),
+		"XDG_STATE_HOME":       filepath.Join(home, ".local", "state"),
 		"STATUSLOOM_CONFIG":    filepath.Join(home, ".config", "statusloom", "statusloom.json"),
 		"STATUSLOOM_CACHE_DIR": filepath.Join(home, ".cache", "statusloom"),
 		"CLAUDE_CONFIG_DIR":    "",
+		"CLAUDE_PID":           "",
 	}
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		fmt.Fprintf(os.Stderr, "testenv: %v\n", err)

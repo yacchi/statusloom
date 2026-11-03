@@ -24,6 +24,24 @@ var tmpSeq uint64
 //
 // The parent directory is created (0700) if it does not already exist.
 func WriteJSONAtomic(path string, v any) error {
+	return writeJSONAtomic(path, v, true)
+}
+
+// WriteJSONAtomicNoSync is WriteJSONAtomic without the fsync: the same indented JSON
+// (json.MarshalIndent(v, "", "  ")), the same MkdirAll(dir, 0o700), the same sibling temp file
+// <path>.tmp.<pid>.<seq> opened O_WRONLY|O_CREATE|O_EXCL 0o600, the same best-effort removal of
+// the temp file on failure and the same rename over path — but the temp file is NOT synced
+// before the rename. Concurrent readers still see either the previous or the new complete file;
+// only durability across a crash or power loss is given up. Meant for render-path state that is
+// rewritten constantly and is cheap to lose.
+func WriteJSONAtomicNoSync(path string, v any) error {
+	return writeJSONAtomic(path, v, false)
+}
+
+// writeJSONAtomic holds the write logic shared by WriteJSONAtomic and
+// WriteJSONAtomicNoSync. When doSync is true the temp file is fsynced before
+// the rename.
+func writeJSONAtomic(path string, v any, doSync bool) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -48,9 +66,11 @@ func WriteJSONAtomic(path string, v any) error {
 		f.Close()
 		return err
 	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
+	if doSync {
+		if err := f.Sync(); err != nil {
+			f.Close()
+			return err
+		}
 	}
 	if err := f.Close(); err != nil {
 		return err

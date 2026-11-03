@@ -775,6 +775,115 @@ sources are fetched once per ttl for the whole machine, not once per
 session, by the background `statusloom refresh` subprocess. There is no
 resident process. A failed fetch backs off exponentially, up to 10 minutes.
 
+### Session state export
+
+statusloom publishes which Claude Code process shows which session. That
+lets other tools, for example ccprofile, map a process to its session id,
+transcript, and config dir without guessing.
+
+#### When something is written
+
+- Export happens only on live renders: `statusloom claude` and
+  `statusloom render` without `--draft` or `--set`, and `statusloom monitor`
+  (with or without `--draft`, because it is a live Claude Code session).
+- Nothing is written for previews (`--draft` / `--set`), for
+  `statusloom claude-subagent` (its stdin is a different payload), or when
+  stdin is a regular file.
+- The Claude Code process is identified from the `CLAUDE_PID` variable that
+  Claude Code sets for the commands it runs. That pid is accepted only when
+  it is the status line command's parent, or when it is reached from the
+  parent through shells only (at most 4 hops). Otherwise nothing is written,
+  because statusloom does not guess.
+- macOS and Linux only. Process facts come from sysctl (macOS) or procfs
+  (Linux), not from `ps`. On other platforms nothing is written.
+
+#### Where it is written
+
+`<base>` is `$XDG_STATE_HOME/statusloom` when `XDG_STATE_HOME` is set to an
+absolute path, otherwise `~/.local/state/statusloom` (on macOS too). A
+relative `XDG_STATE_HOME`, for example `relative/dir`, is ignored and the
+default is used. There is no other override.
+
+- Public file: `<base>/sessions.json`
+- Detail files: `<base>/sessions/<pid>-<startedAt>.json`
+
+#### Who writes what
+
+The status line command writes only its own detail file. When a summary
+field changed, it also leaves a marker. The existing background
+`statusloom refresh --once` subprocess rebuilds `sessions.json` and deletes
+the detail files of ended processes. It runs one at a time under the
+existing refresh lease, and there is no resident process. So
+`sessions.json` can lag the screen, and it can still list a process that
+has ended until the next refresh run.
+
+#### Schema (version 1)
+
+```json
+{
+  "version": 1,
+  "mergedAt": 1793673034,
+  "sessions": [
+    {
+      "pid": 12345,
+      "startedAt": 1793672985,
+      "sessionId": "af886782-68bc-4068-9dbd-dde79c7823fb",
+      "transcriptPath": "/Users/u/.config/ccprofile/profiles/max/projects/-x/af886782-....jsonl",
+      "configDir": "/Users/u/.config/ccprofile/profiles/max",
+      "cwd": "/Users/u/projects/x",
+      "model": "claude-opus-5-5",
+      "promptCache": { "ttl": "1h", "expiresAt": 1793676625 },
+      "seenAt": 1793673030,
+      "detailPath": "/Users/u/.local/state/statusloom/sessions/12345-1793672985.json"
+    }
+  ]
+}
+```
+
+- All times are integer epoch seconds.
+- `pid` is the pid of the Claude Code process itself, not the shell that
+  runs the status line command and not statusloom. If a shell sits between
+  them, the writer walks up the parent chain to the Claude Code process. If
+  the Claude Code process cannot be identified, nothing is written.
+- `startedAt` is that process's start time, truncated to whole seconds
+  (the same resolution as `ps -o lstart`). Readers match it with a tolerance
+  of ±1 s.
+- `configDir` is the Claude Code process's `CLAUDE_CONFIG_DIR` as seen in the
+  status line command's environment. It is an empty string when unset, which
+  means `~/.claude`.
+- `model` is stdin `model.id` (an empty string if absent).
+- `promptCache` comes from stdin `prompt_cache` (`ttl`, `expires_at`). The
+  key is omitted when stdin has no `prompt_cache`.
+- `seenAt` is when the summary for this row last changed. It is not a
+  heartbeat, so do not use it for liveness.
+- `sessions` is sorted by `pid` ascending.
+- Readers must ignore unknown keys. A reader that sees `version` other than
+  1 ignores the file.
+- `mergedAt` is when the file was last written (epoch seconds).
+- `detailPath` points at the process's detail file.
+
+#### Reading the file
+
+This is the reader contract for any tool that reads `sessions.json`:
+
+1. Read only `sessions.json`. Never read the detail files.
+2. If the file is missing, unreadable, unparsable, or has `version` other
+   than 1, behave exactly as you would without the file.
+3. Accept a row only if `pid` is alive and the process's start time matches
+   `startedAt` within ±1 s.
+4. An accepted row is authoritative for that process's session id,
+   transcript path, and config dir. Processes without an accepted row keep
+   your own discovery.
+
+`seenAt` is not a heartbeat. Never use it, or `mergedAt`, for liveness.
+
+Detail files are internal. They hold the raw status line stdin payload plus
+the row, their shape may change in any release, and other tools must not
+read them.
+
+This file is statusloom's own. It is unrelated to
+`~/.local/state/ccprofile/sessions.json` from the External sources examples.
+
 ## Configuration
 
 Statusloom keeps its configuration in a single internal store,

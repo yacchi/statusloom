@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -126,5 +127,101 @@ func TestWriteJSONAtomic_RoundTrip(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("ReadJSON() = %+v, want %+v", got, want)
+	}
+}
+
+func TestWriteJSONAtomicNoSync_CreatesNestedDirAndModes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a", "b", "x.json")
+
+	if err := WriteJSONAtomicNoSync(path, atomicTestPayload{Value: 7}); err != nil {
+		t.Fatalf("WriteJSONAtomicNoSync() error = %v", err)
+	}
+
+	var got atomicTestPayload
+	ok, err := ReadJSON(path, &got)
+	if err != nil {
+		t.Fatalf("ReadJSON() error = %v", err)
+	}
+	if !ok || got.Value != 7 {
+		t.Fatalf("ReadJSON() = (%v, %+v), want (true, Value 7)", ok, got)
+	}
+
+	if runtime.GOOS == "windows" {
+		return
+	}
+	for _, d := range []string{filepath.Join(dir, "a"), filepath.Join(dir, "a", "b")} {
+		info, err := os.Stat(d)
+		if err != nil {
+			t.Fatalf("Stat(%s) error = %v", d, err)
+		}
+		if mode := info.Mode().Perm(); mode != 0o700 {
+			t.Fatalf("dir %s mode = %o, want 700", d, mode)
+		}
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s) error = %v", path, err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Fatalf("file mode = %o, want 600", mode)
+	}
+}
+
+func TestWriteJSONAtomicNoSync_ReplacesExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "payload.json")
+
+	if err := WriteJSONAtomicNoSync(path, atomicTestPayload{Value: 1}); err != nil {
+		t.Fatalf("first WriteJSONAtomicNoSync() error = %v", err)
+	}
+	want := atomicTestPayload{Value: 2}
+	if err := WriteJSONAtomicNoSync(path, want); err != nil {
+		t.Fatalf("second WriteJSONAtomicNoSync() error = %v", err)
+	}
+
+	var got atomicTestPayload
+	if _, err := ReadJSON(path, &got); err != nil {
+		t.Fatalf("ReadJSON() error = %v", err)
+	}
+	if got != want {
+		t.Fatalf("ReadJSON() = %+v, want %+v", got, want)
+	}
+}
+
+func TestWriteJSONAtomicNoSync_MarshalFailureLeavesNothing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "payload.json")
+
+	if err := WriteJSONAtomicNoSync(path, make(chan int)); err == nil {
+		t.Fatalf("WriteJSONAtomicNoSync() error = nil, want marshal error")
+	}
+
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("target file stat error = %v, want not exist", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("directory contains unexpected entries: %v", entries)
+	}
+}
+
+func TestWriteJSONAtomicNoSync_SuccessLeavesNoTempFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "payload.json")
+
+	if err := WriteJSONAtomicNoSync(path, atomicTestPayload{Value: 3}); err != nil {
+		t.Fatalf("WriteJSONAtomicNoSync() error = %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "payload.json" {
+		t.Fatalf("directory contains unexpected entries: %v", entries)
 	}
 }

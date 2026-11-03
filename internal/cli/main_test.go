@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/yacchi/statusloom/internal/testenv"
 	"github.com/yacchi/statusloom/internal/usage"
 )
 
@@ -34,5 +35,8 @@ func TestMain(m *testing.M) {
 	fetchUsage = func(ctx context.Context, token, version string) (*usage.Report, int, error) {
 		return nil, 0, errors.New("fetchUsage stubbed in tests")
 	}
-	os.Exit(m.Run())
+	// testenv also points HOME/XDG/STATUSLOOM_*/CLAUDE_CONFIG_DIR at a temp
+	// dir for the whole binary, so a test that forgets setupEnv cannot write
+	// the developer's real config or cache.
+	os.Exit(testenv.Run(m))
 }

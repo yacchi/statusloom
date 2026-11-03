@@ -11,9 +11,12 @@ import (
 	"time"
 
 	"github.com/yacchi/statusloom/internal/adapters/claude"
+	"github.com/yacchi/statusloom/internal/cache"
 	"github.com/yacchi/statusloom/internal/claudeaccount"
+	"github.com/yacchi/statusloom/internal/claudecfg"
 	"github.com/yacchi/statusloom/internal/render"
 	"github.com/yacchi/statusloom/internal/schema"
+	"github.com/yacchi/statusloom/internal/sources"
 )
 
 // subagentLine is one line of `statusloom claude-subagent`'s stdout: the
@@ -94,12 +97,15 @@ const subagentPreviewPayload = `{
 // session-level fields), and its stdout shape is one {"id","content"} JSON
 // line per task rather than plain text.
 //
-// This render path is deliberately network- and cache-free: unlike
+// This render path is network-free and never spawns the refresh worker: unlike
 // runRenderPipeline it applies no account/git/session cache enrichment,
 // since a subagent task snapshot carries no rate-limit/account/git identity
-// of its own. A task whose rendered document produces no visible content
-// emits no line at all (the caller's default DSL rendering never falls
-// back to the session fallback line for a subagent render).
+// of its own. External sources are read-only here (sources.json, file sources
+// and source cache envelopes); the main status line's render schedules every
+// source the document references, <subagent> regions included. A task whose
+// rendered document produces no visible content emits no line at all (the
+// caller's default DSL rendering never falls back to the session fallback
+// line for a subagent render).
 //
 // It reads and renders the same single claude-code document the `claude`
 // subcommand does (markup.md "subagent" — subagent rows come from the
@@ -146,11 +152,14 @@ func runSubagentRender(args []string, stdin io.Reader, stdout, stderr io.Writer)
 
 	tool := string(schema.ToolClaudeCode)
 	doc := resolveRenderDocument(tool, *draft, stderr)
+	now := time.Now()
+	ri, _ := cache.ClaudeRefreshInterval(claudecfg.SettingsPath(os.Getenv))
 	opts := render.Options{
 		Width:   columns,
-		Now:     time.Now(),
+		Now:     now,
 		Env:     os.Getenv,
 		Profile: claudeaccount.Provider(os.Getenv),
+		Sources: sources.NewProvider(now, ri).Lookup,
 	}
 
 	w := bufio.NewWriter(stdout)

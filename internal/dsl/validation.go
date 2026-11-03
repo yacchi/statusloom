@@ -3,6 +3,8 @@ package dsl
 import (
 	"errors"
 	"strings"
+
+	"github.com/yacchi/statusloom/internal/jsonselect"
 )
 
 // Validate performs the semantic checks that depend on the registry,
@@ -217,6 +219,7 @@ func (v *validator) validateField(f *FieldNode, inSubagent bool) {
 				v.errf(f.Meta.SourceRange, "field %q does not support hyperlink", f.Name)
 			}
 			v.validateVar(f, def)
+			v.validateSource(f, def)
 			v.diags = append(v.diags, ValidateFormatter(def, f.Formatter, f.Meta.SourceRange)...)
 		} else {
 			v.errf(f.Meta.SourceRange, "unknown field %q for tool %q", f.Name, v.tool)
@@ -268,6 +271,79 @@ func (v *validator) validateVar(f *FieldNode, def FieldDef) {
 	}
 }
 
+// validateSource checks the `source` / `select` / `fallback` attributes against
+// the field definition (markup.md "source").
+//
+// An empty source is NOT diagnosed, for the same mid-edit reason validateVar
+// gives: a freshly dropped palette item must stay savable and renders empty.
+// Nothing here reads sources.json: an undefined id is a `statusloom doctor`
+// finding, not a document error, so a document still validates on a machine
+// where the source has not been configured yet.
+func (v *validator) validateSource(f *FieldNode, def FieldDef) {
+	r := f.Meta.SourceRange
+	if !def.RequiresSource {
+		if f.Source != "" {
+			v.errf(r, "field %q does not take a source attribute", f.Name)
+		}
+		if f.Select != "" {
+			v.errf(r, "field %q does not take a select attribute", f.Name)
+		}
+		if f.Fallback != "" {
+			v.errf(r, "field %q does not take a fallback attribute", f.Name)
+		}
+		return
+	}
+
+	if f.Source != "" && !ValidSourceID(f.Source) {
+		v.errInvalidSourceID(r, f.Source)
+	}
+	if f.Select != "" {
+		if _, err := jsonselect.Parse(f.Select); err != nil {
+			// Report only the message: the Error() text appends the offset in a
+			// form that reads badly next to the quoted expression.
+			msg := err.Error()
+			var se *jsonselect.SyntaxError
+			if errors.As(err, &se) {
+				msg = se.Message
+			}
+			v.errf(r, "invalid select %q: %s", f.Select, msg)
+		}
+	}
+	if f.Fallback != "" {
+		v.validateFallback(f)
+	}
+}
+
+// validateFallback checks the `fallback` attribute: it must name a built-in,
+// non-subagent field, and the formatter on the source field must also apply to
+// that fallback field (the fallback is what actually renders when the source
+// has no value, so its formats are the ones that matter).
+func (v *validator) validateFallback(f *FieldNode) {
+	r := f.Meta.SourceRange
+	fb, ok := FieldByName(v.tool, f.Fallback)
+	switch {
+	case !ok:
+		v.errf(r, "fallback references unknown field %q", f.Fallback)
+	case fb.RequiresSource || fb.RequiresVar:
+		v.errf(r, "fallback %q must be a built-in field; source and env cannot be a fallback", f.Fallback)
+	case fb.Category == "subagent":
+		// Unconditional: the fallback is not itself a <field> in <subagent>,
+		// so enforceSubagentScope does not cover it.
+		v.errf(r, "fallback %q cannot be used outside <subagent>", f.Fallback)
+	case f.Formatter.Name != "" && knownFormatters[f.Formatter.Name] && !containsString(fb.Formats, f.Formatter.Name):
+		// An unknown formatter name is already reported by ValidateFormatter,
+		// so it is skipped here rather than reported twice.
+		v.errf(r, "formatter %q is not applicable to fallback field %q", f.Formatter.Name, f.Fallback)
+	}
+}
+
+// errInvalidSourceID reports a source id that ValidSourceID rejects. The text
+// is shared with sources.Definition.Validate, so both reject with the same
+// message.
+func (v *validator) errInvalidSourceID(r SourceRange, id string) {
+	v.errf(r, "invalid source id %q: use 1-64 characters of a-z, 0-9 and -, starting with a letter", id)
+}
+
 func (v *validator) validateFlex(f *FlexNode) {
 	s := f.Size
 	switch {
@@ -294,14 +370,20 @@ func (v *validator) validateCommon(c CommonAttributes, nodeRange SourceRange, se
 		v.errf(nodeRange, "invalid background color %q", c.Style.Background)
 	}
 	if c.Optional != "" && v.toolKnown {
-		name, varName := ParseOptional(c.Optional)
+		name, param := ParseOptional(c.Optional)
 		def, ok := FieldByName(v.tool, name)
 		switch {
 		case !ok:
 			v.errf(nodeRange, "optional references unknown field %q", name)
-		case varName != "" && !def.RequiresVar:
+		case def.RequiresSource && param == "":
+			v.errf(nodeRange, "optional %q requires a source id, as in optional=%q", c.Optional, name+":SOURCE_ID")
+		case def.RequiresSource && !ValidSourceID(param):
+			v.errInvalidSourceID(nodeRange, param)
+		case def.RequiresSource:
+			// optional="source:<id>" is valid; the id is never looked up in sources.json.
+		case param != "" && !def.RequiresVar:
 			v.errf(nodeRange, "optional %q: field %q does not take a var", c.Optional, name)
-		case varName == "" && def.RequiresVar:
+		case param == "" && def.RequiresVar:
 			v.errf(nodeRange, "optional %q requires a variable name, as in optional=%q", c.Optional, name+":VAR_NAME")
 		}
 	}
@@ -350,8 +432,17 @@ func (v *validator) validateCondition(expr string, baseRange SourceRange, selfMe
 			continue
 		}
 		if v.toolKnown {
-			if _, ok := MetricByName(v.tool, m); !ok {
+			name, param := ParseMetricRef(m)
+			def, ok := MetricByName(v.tool, name)
+			switch {
+			case !ok:
 				v.errf(rng, "unknown metric %q", m)
+			case def.Param == "" && param != "":
+				v.errf(rng, "metric %q takes no parameter", m)
+			case def.Param == "source" && param == "":
+				v.errf(rng, "metric %q requires a source id, as in %q", m, name+":SOURCE_ID")
+			case def.Param == "source" && !ValidSourceID(param):
+				v.errInvalidSourceID(rng, param)
 			}
 		}
 	}

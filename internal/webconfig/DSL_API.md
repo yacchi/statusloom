@@ -90,7 +90,7 @@ per responsive in the response's `selectedVariants` map — see
 | `line` | *common* | `children[]` |
 | `span` | *common* | `children[]`, `colorRules[]?` |
 | `text` | `role`, `value`, *common* | `colorRules[]?` |
-| `field` | `name`, `format`, `precision`, `currency`, `raw`, `hyperlink`, `min-width`, `align`, *common* | `colorRules[]?` |
+| `field` | `name`, `format`, `precision`, `currency`, `raw`, `hyperlink`, `min-width`, `align`, `var`, `unmask`, `source`, `select`, `fallback`, *common* | `colorRules[]?` |
 | `flex` | `size` | — |
 | `raw-text` | `value` | — |
 | `comment` | `value` | — |
@@ -101,6 +101,13 @@ per responsive in the response's `selectedVariants` map — see
 `padding-right`, `prefix`, `suffix`, `optional`, `when`.
 
 - `text` / `raw-text` / `comment` carry their text in `value`.
+- A `field` with `name="source"` carries three string keys: `source` (the
+  external source id, as defined in `sources.json`), `select` (the jsonselect
+  expression applied to that source's document), and `fallback` (the built-in
+  field name shown when the source yields no value). Each key is emitted only
+  when non-empty; an absent key or `""` means unset. Every AST-carrying
+  endpoint (`parse`, `serialize`, and the document/draft round trips) keeps
+  all three, so AST JSON → DSL → AST JSON is lossless for them.
 - Color-rules are **not** in `children`; they live in a separate `colorRules`
   array so `children` indices stay aligned with the renderer's leaf nodes.
 - `subagent` is a `layout`'s or `variant`'s **optional**, at-most-one region
@@ -285,8 +292,16 @@ are returned for the editor but never block the write.
     same-width, same-variant guarantee plans/subagent-region-dsl.md
     requires).
 
+Source fields (`name="source"`) resolve read-only during preview: the preview
+reads `sources.json`, file sources, and the cache envelopes the refresh worker
+has already written. Preview (both the main section and `section:"subagent"`)
+**never fetches a command or http source**. A command/http source that has
+never been fetched therefore previews empty, or as its `fallback` field when one
+is set. Only the refresh worker and the explicit source test endpoint
+(`POST /api/sources/{id}/test`, see Sources API) fetch.
+
 ### `GET /api/dsl/fields?tool=claude-code`
-→ `200 { "fields": [ { "name", "displayName", "descriptions": {"en","ja"}, "category", "linkable"?, "requiresVar"?, "selfMetric"?, "formats"?, "capability"?, "preview": {"text","ansi"} } ] }`
+→ `200 { "fields": [ { "name", "displayName", "descriptions": {"en","ja"}, "category", "linkable"?, "requiresVar"?, "requiresSource"?, "selfMetric"?, "formats"?, "capability"?, "preview": {"text","ansi"} } ] }`
 
 `requiresVar` marks a field parameterized by a `var` attribute (`env` is the
 only one today): the properties panel must render a variable-name input for it,
@@ -295,6 +310,12 @@ and a `<field>` AST node for it carries `"var"` (string) and `"unmask"`
 all - neither error nor warning - so a freshly dropped palette item stays
 savable and does not pollute the agent's stderr on every render; the field just
 renders empty.
+
+`requiresSource` (boolean, omitted when `false`) marks the `source` field, which
+reads its value from an external source rather than from the snapshot. The
+properties panel shows source, select, and fallback inputs for it, and the
+field's AST node carries the `source` / `select` / `fallback` keys described in
+AST JSON.
 
 The field catalog for the palette, sourced entirely from the Go DSL registry
 (single source of truth): the session/account/git field set **plus** the
@@ -323,7 +344,7 @@ hidden unconditionally until one exists — that is a different situation from
 `"oauth-usage"`, which has a probe that can simply fail transiently.
 
 ### `GET /api/dsl/metrics?tool=claude-code`
-→ `200 { "metrics": [ { "name", "displayName", "descriptions": {"en","ja"}, "percent", "text", "values" } ] }`
+→ `200 { "metrics": [ { "name", "displayName", "descriptions": {"en","ja"}, "percent", "text", "values", "param"? } ] }`
 
 The named-metric catalog for `when` / `color-rule` editing, from the DSL
 registry: the session/account metrics plus the `task-*` self-metrics backing
@@ -343,6 +364,11 @@ type error), and `values` (optional) lists the known values when the metric is a
 closed enumeration (`account-type`: `claude_max` / `claude_team`); a value
 outside that list is still valid, since the strings come from Claude Code. Their
 main use is a conditional `<variant when="account-type eq &quot;claude_team&quot;">`.
+
+`param` (string, optional, omitted when empty) names the kind of argument a
+parameterized metric takes. Today only `source-stale` has one, `"param":
+"source"`; it is referenced as `source-stale:<id>`, where `<id>` is a source id
+from `sources.json`.
 
 ### `GET /api/usage/probe`
 → `200 { "available": bool, "reason": "ok" | "no-token" | "unauthorized" | "rate-limited" | "error", "extraUsageEnabled": bool }`
@@ -365,6 +391,70 @@ regardless of `available`). `reason` explains the outcome:
 
 `extraUsageEnabled` is meaningful only when `reason` is `ok`: it reports whether
 the account has extra (metered) usage enabled at all.
+
+### Sources API
+
+External sources feed `<field name="source">` values. Their definitions live in
+`<configDir>/sources.json`, **never in the DSL**: a shared DSL (for example a
+Room preset) must not carry source paths, commands, or URLs. Every route below
+sits behind the same Bearer-token, Host, and Origin protection as the other
+`/api/*` routes. Errors use the shape `{"error": "<message>"}`.
+
+#### SourceEntry
+
+```json
+{ "id": "ccprofile", "kind": "http", "path": "", "argv": [], "url": "http://127.0.0.1:47921/sessions.json",
+  "allowRemote": false, "ttlSeconds": 30, "staleAfterSeconds": 0, "timeoutSeconds": 0,
+  "warnings": ["allow-remote", "short-ttl"] }
+```
+
+Every key is always present. `argv` and `warnings` are `[]` when there is
+nothing to report. Numeric fields hold the stored raw values, where `0` means
+the default: ttl is `max(30 s, refreshInterval)`, staleAfter is 3 × ttl, and the
+timeout is 2 s. `warnings` is the definition's warning list.
+
+#### `GET /api/sources`
+→ `200 { "path": "<sources.json path>", "sources": [SourceEntry...] }`, sorted by id.
+If `sources.json` is unreadable or invalid, the response is `500`.
+
+#### `PUT /api/sources/{id}`
+Body: `{ "kind", "path"?, "argv"?, "url"?, "allowRemote"?, "ttlSeconds"?, "staleAfterSeconds"?, "timeoutSeconds"? }`,
+limited to 64 KiB. Creates the source or replaces it.
+
+- `200 { "source": SourceEntry }`
+- A validation error returns `400` with the definition's validation message,
+  and nothing is written.
+- Malformed JSON returns `400`.
+
+#### `DELETE /api/sources/{id}`
+- `200 { "removed": true }`
+- Unknown id: `404 { "error": "unknown source" }`
+
+#### `POST /api/sources/{id}/test`
+Body: `{ "select": string, "sessionId"?: string, "sample"?: string }`.
+
+- Unknown id: `404 { "error": "unknown source" }`.
+- Otherwise the snapshot is resolved the same way as `POST /api/dsl/preview`
+  (`sessionId`, or `sample` for a synthetic snapshot). The source is fetched
+  **once**, and `select` is then applied to the document.
+- `200 { "ok": bool, "error": string, "matched": bool, "value": <JSON value or null>, "display": string, "documentPreview": string }`
+  - `ok` is `true` when there was no fetch, decode, or select error. `error`
+    holds that error's text, or `""`.
+  - `documentPreview` is the fetched document, re-encoded with two-space
+    indentation and truncated to 4096 bytes on a UTF-8 boundary. It is `""`
+    when there was no document.
+
+Where the fetch runs depends on the source kind:
+
+- A **file** source is read in-process.
+- A **command** or **http** source is fetched by a child process,
+  `statusloom refresh --probe <id>`. It never runs in the configurator server
+  process.
+
+The fetch timeout is the source's timeout + 5 s. The test endpoint **never
+writes the cache**: it is a read-only probe for checking a `select` expression.
+The render path, the preview endpoint, and `statusloom doctor` never fetch a
+command or http source.
 
 ### History API
 

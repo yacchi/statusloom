@@ -123,7 +123,7 @@ func (e *docEval) variantEligible(vr *dsl.VariantNode) bool {
 	if vr.When == "" {
 		return true
 	}
-	return e.condTrue(vr.When, "")
+	return e.condTrue(vr.When, selfRef{})
 }
 
 // selectedVariantIndex computes the index selectVariant would choose —
@@ -517,7 +517,7 @@ func (e *docEval) resolvePowerlineStyles(pieces []flatPiece, projected []piece) 
 // line's own decoration (rare) wraps its children like a span.
 func (e *docEval) flattenLine(line *dsl.LineNode) []flatPiece {
 	base := mergeStyle(docStyle{}, line.Common.Style)
-	if !e.gate(line.Common, "") {
+	if !e.gate(line.Common, selfRef{}) {
 		return nil
 	}
 	var out []flatPiece
@@ -568,11 +568,11 @@ func (e *docEval) flattenNodes(nodes []dsl.Node, inherited docStyle, out *[]flat
 // inherited. A span gated off contributes nothing.
 func (e *docEval) emitSpan(s *dsl.SpanNode, inherited docStyle, out *[]flatPiece, segment int) {
 	base := mergeStyle(inherited, s.Common.Style)
-	if !e.gate(s.Common, "") {
+	if !e.gate(s.Common, selfRef{}) {
 		return
 	}
 	own := base
-	own.color = e.resolveColorRules(s.Common.ColorRules, base.color, "")
+	own.color = e.resolveColorRules(s.Common.ColorRules, base.color, selfRef{})
 	e.appendDeco(out, s, spaces(s.Common.Box.PaddingLeft), own, segment)
 	e.appendDeco(out, s, s.Common.Prefix, own, segment)
 	e.flattenNodes(s.Children, own, out, segment)
@@ -586,11 +586,11 @@ func (e *docEval) emitSpan(s *dsl.SpanNode, inherited docStyle, out *[]flatPiece
 // (prefix/suffix, if any, are kept).
 func (e *docEval) emitText(t *dsl.TextNode, inherited docStyle, out *[]flatPiece, segment int) {
 	st := mergeStyle(inherited, t.Common.Style)
-	if !e.gate(t.Common, "") {
+	if !e.gate(t.Common, selfRef{}) {
 		return
 	}
 	own := st
-	own.color = e.resolveColorRules(t.Common.ColorRules, st.color, "")
+	own.color = e.resolveColorRules(t.Common.ColorRules, st.color, selfRef{})
 
 	if t.Role == "separator" {
 		var plain string
@@ -630,13 +630,32 @@ func isLegacyDefaultSeparator(t *dsl.TextNode) bool {
 // passes, the value may be empty but prefix/suffix/padding still render
 // (markup.md item 3). Layout order: padding-left, prefix, content, suffix,
 // padding-right, all in the field's own (color-rule-resolved) style.
+//
+// A source field (FieldDef.RequiresSource) is resolved once, before the gate:
+// its optional/when gate and color-rules see the source value (or, when the
+// value is absent, the fallback field's self metric, else nothing), and its
+// text - possibly the fallback field's text - then goes through the same
+// min-width/align/decoration path as any field. The segment's node stays the
+// source FieldNode even when the fallback rendered.
 func (e *docEval) emitField(f *dsl.FieldNode, inherited docStyle, out *[]flatPiece, segment int) {
 	st := mergeStyle(inherited, f.Common.Style)
-	self := e.selfMetric(f.Name)
+	var self selfRef
+	var content string
+	fd, ok := dsl.FieldByName(e.tool, f.Name)
+	isSource := ok && fd.RequiresSource
+	if isSource {
+		res := e.sourceField(f)
+		self = res.self
+		content = res.text
+	} else {
+		self = selfMetricRef(e.selfMetric(f.Name))
+	}
 	if !e.gate(f.Common, self) {
 		return
 	}
-	content := e.fieldText(f)
+	if !isSource {
+		content = e.fieldText(f)
+	}
 	content = padMinWidth(content, f.MinWidth, f.Align)
 	own := st
 	own.color = e.resolveColorRules(f.Common.ColorRules, st.color, self)
@@ -665,10 +684,10 @@ func (e *docEval) appendDeco(out *[]flatPiece, node dsl.Node, text string, style
 // gate evaluates a node's optional + when attributes (AND). optional checks
 // a field's existence (its default, non-compact/non-raw text is non-empty);
 // when parses and evaluates the condition. A parse/eval error or an
-// unresolvable metric hides the node (markup.md "条件表示"). self is the
-// owning field's self metric ("" for span/text/line, where "self" cannot
-// resolve).
-func (e *docEval) gate(c dsl.CommonAttributes, self string) bool {
+// unresolvable metric hides the node (markup.md "条件表示"). self is what
+// "self" resolves to on the owning field (selfRef{} for span/text/line, where
+// "self" cannot resolve).
+func (e *docEval) gate(c dsl.CommonAttributes, self selfRef) bool {
 	if c.Optional != "" && !e.fieldExists(c.Optional) {
 		return false
 	}
@@ -680,9 +699,10 @@ func (e *docEval) gate(c dsl.CommonAttributes, self string) bool {
 
 // condTrue parses and evaluates a when expression, answering false on a parse
 // error, an eval error, or an unresolvable metric — the "no data -> hidden"
-// rule of markup.md "条件表示". self is the owning field's self metric ("" where
-// `self` cannot resolve: span/text/line, and a <variant>'s candidacy gate).
-func (e *docEval) condTrue(expr string, self string) bool {
+// rule of markup.md "条件表示". self is what `self` resolves to on the owning
+// field (selfRef{} where it cannot resolve: span/text/line, and a <variant>'s
+// candidacy gate).
+func (e *docEval) condTrue(expr string, self selfRef) bool {
 	parsed, err := dsl.ParseCondition(expr)
 	if err != nil {
 		return false
@@ -700,8 +720,14 @@ func (e *docEval) condTrue(expr string, self string) bool {
 // var-taking field: optional="env:AWS_PROFILE" gates on that variable being
 // set. Masking is irrelevant here - a masked value is still non-empty - so
 // existence does not depend on the unmask setting.
+//
+// optional="source:<id>" checks only that the source is defined and available;
+// the select of any field is not evaluated.
 func (e *docEval) fieldExists(ref string) bool {
 	name, varName := dsl.ParseOptional(ref)
+	if fd, ok := dsl.FieldByName(e.tool, name); ok && fd.RequiresSource {
+		return sourceAvailable(e.opts, varName)
+	}
 	spec := config.WidgetSpec{Type: name, Var: varName}
 	return renderContent(spec, e.snap, e.cfg, e.opts, false) != ""
 }
@@ -725,7 +751,7 @@ func (e *docEval) fieldText(f *dsl.FieldNode) string {
 // evaluation over the node's self resolver), falling back to base when none
 // match. A rule whose condition fails to parse or errors is skipped
 // (markup.md "color-rule").
-func (e *docEval) resolveColorRules(rules []dsl.ColorRule, base, self string) string {
+func (e *docEval) resolveColorRules(rules []dsl.ColorRule, base string, self selfRef) string {
 	for _, r := range rules {
 		expr, err := dsl.ParseCondition(r.When)
 		if err != nil {

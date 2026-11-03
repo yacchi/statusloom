@@ -213,6 +213,13 @@ type FieldNode struct {
 	// Unmask opts a name="env" field out of the credential masking
 	// IsSecretEnvName applies (markup.md "env").
 	Unmask bool
+	// Source is the raw `source` attribute: the external source id for name="source".
+	Source string
+	// Select is the raw `select` attribute: a jsonselect expression for name="source".
+	Select string
+	// Fallback is the raw `fallback` attribute: the built-in field rendered when a
+	// name="source" field has no value.
+	Fallback string
 	// MinWidth is the raw `min-width` attribute (nil = unspecified). When
 	// set, the field's formatted value (outside prefix/suffix) is padded
 	// with spaces to at least this many display columns; a longer value is

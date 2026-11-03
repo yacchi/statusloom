@@ -45,5 +45,20 @@
   "rate_limits": {
     "five_hour": { "used_percentage": 27, "resets_at": 1783731600 },
     "seven_day": { "used_percentage": 79, "resets_at": 1784113200 }
+  },
+  "prompt_cache": {
+    "warm": true,
+    "caching_observed": true,
+    "ttl": "1h",
+    "expires_at": 1783735200,
+    "requests": 14,
+    "misses": 2,
+    "expected_rebuilds": 1,
+    "hit_ratio": 0.91,
+    "cache_write_tokens": 12000,
+    "miss_recache_tokens": 30000,
+    "last_miss_at": 1783731000,
+    "last_miss_cause": { "causes": ["tools_changed"] },
+    "recache_tokens_if_cold": 45000
   }
 }

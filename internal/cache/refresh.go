@@ -15,28 +15,6 @@ import (
 const transcriptRefreshTTL = 3 * time.Second
 const refreshLeaseTTL = 2 * time.Minute
 
-type RefreshManifest struct {
-	SchemaVersion int                       `json:"schemaVersion"`
-	Sessions      map[string]RefreshSession `json:"sessions"`
-	AccountUsage  AccountUsageSchedule      `json:"accountUsage"`
-}
-
-type RefreshSession struct {
-	NextDueAt   time.Time `json:"nextDueAt"`
-	LastAttempt time.Time `json:"lastAttempt,omitempty"`
-	LastSuccess time.Time `json:"lastSuccess,omitempty"`
-}
-
-// AccountUsageSchedule tracks the account-usage worker's polling cadence
-// (see account_usage.go), persisted alongside the transcript refresh
-// manifest so a single file captures all background-refresh scheduling.
-type AccountUsageSchedule struct {
-	NextDueAt   time.Time `json:"nextDueAt"`
-	LastAttempt time.Time `json:"lastAttempt,omitempty"`
-	LastSuccess time.Time `json:"lastSuccess,omitempty"`
-	Failures    int       `json:"failures,omitempty"`
-}
-
 type RefreshLease struct {
 	SchemaVersion int       `json:"schemaVersion"`
 	ID            string    `json:"id"`
@@ -84,69 +62,6 @@ func transcriptPath(sessionID string) (string, error) {
 	}
 	s := sha256.Sum256([]byte(sessionID))
 	return filepath.Join(d, "sources", "transcript-"+hex.EncodeToString(s[:8])+".json"), nil
-}
-
-func LoadRefreshManifest() RefreshManifest {
-	p, err := manifestPath()
-	if err != nil {
-		return RefreshManifest{SchemaVersion: 1, Sessions: map[string]RefreshSession{}}
-	}
-	var m RefreshManifest
-	if ok, err := ReadJSON(p, &m); err != nil || !ok {
-		m = RefreshManifest{SchemaVersion: 1}
-	}
-	if m.Sessions == nil {
-		m.Sessions = map[string]RefreshSession{}
-	}
-	return m
-}
-
-func RefreshDue(sessionID string, now time.Time) bool {
-	m := LoadRefreshManifest()
-	s, ok := m.Sessions[sessionID]
-	return !ok || !now.Before(s.NextDueAt)
-}
-
-// AccountUsageDue reports whether the account-usage worker (account_usage.go)
-// should attempt a fetch: either it has never run (NextDueAt is zero) or the
-// scheduled time has arrived.
-func AccountUsageDue(now time.Time) bool {
-	m := LoadRefreshManifest()
-	return m.AccountUsage.NextDueAt.IsZero() || !now.Before(m.AccountUsage.NextDueAt)
-}
-
-// usageBackoffMaxShift caps the exponential shift applied by NextUsageDue
-// so that UsageRefreshInterval<<shift cannot overflow time.Duration even
-// for a very large failure count; the result is clamped to
-// usageBackoffMax regardless once the shifted value exceeds it.
-const usageBackoffMaxShift = 16
-
-// NextUsageDue computes the next scheduled account-usage fetch time given
-// the number of consecutive failures observed so far. With no failures it
-// uses the steady-state UsageRefreshInterval; each failure doubles the
-// delay (exponential backoff), capped at usageBackoffMax.
-func NextUsageDue(now time.Time, failures int) time.Time {
-	if failures <= 0 {
-		return now.Add(UsageRefreshInterval)
-	}
-	shift := failures
-	if shift > usageBackoffMaxShift {
-		shift = usageBackoffMaxShift
-	}
-	delay := UsageRefreshInterval << uint(shift)
-	if delay <= 0 || delay > usageBackoffMax {
-		delay = usageBackoffMax
-	}
-	return now.Add(delay)
-}
-
-func StoreRefreshManifest(m RefreshManifest) error {
-	p, err := manifestPath()
-	if err != nil {
-		return err
-	}
-	m.SchemaVersion = 1
-	return WriteJSONAtomic(p, m)
 }
 
 // AcquireRefreshLease elects one short-lived worker without blocking.

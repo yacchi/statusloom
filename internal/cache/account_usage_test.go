@@ -180,29 +180,6 @@ func TestNewAccountUsageEnvelope(t *testing.T) {
 	}
 }
 
-func TestNextUsageDue(t *testing.T) {
-	now := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
-
-	cases := []struct {
-		name     string
-		failures int
-		want     time.Time
-	}{
-		{"no failures", 0, now.Add(5 * time.Minute)},
-		{"one failure", 1, now.Add(10 * time.Minute)},
-		{"three failures", 3, now.Add(40 * time.Minute)},
-		{"large failure count capped", 1000, now.Add(60 * time.Minute)},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := NextUsageDue(now, tc.failures)
-			if !got.Equal(tc.want) {
-				t.Fatalf("NextUsageDue(now, %d) = %v, want %v", tc.failures, got, tc.want)
-			}
-		})
-	}
-}
-
 // TestLoadExtraUsage_Fresh: an ExtraUsage record observed just now is
 // reported fresh (stale=false) and ok=true.
 func TestLoadExtraUsage_Fresh(t *testing.T) {
@@ -374,34 +351,5 @@ func TestLoadAccountUsageRaw_Missing(t *testing.T) {
 	env, ok := LoadAccountUsageRaw("default")
 	if ok || env != nil {
 		t.Fatalf("LoadAccountUsageRaw() = (%+v, %v), want (nil, false)", env, ok)
-	}
-}
-
-func TestAccountUsageDue(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("STATUSLOOM_CACHE_DIR", dir)
-
-	now := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)
-
-	if !AccountUsageDue(now) {
-		t.Fatalf("AccountUsageDue() = false, want true for zero-value manifest")
-	}
-
-	m := LoadRefreshManifest()
-	m.AccountUsage.NextDueAt = now.Add(1 * time.Hour)
-	if err := StoreRefreshManifest(m); err != nil {
-		t.Fatalf("StoreRefreshManifest() error = %v", err)
-	}
-	if AccountUsageDue(now) {
-		t.Fatalf("AccountUsageDue() = true, want false when NextDueAt is in the future")
-	}
-
-	m2 := LoadRefreshManifest()
-	m2.AccountUsage.NextDueAt = now.Add(-1 * time.Hour)
-	if err := StoreRefreshManifest(m2); err != nil {
-		t.Fatalf("StoreRefreshManifest() error = %v", err)
-	}
-	if !AccountUsageDue(now) {
-		t.Fatalf("AccountUsageDue() = false, want true when NextDueAt is in the past")
 	}
 }

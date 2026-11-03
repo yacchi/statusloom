@@ -86,6 +86,12 @@ export interface FieldNode extends AstBase, CommonAttrs {
     // Opts a name="env" field out of credential masking. Emitted only when
     // true.
     unmask?: boolean;
+    // External source id for name="source".
+    source?: string;
+    // jsonselect expression for name="source".
+    select?: string;
+    // Built-in field rendered when a name="source" field has no value.
+    fallback?: string;
     colorRules?: ColorRuleNode[];
 }
 
@@ -346,6 +352,9 @@ export interface FieldCatalogEntry {
     // True when this field is parameterized by a `var` attribute (name="env"):
     // the properties panel shows a variable-name input for it.
     requiresVar?: boolean;
+    // True for the `source` field: the properties panel shows a source picker
+    // plus select and fallback inputs for it.
+    requiresSource?: boolean;
     // The metric this field exposes as "self" in when/color-rule conditions.
     selfMetric?: string;
     // Formatter names applicable to this field (absent = no formatter).
@@ -387,6 +396,9 @@ export interface Metric {
     // (account-type: claude_max / claude_team). Offered as suggestions; a value
     // outside the list is still valid.
     values?: string[];
+    // Parameter of a parameterized metric: "source" for source-stale:<id>.
+    // Absent for every other metric.
+    param?: string;
 }
 
 // GET /api/tools entry: one document (tool) the configurator can edit. The

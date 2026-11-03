@@ -3,6 +3,7 @@ package render
 import (
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yacchi/statusloom/internal/config"
@@ -322,6 +323,53 @@ func renderContent(spec config.WidgetSpec, snap schema.StatusSnapshot, cfg confi
 			return ""
 		}
 		return formatPercentValue(rate) + "%"
+
+	case "cache-warm":
+		if sess.PromptCache == nil {
+			return ""
+		}
+		if sess.PromptCache.Warm {
+			return "warm"
+		}
+		return "cold"
+	case "cache-ttl":
+		if sess.PromptCache == nil {
+			return ""
+		}
+		return sess.PromptCache.TTL
+	case "cache-expires-at":
+		pc := sess.PromptCache
+		if pc == nil || pc.ExpiresAt == nil || opts.Now.IsZero() {
+			return ""
+		}
+		return countdown(opts.Now, *pc.ExpiresAt)
+	case "cache-hit-ratio":
+		pc := sess.PromptCache
+		if pc == nil || pc.HitRatio == nil {
+			return ""
+		}
+		return formatPercent(*pc.HitRatio * 100)
+	case "cache-requests":
+		if sess.PromptCache == nil {
+			return ""
+		}
+		return renderInteger(sess.PromptCache.Requests, spec.RawValue, compact)
+	case "cache-misses":
+		if sess.PromptCache == nil {
+			return ""
+		}
+		return renderInteger(sess.PromptCache.Misses, spec.RawValue, compact)
+	case "cache-recache-tokens":
+		pc := sess.PromptCache
+		if pc == nil || pc.RecacheTokensIfCold == nil {
+			return ""
+		}
+		return renderInteger(*pc.RecacheTokensIfCold, spec.RawValue, compact)
+	case "cache-last-miss-cause":
+		if sess.PromptCache == nil {
+			return ""
+		}
+		return strings.Join(sess.PromptCache.LastMissCauses, ",")
 
 	case "task-description":
 		if snap.Subagent == nil {

@@ -640,6 +640,12 @@ func (p *parser) parseField(se xml.StartElement, start int) *FieldNode {
 			if b := p.parseBoolAttr("unmask", a.Value, tagRange); b != nil {
 				n.Unmask = *b
 			}
+		case "source":
+			n.Source = a.Value
+		case "select":
+			n.Select = a.Value
+		case "fallback":
+			n.Fallback = a.Value
 		case "min-width":
 			n.MinWidth = p.parsePositiveIntAttr("min-width", a.Value, tagRange)
 		case "align":

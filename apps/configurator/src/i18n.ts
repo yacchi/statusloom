@@ -191,6 +191,29 @@ const EN = {
     // import/export
     importFormatHint:
         "A Statusloom DSL document or a .sloom.md Markdown exchange file are both accepted — pasted or dropped content starting with \"---\" is treated as .sloom.md.",
+    // external sources
+    helpSource:
+        "The external source this field reads its value from. Definitions live in your local sources.json; they are never part of the shared document.",
+    helpSelect:
+        "Path into the source's JSON: .key for a member, [n] for an array index, [key=value] to pick the first array item whose key equals value. Placeholders ${session_id}, ${cwd}, ${workspace.project_dir} and ${CLAUDE_CONFIG_DIR} are substituted.",
+    helpFallback:
+        "Built-in field shown when the source has no value (for example, when the source is missing or stale).",
+    helpSourceTest:
+        "Fetch the source once now and show the result. For command and http sources this runs the command or request in a refresh subprocess.",
+    sourceUndefined:
+        "This source id is not defined in sources.json, so the field renders empty.",
+    sourceNoMatch:
+        "The source was fetched, but the select expression matched nothing.",
+    sourcesSection: "External sources",
+    helpSources:
+        "Definitions stay on this machine in sources.json. They are never included in the shared document or in exports.",
+    helpSourceTtl:
+        "How long a fetched value stays fresh. Empty means max(30 s, Claude Code refreshInterval). Minimum 5 s.",
+    sourceWarnAllowRemote:
+        "allowRemote is on: this source may fetch from a non-loopback http URL.",
+    sourceWarnShortTtl:
+        "A ttl below 10 s makes a fetch run very often. Consider a longer ttl.",
+    sourceDeleteConfirm: "Delete this source definition? Fields that use it will render empty.",
 };
 
 const JA: Record<MessageKey, string> = {
@@ -335,6 +358,29 @@ const JA: Record<MessageKey, string> = {
     historyRestoreConfirmDraftWarning: "未保存のドラフト編集も破棄されます。",
     importFormatHint:
         "Statusloom DSL ドキュメント、または .sloom.md Markdown 交換ファイルのどちらも読み込めます — 貼り付け・ドロップした内容が \"---\" で始まる場合は .sloom.md として扱われます。",
+    // external sources
+    helpSource:
+        "このフィールドが値を読み取る外部ソース。定義はローカルの sources.json にあり、共有されるドキュメントには含まれません。",
+    helpSelect:
+        "ソースJSON内のパス。.key はメンバー、[n] は配列の番号、[key=value] は key が value に一致する最初の配列要素を指します。${session_id}・${cwd}・${workspace.project_dir}・${CLAUDE_CONFIG_DIR} は置換されます。",
+    helpFallback:
+        "ソースに値がない場合（ソースが無い・古い場合など）に表示する組み込みフィールド。",
+    helpSourceTest:
+        "今すぐソースを1回取得して結果を表示します。command・http ソースでは、refresh サブプロセスでコマンドまたはリクエストを実行します。",
+    sourceUndefined:
+        "このソースIDは sources.json に定義されていないため、フィールドは空で描画されます。",
+    sourceNoMatch:
+        "ソースは取得できましたが、select 式が何にも一致しませんでした。",
+    sourcesSection: "External sources",
+    helpSources:
+        "定義はこのマシンの sources.json に保存されます。共有ドキュメントやエクスポートには含まれません。",
+    helpSourceTtl:
+        "取得した値を新鮮とみなす時間。空欄の場合は max(30 秒, Claude Code の refreshInterval)。最小 5 秒。",
+    sourceWarnAllowRemote:
+        "allowRemote が有効です：このソースはループバック以外の http URL から取得する場合があります。",
+    sourceWarnShortTtl:
+        "ttl が 10 秒未満だと取得が非常に頻繁に実行されます。より長い ttl を検討してください。",
+    sourceDeleteConfirm: "このソース定義を削除しますか？ これを使用しているフィールドは空で描画されます。",
 };
 
 export type MessageKey = keyof typeof EN;

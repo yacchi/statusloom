@@ -41,6 +41,13 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/exchange/import", s.handleImportExchange)
 	mux.HandleFunc("GET /api/exchange/export", s.handleExportExchange)
 
+	// Source definitions (sources.json) and the explicit one-shot test.
+	// Contract: DSL_API.md "Sources API".
+	mux.HandleFunc("GET /api/sources", s.handleListSources)
+	mux.HandleFunc("PUT /api/sources/{id}", s.handlePutSource)
+	mux.HandleFunc("DELETE /api/sources/{id}", s.handleDeleteSource)
+	mux.HandleFunc("POST /api/sources/{id}/test", s.handleTestSource)
+
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
 	mux.HandleFunc("POST /api/live", s.handleLive)
 	mux.HandleFunc("POST /api/live/session", s.handleLiveSession)

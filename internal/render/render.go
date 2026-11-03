@@ -52,6 +52,13 @@ type Options struct {
 	// use none never touch .claude.json; callers should memoize (see
 	// sync.OnceValue). nil means "no account data available".
 	Profile func() *schema.AccountProfile
+	// Sources resolves an external source id to its decoded JSON document for the
+	// `source` field, optional="source:<id>" and the source-stale:<id> metric.
+	// defined=false: no such source (renders empty silently). available=false: defined
+	// but no usable value (never fetched, failed, stale, unreadable). nil means no
+	// sources at all (every id undefined). Implementations must never run commands or
+	// touch the network (sources.Provider.Lookup is the production implementation).
+	Sources func(id string) (doc any, defined bool, available bool)
 }
 
 // env resolves an environment variable through Options.Env, defaulting to the
@@ -370,6 +377,32 @@ func metricValue(name string, snap schema.StatusSnapshot, cfg config.ToolConfig,
 		return map[string]float64{"git-staged": float64(snap.Repository.Staged), "git-unstaged": float64(snap.Repository.Unstaged), "git-untracked": float64(snap.Repository.Untracked), "git-ahead": float64(snap.Repository.Ahead), "git-behind": float64(snap.Repository.Behind)}[name], true
 	case "cache-hit-percent":
 		return cacheHitRate(sess.Context)
+	case "cache-expires-minutes":
+		pc := sess.PromptCache
+		if pc == nil || pc.ExpiresAt == nil {
+			return 0, false
+		}
+		return resetMinutes(&schema.RateWindow{ResetsAt: *pc.ExpiresAt}, opts.Now)
+	case "cache-hit-ratio-percent":
+		if sess.PromptCache == nil || sess.PromptCache.HitRatio == nil {
+			return 0, false
+		}
+		return *sess.PromptCache.HitRatio * 100, true
+	case "cache-requests":
+		if sess.PromptCache == nil {
+			return 0, false
+		}
+		return float64(sess.PromptCache.Requests), true
+	case "cache-misses":
+		if sess.PromptCache == nil {
+			return 0, false
+		}
+		return float64(sess.PromptCache.Misses), true
+	case "cache-recache-tokens":
+		if sess.PromptCache == nil || sess.PromptCache.RecacheTokensIfCold == nil {
+			return 0, false
+		}
+		return float64(*sess.PromptCache.RecacheTokensIfCold), true
 	case "extra-usage-cost-usd":
 		if snap.Account.ExtraUsage == nil || snap.Account.ExtraUsage.UsedCreditsUSD == nil {
 			return 0, false

@@ -163,9 +163,9 @@ func LoadExtraUsage(key string, now time.Time) (eu *ExtraUsageState, stale bool,
 }
 
 // StoreAccountUsage persists env under key. Unlike StoreAccount, there is
-// no dedup/skip logic: the worker controls its own polling cadence via
-// AccountUsageSchedule, so every call is expected to represent a genuine
-// new observation.
+// no dedup/skip logic: the worker controls its own polling cadence via the
+// usage work item in schedule.go, so every call is expected to represent a
+// genuine new observation.
 func StoreAccountUsage(key string, env AccountUsageEnvelope) error {
 	path, err := accountUsagePath(key)
 	if err != nil {

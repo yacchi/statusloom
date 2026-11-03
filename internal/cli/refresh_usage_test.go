@@ -1,12 +1,20 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/yacchi/statusloom/internal/cache"
+	"github.com/yacchi/statusloom/internal/sources"
 	"github.com/yacchi/statusloom/internal/usage"
 )
 
@@ -26,7 +34,7 @@ func swapUsageSeams(t *testing.T, tok func(func(string) string) (string, error),
 }
 
 // TestRunRefresh_UsageSuccess: the fetch succeeds -> envelope is stored and
-// the manifest schedule records success with Failures=0 and a normal-cadence
+// the account's refresh schedule entry records success with Failures=0 and a normal-cadence
 // NextDueAt.
 func TestRunRefresh_UsageSuccess(t *testing.T) {
 	setupEnv(t)
@@ -56,16 +64,16 @@ func TestRunRefresh_UsageSuccess(t *testing.T) {
 		t.Errorf("stored SevenDayOpus = %v, want 20", got.SevenDayOpus)
 	}
 
-	m := cache.LoadRefreshManifest()
-	if m.AccountUsage.Failures != 0 {
-		t.Errorf("Failures = %d, want 0", m.AccountUsage.Failures)
+	w := cache.LoadRefreshSchedule().Usage[cache.AccountCacheKey]
+	if w.Failures != 0 {
+		t.Errorf("Failures = %d, want 0", w.Failures)
 	}
-	if m.AccountUsage.LastSuccess.IsZero() {
+	if w.LastSuccess.IsZero() {
 		t.Error("LastSuccess not set on success")
 	}
 	wantDue := now.Add(cache.UsageRefreshInterval)
-	if diff := m.AccountUsage.NextDueAt.Sub(wantDue); diff > 2*time.Second || diff < -2*time.Second {
-		t.Errorf("NextDueAt = %v, want ~%v", m.AccountUsage.NextDueAt, wantDue)
+	if diff := w.NextDueAt.Sub(wantDue); diff > 2*time.Second || diff < -2*time.Second {
+		t.Errorf("NextDueAt = %v, want ~%v", w.NextDueAt, wantDue)
 	}
 }
 
@@ -93,17 +101,17 @@ func TestRunRefresh_UsageFailure(t *testing.T) {
 	}
 
 	now := time.Now()
-	m := cache.LoadRefreshManifest()
-	if m.AccountUsage.Failures != 1 {
-		t.Errorf("Failures = %d, want 1", m.AccountUsage.Failures)
+	w := cache.LoadRefreshSchedule().Usage[cache.AccountCacheKey]
+	if w.Failures != 1 {
+		t.Errorf("Failures = %d, want 1", w.Failures)
 	}
-	if !m.AccountUsage.LastSuccess.IsZero() {
+	if !w.LastSuccess.IsZero() {
 		t.Error("LastSuccess must not be set on failure")
 	}
 	// Backoff: NextDueAt must be strictly beyond the normal cadence.
 	minBackoff := now.Add(cache.UsageRefreshInterval)
-	if !m.AccountUsage.NextDueAt.After(minBackoff) {
-		t.Errorf("NextDueAt = %v, want after %v (backoff)", m.AccountUsage.NextDueAt, minBackoff)
+	if !w.NextDueAt.After(minBackoff) {
+		t.Errorf("NextDueAt = %v, want after %v (backoff)", w.NextDueAt, minBackoff)
 	}
 
 	// Prior envelope must be intact (unchanged utilization).
@@ -143,15 +151,16 @@ func TestRunRefresh_UsageExtraCarriedForward(t *testing.T) {
 		t.Fatal("expected ExtraUsage.ObservedAt to be set after poll 1")
 	}
 
-	// runRefresh gates the account-usage poll on cache.AccountUsageDue, and
-	// the successful poll above pushed NextDueAt out by
-	// cache.UsageRefreshInterval (5m). Force the schedule due again so the
-	// second runRefresh call actually reaches refreshAccountUsage instead of
-	// silently no-oping.
-	m := cache.LoadRefreshManifest()
-	m.AccountUsage.NextDueAt = time.Now().Add(-1 * time.Minute)
-	if err := cache.StoreRefreshManifest(m); err != nil {
-		t.Fatalf("StoreRefreshManifest() error = %v", err)
+	// runRefresh polls usage only when Usage[key] is due, and the successful
+	// poll above pushed its NextDueAt out by cache.UsageRefreshInterval (5m).
+	// Force the entry due again so the second runRefresh call actually
+	// reaches refreshAccountUsage instead of silently no-oping.
+	s := cache.LoadRefreshSchedule()
+	w := s.Usage[cache.AccountCacheKey]
+	w.NextDueAt = time.Now().Add(-1 * time.Minute)
+	s.Usage[cache.AccountCacheKey] = w
+	if err := cache.StoreRefreshSchedule(s); err != nil {
+		t.Fatalf("StoreRefreshSchedule() error = %v", err)
 	}
 
 	report2 := &usage.Report{
@@ -210,20 +219,264 @@ func TestRunRefresh_UsageNoToken(t *testing.T) {
 	}
 
 	now := time.Now()
-	m := cache.LoadRefreshManifest()
-	if m.AccountUsage.Failures != 0 {
-		t.Errorf("Failures = %d, want 0 (no-token is not a failure)", m.AccountUsage.Failures)
+	w := cache.LoadRefreshSchedule().Usage[cache.AccountCacheKey]
+	if w.Failures != 0 {
+		t.Errorf("Failures = %d, want 0 (no-token is not a failure)", w.Failures)
 	}
-	if m.AccountUsage.LastAttempt.IsZero() {
+	if w.LastAttempt.IsZero() {
 		t.Error("LastAttempt should be set even on the no-token path")
 	}
 	wantDue := now.Add(cache.UsageRefreshInterval)
-	if diff := m.AccountUsage.NextDueAt.Sub(wantDue); diff > 2*time.Second || diff < -2*time.Second {
-		t.Errorf("NextDueAt = %v, want ~%v", m.AccountUsage.NextDueAt, wantDue)
+	if diff := w.NextDueAt.Sub(wantDue); diff > 2*time.Second || diff < -2*time.Second {
+		t.Errorf("NextDueAt = %v, want ~%v", w.NextDueAt, wantDue)
 	}
 
 	// No envelope should have been stored.
 	if _, _, ok := cache.LoadAccountUsage(cache.AccountCacheKey, now); ok {
 		t.Error("no envelope should be stored on the no-token path")
+	}
+}
+
+// refreshUsageCaptureSpawns replaces startRefreshProcess with a recorder that
+// returns ret, restoring the previous seam (the TestMain stub) on cleanup.
+func refreshUsageCaptureSpawns(t *testing.T, ret error) *[][]string {
+	t.Helper()
+	var calls [][]string
+	prev := startRefreshProcess
+	startRefreshProcess = func(args ...string) error {
+		calls = append(calls, append([]string(nil), args...))
+		return ret
+	}
+	t.Cleanup(func() { startRefreshProcess = prev })
+	return &calls
+}
+
+// refreshUsageFailFetchSource installs a fetchSource fake that fails the test
+// when called.
+func refreshUsageFailFetchSource(t *testing.T) {
+	t.Helper()
+	prev := fetchSource
+	fetchSource = func(context.Context, sources.Definition, string) (sources.FetchResult, error) {
+		t.Error("fetchSource must not be called")
+		return sources.FetchResult{}, errors.New("unexpected fetch")
+	}
+	t.Cleanup(func() { fetchSource = prev })
+}
+
+// TestRefreshUsageTwoAccountKeys: usage due-ness is read for the rendering
+// account's key only, and a poll for one key never rewrites another key's
+// schedule entry or cache.
+func TestRefreshUsageTwoAccountKeys(t *testing.T) {
+	setupEnv(t)
+	t.Setenv("STATUSLOOM_NO_USAGE_API", "")
+	home := os.Getenv("HOME")
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{"oauthAccount":{"organizationUuid":"org-a"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	seed := cache.WorkSchedule{NextDueAt: now.Add(time.Hour), LastAttempt: now.Add(-time.Minute), Failures: 2}
+	s := cache.LoadRefreshSchedule()
+	s.Usage["org-b"] = seed
+	if err := cache.StoreRefreshSchedule(s); err != nil {
+		t.Fatal(err)
+	}
+	calls := refreshUsageCaptureSpawns(t, nil)
+
+	maybeStartRefresh(refreshRequest{Raw: []byte(`{}`), Now: now, AccountKey: "org-b"})
+	if len(*calls) != 0 {
+		t.Fatalf("org-b not due: spawns = %v, want none", *calls)
+	}
+	maybeStartRefresh(refreshRequest{Raw: []byte(`{}`), Now: now, AccountKey: "org-a"})
+	if len(*calls) != 1 {
+		t.Fatalf("org-a due: spawns = %d, want 1", len(*calls))
+	}
+
+	swapUsageSeams(t,
+		func(func(string) string) (string, error) { return "tok-abc", nil },
+		func(context.Context, string, string) (*usage.Report, int, error) {
+			return &usage.Report{FiveHour: &usage.Window{Utilization: 10, ResetsAt: now.Add(time.Hour)}}, 200, nil
+		},
+	)
+	if code := runRefresh((*calls)[0][1:], io.Discard, io.Discard); code != 0 {
+		t.Fatalf("runRefresh() code = %d, want 0", code)
+	}
+
+	got := cache.LoadRefreshSchedule()
+	a := got.Usage["org-a"]
+	if a.LastSuccess.IsZero() || a.Failures != 0 {
+		t.Errorf("Usage[org-a] = %+v, want LastSuccess set and Failures 0", a)
+	}
+	if _, ok := cache.LoadAccountUsageRaw("org-a"); !ok {
+		t.Error("org-a usage envelope not stored")
+	}
+	b := got.Usage["org-b"]
+	if !b.NextDueAt.Equal(seed.NextDueAt) || !b.LastAttempt.Equal(seed.LastAttempt) || !b.LastSuccess.Equal(seed.LastSuccess) || b.Failures != seed.Failures {
+		t.Errorf("Usage[org-b] = %+v, want unchanged %+v", b, seed)
+	}
+	if _, ok := cache.LoadAccountUsageRaw("org-b"); ok {
+		t.Error("org-b usage envelope must not be written")
+	}
+}
+
+// TestRefreshUsageSpawnArgs: the optional argument groups appear in order,
+// only when their condition holds.
+func TestRefreshUsageSpawnArgs(t *testing.T) {
+	raw := []byte(`{"session_id":"s1","transcript_path":"/t.jsonl","version":"2.1.200"}`)
+
+	t.Run("all groups", func(t *testing.T) {
+		setupEnv(t)
+		t.Setenv("STATUSLOOM_NO_USAGE_API", "")
+		calls := refreshUsageCaptureSpawns(t, nil)
+		maybeStartRefresh(refreshRequest{
+			Raw: raw, Now: time.Now(), ForceUsage: true, AccountKey: "k", UsesTranscript: true,
+			SourceRefs: []string{"a"},
+			Sources: func() sources.File {
+				return sources.File{Sources: map[string]sources.Definition{
+					"a": {ID: "a", Kind: sources.KindCommand, Argv: []string{"true"}},
+				}}
+			},
+			RefreshInterval: 1500 * time.Millisecond,
+		})
+		if len(*calls) != 1 {
+			t.Fatalf("spawns = %d, want 1", len(*calls))
+		}
+		args := (*calls)[0]
+		if len(args) < 4 || args[3] == "" {
+			t.Fatalf("args = %v, want a lease id at index 3", args)
+		}
+		want := []string{"refresh", "--once", "--lease-id", args[3], "--cc-version", "2.1.200",
+			"--session-id", "s1", "--transcript", "/t.jsonl", "--force-usage", "--sources", "a", "--refresh-interval", "1.5"}
+		if !slices.Equal(args, want) {
+			t.Errorf("args = %q\nwant %q", args, want)
+		}
+	})
+
+	t.Run("minimal", func(t *testing.T) {
+		setupEnv(t)
+		t.Setenv("STATUSLOOM_NO_USAGE_API", "")
+		calls := refreshUsageCaptureSpawns(t, nil)
+		maybeStartRefresh(refreshRequest{
+			Raw: raw, Now: time.Now(), AccountKey: "k",
+			Sources: func() sources.File {
+				t.Error("Sources must not be called without SourceRefs")
+				return sources.File{}
+			},
+		})
+		if len(*calls) != 1 {
+			t.Fatalf("spawns = %d, want 1", len(*calls))
+		}
+		args := (*calls)[0]
+		if len(args) < 4 || args[3] == "" {
+			t.Fatalf("args = %v, want a lease id at index 3", args)
+		}
+		want := []string{"refresh", "--once", "--lease-id", args[3], "--cc-version", "2.1.200"}
+		if !slices.Equal(args, want) {
+			t.Errorf("args = %q\nwant %q", args, want)
+		}
+	})
+}
+
+// TestRefreshUsageLeaseReleasedOnSpawnFailure: a failed spawn must not leave
+// the machine-wide lease held for its full TTL.
+func TestRefreshUsageLeaseReleasedOnSpawnFailure(t *testing.T) {
+	setupEnv(t)
+	t.Setenv("STATUSLOOM_NO_USAGE_API", "")
+	calls := refreshUsageCaptureSpawns(t, errors.New("spawn failed"))
+	maybeStartRefresh(refreshRequest{Raw: []byte(`{}`), Now: time.Now(), AccountKey: "k"})
+	if len(*calls) != 1 {
+		t.Fatalf("spawns = %d, want 1", len(*calls))
+	}
+	ok, err := cache.AcquireRefreshLease("next", time.Now())
+	if err != nil || !ok {
+		t.Errorf("AcquireRefreshLease after failed spawn = (%v, %v), want (true, nil)", ok, err)
+	}
+}
+
+// TestRefreshUsageProbeFlags: --probe rejects --once and every work-item flag,
+// and probe mode neither takes nor checks the refresh lease.
+func TestRefreshUsageProbeFlags(t *testing.T) {
+	for _, extra := range [][]string{
+		{"--once"},
+		{"--session-id", "x"},
+		{"--transcript", "t"},
+		{"--force-usage"},
+		{"--sources", "a"},
+	} {
+		t.Run(extra[0], func(t *testing.T) {
+			setupEnv(t)
+			t.Setenv("STATUSLOOM_NO_USAGE_API", "")
+			refreshUsageFailFetchSource(t)
+			var out bytes.Buffer
+			args := append([]string{"--probe", "a"}, extra...)
+			if code := runRefresh(args, &out, io.Discard); code != 2 {
+				t.Errorf("runRefresh(%v) = %d, want 2", args, code)
+			}
+			if out.Len() != 0 {
+				t.Errorf("stdout = %q, want empty", out.String())
+			}
+		})
+	}
+
+	t.Run("lease held elsewhere", func(t *testing.T) {
+		setupEnv(t)
+		t.Setenv("STATUSLOOM_NO_USAGE_API", "")
+		refreshUsageFailFetchSource(t)
+		now := time.Now()
+		if ok, err := cache.AcquireRefreshLease("other", now); err != nil || !ok {
+			t.Fatalf("seed lease = (%v, %v)", ok, err)
+		}
+		var out bytes.Buffer
+		if code := runRefresh([]string{"--probe", "nope"}, &out, io.Discard); code != 0 {
+			t.Fatalf("runRefresh(--probe nope) = %d, want 0", code)
+		}
+		lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+		if len(lines) != 1 {
+			t.Fatalf("stdout = %q, want one line", out.String())
+		}
+		var got sources.ProbeOutput
+		if err := json.Unmarshal([]byte(lines[0]), &got); err != nil {
+			t.Fatalf("decode %q: %v", lines[0], err)
+		}
+		if got.OK || got.Error != "unknown source" {
+			t.Errorf("probe output = %+v, want {OK:false Error:unknown source}", got)
+		}
+		if ok, _ := cache.AcquireRefreshLease("again", now); ok {
+			t.Error("probe mode must leave the other worker's lease held")
+		}
+	})
+}
+
+// TestRefreshUsageNoSpawnInPreview: the spawn now follows the render, but a
+// render with overrides or in preview mode still never spawns.
+func TestRefreshUsageNoSpawnInPreview(t *testing.T) {
+	cases := []struct {
+		name    string
+		set     string
+		preview bool
+		want    int
+	}{
+		{name: "overrides", set: "extra-usage-limit-usd=50", want: 0},
+		{name: "preview", preview: true, want: 0},
+		{name: "live", want: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setupEnv(t)
+			t.Setenv("STATUSLOOM_NO_USAGE_API", "")
+			calls := refreshUsageCaptureSpawns(t, nil)
+			var ov *metricOverrides
+			if tc.set != "" {
+				ov = &metricOverrides{}
+				if err := ov.Set(tc.set); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := renderDocFromRaw(fixture(t, "full.json"), envMap(nil), "claude-code", io.Discard, false, ov, tc.preview); err != nil {
+				t.Fatalf("renderDocFromRaw() error = %v", err)
+			}
+			if len(*calls) != tc.want {
+				t.Errorf("spawns = %d, want %d", len(*calls), tc.want)
+			}
+		})
 	}
 }

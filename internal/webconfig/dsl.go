@@ -19,11 +19,13 @@ import (
 
 	"github.com/yacchi/statusloom/internal/cache"
 	"github.com/yacchi/statusloom/internal/claudeaccount"
+	"github.com/yacchi/statusloom/internal/claudecfg"
 	"github.com/yacchi/statusloom/internal/config"
 	"github.com/yacchi/statusloom/internal/dsl"
 	"github.com/yacchi/statusloom/internal/render"
 	"github.com/yacchi/statusloom/internal/samples"
 	"github.com/yacchi/statusloom/internal/schema"
+	"github.com/yacchi/statusloom/internal/sources"
 	"github.com/yacchi/statusloom/internal/store"
 )
 
@@ -351,15 +353,21 @@ func (s *server) handlePreviewDSL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	now := time.Now()
+	ri, _ := cache.ClaudeRefreshInterval(claudecfg.SettingsPath(os.Getenv)) // 0 when unknown
 	opts := render.Options{
 		Width: clampPreviewWidth(req.Width),
-		Now:   time.Now(),
+		Now:   now,
 		// The configurator runs on the user's own machine, so previews show
 		// their real environment and logged-in account rather than
 		// placeholders. Credential-looking env vars are still masked by
 		// envWidget.
 		Env:     os.Getenv,
 		Profile: claudeaccount.Provider(os.Getenv),
+		// Preview only reads sources.json, file sources and cache envelopes;
+		// it never fetches command/http sources, so a never-fetched one
+		// previews empty (or as its fallback).
+		Sources: sources.NewProvider(now, ri).Lookup,
 	}
 	_, ids := buildAST(doc)
 
@@ -687,10 +695,13 @@ type dslFieldEntry struct {
 	Category     string          `json:"category"`
 	Linkable     bool            `json:"linkable,omitempty"`
 	RequiresVar  bool            `json:"requiresVar,omitempty"`
-	SelfMetric   string          `json:"selfMetric,omitempty"`
-	Formats      []string        `json:"formats,omitempty"`
-	Capability   string          `json:"capability,omitempty"`
-	Preview      widgetPreview   `json:"preview"`
+	// RequiresSource is true for the `source` field (dsl.FieldDef.RequiresSource);
+	// the properties panel shows source/select/fallback inputs for it.
+	RequiresSource bool          `json:"requiresSource,omitempty"`
+	SelfMetric     string        `json:"selfMetric,omitempty"`
+	Formats        []string      `json:"formats,omitempty"`
+	Capability     string        `json:"capability,omitempty"`
+	Preview        widgetPreview `json:"preview"`
 }
 
 // handleDSLFields handles GET /api/dsl/fields?tool=: the field catalog for the
@@ -713,16 +724,17 @@ func (s *server) handleDSLFields(w http.ResponseWriter, r *http.Request) {
 	out := make([]dslFieldEntry, 0, len(fields))
 	for _, f := range fields {
 		out = append(out, dslFieldEntry{
-			Name:         f.Name,
-			DisplayName:  f.DisplayName,
-			Descriptions: dslDescriptions{EN: f.Descriptions.EN, JA: f.Descriptions.JA},
-			Category:     f.Category,
-			Linkable:     f.Linkable,
-			RequiresVar:  f.RequiresVar,
-			SelfMetric:   f.SelfMetric,
-			Formats:      f.Formats,
-			Capability:   f.Capability,
-			Preview:      previewFor(tool, f.Name, snap, now),
+			Name:           f.Name,
+			DisplayName:    f.DisplayName,
+			Descriptions:   dslDescriptions{EN: f.Descriptions.EN, JA: f.Descriptions.JA},
+			Category:       f.Category,
+			Linkable:       f.Linkable,
+			RequiresVar:    f.RequiresVar,
+			RequiresSource: f.RequiresSource,
+			SelfMetric:     f.SelfMetric,
+			Formats:        f.Formats,
+			Capability:     f.Capability,
+			Preview:        previewFor(tool, f.Name, snap, now),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"fields": out})
@@ -769,6 +781,9 @@ type dslMetricEntry struct {
 	// closed enumeration. Both are omitted for the numeric metrics.
 	Text   bool     `json:"text,omitempty"`
 	Values []string `json:"values,omitempty"`
+	// Param is the parameter kind of a parameterized metric, e.g.
+	// source-stale:<id> carries "source"; omitted otherwise.
+	Param string `json:"param,omitempty"`
 }
 
 // handleDSLMetrics handles GET /api/dsl/metrics?tool=: the named-metric catalog
@@ -789,6 +804,7 @@ func (s *server) handleDSLMetrics(w http.ResponseWriter, r *http.Request) {
 			Percent:      m.Percent,
 			Text:         m.Text,
 			Values:       m.Values,
+			Param:        m.Param,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"metrics": out})

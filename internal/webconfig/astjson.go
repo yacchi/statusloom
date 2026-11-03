@@ -371,6 +371,15 @@ func (b *astBuilder) node(n dsl.Node, id string) map[string]any {
 		if t.Unmask {
 			m["unmask"] = true
 		}
+		if t.Source != "" {
+			m["source"] = t.Source
+		}
+		if t.Select != "" {
+			m["select"] = t.Select
+		}
+		if t.Fallback != "" {
+			m["fallback"] = t.Fallback
+		}
 		if t.MinWidth != nil {
 			m["min-width"] = *t.MinWidth
 		}
@@ -533,6 +542,9 @@ type astNodeJSON struct {
 	Hyperlink *bool  `json:"hyperlink"`
 	Var       string `json:"var"`
 	Unmask    *bool  `json:"unmask"`
+	Source    string `json:"source"`
+	Select    string `json:"select"`
+	Fallback  string `json:"fallback"`
 	MinWidth  *int   `json:"min-width"`
 	Align     string `json:"align"`
 
@@ -690,6 +702,9 @@ func jsonToNode(j astNodeJSON) dsl.Node {
 		if j.Unmask != nil {
 			n.Unmask = *j.Unmask
 		}
+		n.Source = j.Source
+		n.Select = j.Select
+		n.Fallback = j.Fallback
 		n.MinWidth = j.MinWidth
 		n.Align = j.Align
 		return n

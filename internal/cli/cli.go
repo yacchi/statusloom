@@ -68,6 +68,9 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, version strin
 	case "export":
 		return runExportExchange(args[1:], stdout, stderr)
 
+	case "source":
+		return runSource(args[1:], stdout, stderr)
+
 	case "fmt":
 		return runFmt(args[1:], stdin, stdout, stderr)
 
@@ -146,6 +149,10 @@ Usage:
   statusloom import [--tool ID] <file>   import a *.sloom.md Markdown exchange document (or - for stdin) as a new revision
   statusloom export [--tool ID] [-o file]   export the saved document as a *.sloom.md Markdown exchange document; defaults to stdout
   statusloom fmt [file] [--check] [--write]   rewrite a DSL document in canonical form; with no file, formats the saved document (printed to stdout unless --write persists it); --check reports without writing; - uses stdin/stdout
+  statusloom source list [--json]   list the external JSON sources defined in sources.json
+  statusloom source add <id> (--file PATH | --url URL | --command) [--allow-remote] [--ttl N] [--stale-after N] [--timeout N] [--force] [-- ARGV...]   define (or with --force replace) a source; N in seconds
+  statusloom source rm <id>   remove a source definition
+  statusloom source test <id> [--select EXPR] [--payload FILE]   fetch a source once and print the selected JSON value
   statusloom config [--port N] [--no-browser]   launch the local web configurator
   statusloom setup claude-code [--settings PATH] [--yes] [--dry-run] [--refresh-interval N]   configure Claude Code
   statusloom doctor [--settings PATH]   diagnose the local environment

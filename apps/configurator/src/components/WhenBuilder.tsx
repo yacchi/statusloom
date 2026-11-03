@@ -175,8 +175,12 @@ function SimpleEditor({
     onCommit: (next: SimpleWhen) => void;
 }) {
     const lang = useLang();
+    // Parameterized metrics (source-stale:<id>) need an argument this picker
+    // cannot type, so they are not offered. A bare name of one written in the
+    // DSL editor still shows through the unknownMetric option below.
+    const pickable = metrics.filter((m) => m.param === undefined);
     const metricName = current?.metric ?? "";
-    const def = metrics.find((m) => m.name === metricName);
+    const def = pickable.find((m) => m.name === metricName);
     // An expression written in the DSL editor may name a metric this build's
     // catalog does not know; keep it selectable rather than silently swapping it.
     const unknownMetric = metricName !== "" && def === undefined;
@@ -202,7 +206,7 @@ function SimpleEditor({
                 value={metricName}
                 disabled={readOnly}
                 onChange={(e) => {
-                    const nextDef = metrics.find((m) => m.name === e.target.value);
+                    const nextDef = pickable.find((m) => m.name === e.target.value);
                     const nextIsText = nextDef?.text === true;
                     emit({
                         metric: e.target.value,
@@ -217,7 +221,7 @@ function SimpleEditor({
                 }}
             >
                 <option value="">{t(lang, "whenPickMetric")}</option>
-                {metrics.map((m) => (
+                {pickable.map((m) => (
                     <option key={m.name} value={m.name}>
                         {m.displayName}
                     </option>

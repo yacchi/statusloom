@@ -666,6 +666,9 @@ export function installFakeDslServer(initial: StatusloomNode): FakeServer {
             if (url.endsWith("/api/sessions")) {
                 return jsonResponse({ sessions: [] });
             }
+            if (url.endsWith("/api/sources")) {
+                return jsonResponse({ path: "/tmp/sources.json", sources: [] });
+            }
             if (url.startsWith("/api/dsl/document")) {
                 if (method === "GET") {
                     return jsonResponse({

@@ -9,6 +9,7 @@ import { useState } from "react";
 import type { Theme } from "@statusloom/ansi";
 import type { AttrPatch } from "../ast.ts";
 import { pickDescription, t, useLang, type Lang } from "../i18n.ts";
+import type { SourceEntry, SourcesApi, SourceTestResult } from "../sourcesApi.ts";
 import {
     type Band,
     buildColorRules,
@@ -39,6 +40,13 @@ interface Props {
     onPatch: (patch: AttrPatch) => void;
     onDuplicate: () => void;
     onRemove: () => void;
+    // Defined external sources (GET /api/sources). Undefined = list unknown,
+    // so no "undefined source" note is shown.
+    sources?: SourceEntry[];
+    // Enables the Test button when present.
+    sourcesApi?: SourcesApi;
+    // Session or sample the Test button previews against.
+    previewTarget?: { sessionId?: string; sample?: string };
 }
 
 // ---- small shared editors ----
@@ -268,6 +276,12 @@ function VisibilitySection({
     lang: Lang;
     onPatch: (patch: AttrPatch) => void;
 }) {
+    // Neither a var-taking field (env) nor a source field (source) can be
+    // named by a bare field name: optional must carry its argument too
+    // ("env:AWS_PROFILE", "source:<id>"), which this dropdown has nowhere to
+    // type. Offering them would emit an invalid optional. Use the DSL editor
+    // for those forms.
+    const choices = fields.filter((f) => !f.requiresVar && !f.requiresSource);
     return (
         <div className="subsection">
             <div className="field">
@@ -282,22 +296,16 @@ function VisibilitySection({
                     }
                 >
                     <option value="">(always)</option>
-                    {/* A var-taking field (env) cannot be named by a bare
-                        field name — optional must carry the variable too
-                        ("env:AWS_PROFILE"), which this dropdown has nowhere to
-                        type. Offering it would emit an invalid optional. Use
-                        the DSL editor for that form. */}
-                    {fields
-                        .filter((f) => !f.requiresVar)
-                        .map((f) => (
-                            <option key={f.name} value={f.name}>
-                                {f.displayName}
-                            </option>
-                        ))}
-                    {/* Keep an out-of-catalog value (e.g. an "env:VAR" written
-                        in the DSL editor) selectable, so opening the panel on
-                        such a node does not silently reset it. */}
-                    {node.optional && !fields.some((f) => f.name === node.optional) ? (
+                    {choices.map((f) => (
+                        <option key={f.name} value={f.name}>
+                            {f.displayName}
+                        </option>
+                    ))}
+                    {/* Keep an out-of-list value (e.g. an "env:VAR" or
+                        "source:<id>" written in the DSL editor) selectable, so
+                        opening the panel on such a node does not silently
+                        reset it. */}
+                    {node.optional && !choices.some((f) => f.name === node.optional) ? (
                         <option value={node.optional}>{node.optional}</option>
                     ) : null}
                 </select>
@@ -517,13 +525,172 @@ function ColorRulesSection({
 
 // ---- kind-specific top sections ----
 
+// Source / select / fallback controls for the `source` field, plus a Test
+// button that fetches the source once now. Rendered with key={node.id} by
+// FieldSection so a test result never carries over to another node.
+function SourceSection({
+    node,
+    fields,
+    sources,
+    sourcesApi,
+    previewTarget,
+    lang,
+    onPatch,
+}: {
+    node: FieldNode;
+    fields: FieldCatalogEntry[];
+    sources: SourceEntry[] | undefined;
+    sourcesApi: SourcesApi | undefined;
+    previewTarget: { sessionId?: string; sample?: string } | undefined;
+    lang: Lang;
+    onPatch: (patch: AttrPatch) => void;
+}) {
+    // null = never tested for this node; the result stays until the next run.
+    const [result, setResult] = useState<string | null>(null);
+    const [running, setRunning] = useState(false);
+
+    const source = node.source ?? "";
+    const knownIds = sources?.map((s) => s.id) ?? [];
+    // A source id written in the DSL editor may be absent from sources.json;
+    // keep it selectable rather than silently resetting it.
+    const sourceMissing = source !== "" && !knownIds.includes(source);
+    const fallbackChoices = fields.filter(
+        (f) => !f.requiresVar && !f.requiresSource && f.category !== "subagent",
+    );
+    const fallback = node.fallback ?? "";
+
+    const runTest = () => {
+        if (!sourcesApi || !node.source) {
+            return;
+        }
+        setRunning(true);
+        sourcesApi
+            .testSource(node.source, {
+                select: node.select ?? "",
+                ...(previewTarget?.sessionId !== undefined && { sessionId: previewTarget.sessionId }),
+                ...(previewTarget?.sample !== undefined && { sample: previewTarget.sample }),
+            })
+            .then((res: SourceTestResult) => {
+                if (res.ok === false) {
+                    setResult(res.error);
+                } else if (!res.matched) {
+                    setResult(t(lang, "sourceNoMatch"));
+                } else {
+                    setResult(res.display ? res.display : JSON.stringify(res.value));
+                }
+            })
+            .catch((err: unknown) => {
+                setResult(err instanceof Error ? err.message : String(err));
+            })
+            .finally(() => {
+                setRunning(false);
+            });
+    };
+
+    return (
+        <>
+            <div className="field">
+                <label>
+                    Source <HelpTip k="helpSource" />
+                </label>
+                <select
+                    data-testid="attr-source"
+                    value={source}
+                    onChange={(e) => {
+                        const v = e.target.value;
+                        onPatch({ source: v === "" ? undefined : v });
+                    }}
+                >
+                    <option value="">(none)</option>
+                    {(sources ?? []).map((s) => (
+                        <option key={s.id} value={s.id}>
+                            {s.id}
+                        </option>
+                    ))}
+                    {sourceMissing ? <option value={source}>{source}</option> : null}
+                </select>
+            </div>
+            {node.source && sources !== undefined && !knownIds.includes(node.source) ? (
+                <p className="hint" data-testid="source-undefined">
+                    {t(lang, "sourceUndefined")}
+                </p>
+            ) : null}
+            <TextAttr
+                label="Select"
+                value={node.select}
+                helpKey="helpSelect"
+                testid="attr-select"
+                placeholder="[id=${session_id}].keepalive.expiresAt"
+                onChange={(select) => onPatch({ select })}
+            />
+            <div className="field">
+                <label>
+                    Fallback <HelpTip k="helpFallback" />
+                </label>
+                <select
+                    data-testid="attr-fallback"
+                    value={fallback}
+                    onChange={(e) => {
+                        const v = e.target.value;
+                        onPatch({ fallback: v === "" ? undefined : v });
+                    }}
+                >
+                    <option value="">(none)</option>
+                    {fallbackChoices.map((f) => (
+                        <option key={f.name} value={f.name}>
+                            {f.displayName}
+                        </option>
+                    ))}
+                    {/* Keep an out-of-list fallback (written in the DSL editor)
+                        selectable, so opening the panel does not reset it. */}
+                    {node.fallback && !fallbackChoices.some((f) => f.name === node.fallback) ? (
+                        <option value={node.fallback}>{node.fallback}</option>
+                    ) : null}
+                </select>
+            </div>
+            <div className="field">
+                <label>
+                    Test <HelpTip k="helpSourceTest" />
+                </label>
+                <button
+                    className="secondary"
+                    data-testid="source-test"
+                    disabled={!sourcesApi || !node.source || running}
+                    onClick={runTest}
+                >
+                    Test
+                </button>
+            </div>
+            {result !== null ? (
+                <p
+                    className="hint"
+                    data-testid="source-test-result"
+                    style={{ overflowWrap: "anywhere" }}
+                >
+                    {result}
+                </p>
+            ) : null}
+        </>
+    );
+}
+
 function FieldSection({
     node,
     entry,
+    fields,
+    sources,
+    sourcesApi,
+    previewTarget,
+    lang,
     onPatch,
 }: {
     node: FieldNode;
     entry: FieldCatalogEntry | undefined;
+    fields: FieldCatalogEntry[];
+    sources: SourceEntry[] | undefined;
+    sourcesApi: SourcesApi | undefined;
+    previewTarget: { sessionId?: string; sample?: string } | undefined;
+    lang: Lang;
     onPatch: (patch: AttrPatch) => void;
 }) {
     const formats = entry?.formats ?? [];
@@ -562,6 +729,18 @@ function FieldSection({
                         </div>
                     ) : null}
                 </>
+            ) : null}
+            {entry?.requiresSource ? (
+                <SourceSection
+                    key={node.id}
+                    node={node}
+                    fields={fields}
+                    sources={sources}
+                    sourcesApi={sourcesApi}
+                    previewTarget={previewTarget}
+                    lang={lang}
+                    onPatch={onPatch}
+                />
             ) : null}
             {formats.length > 0 ? (
                 <div className="field">
@@ -752,6 +931,9 @@ export function PropertiesPanel({
     onPatch,
     onDuplicate,
     onRemove,
+    sources,
+    sourcesApi,
+    previewTarget,
 }: Props) {
     const lang = useLang();
 
@@ -794,7 +976,16 @@ export function PropertiesPanel({
 
             <fieldset className="props-body" disabled={readOnly}>
                 {node.kind === "field" ? (
-                    <FieldSection node={node} entry={entry} onPatch={onPatch} />
+                    <FieldSection
+                        node={node}
+                        entry={entry}
+                        fields={fields}
+                        sources={sources}
+                        sourcesApi={sourcesApi}
+                        previewTarget={previewTarget}
+                        lang={lang}
+                        onPatch={onPatch}
+                    />
                 ) : null}
                 {node.kind === "text" ? <TextSection node={node} onPatch={onPatch} /> : null}
                 {node.kind === "raw-text" || node.kind === "comment" ? (

@@ -22,6 +22,7 @@ import {
     type CollisionDetection,
 } from "@dnd-kit/core";
 import { ApiError, createApi, readToken } from "./api.ts";
+import { createSourcesApi, type SourceEntry } from "./sourcesApi.ts";
 import {
     canRedo,
     canUndo,
@@ -207,6 +208,7 @@ export function App() {
 
 function Configurator({ token }: { token: string }) {
     const api = useMemo(() => createApi(token), [token]);
+    const sourcesApi = useMemo(() => createSourcesApi(token), [token]);
 
     const [loadError, setLoadError] = useState<string | null>(null);
     // The documents (tools) the backend supports, and which one is being
@@ -258,6 +260,31 @@ function Configurator({ token }: { token: string }) {
         kind: "sample",
         sample: "full",
     });
+    const previewTarget = useMemo(
+        () =>
+            previewSource.kind === "session"
+                ? { sessionId: previewSource.id }
+                : { sample: previewSource.sample },
+        [previewSource],
+    );
+    // Defined external sources (sources.json). Loaded once per token and
+    // reloaded only through SettingsModal's onSourcesChanged. A failure leaves
+    // the list empty: it must not block the editor or show an error banner.
+    const [sources, setSources] = useState<SourceEntry[]>([]);
+    useEffect(() => {
+        let cancelled = false;
+        sourcesApi
+            .listSources()
+            .then((r) => {
+                if (!cancelled) {
+                    setSources(r.sources);
+                }
+            })
+            .catch(() => {});
+        return () => {
+            cancelled = true;
+        };
+    }, [sourcesApi]);
     // Second (section:"subagent") preview pass: each width-adaptive container's
     // <subagent> line rendered once per task of `subagentSample`, keyed by
     // container node id. Rendered alongside the main preview so the canvas
@@ -1865,6 +1892,9 @@ function Configurator({ token }: { token: string }) {
                                 }}
                                 onDuplicate={duplicateSelected}
                                 onRemove={removeSelected}
+                                sources={sources}
+                                sourcesApi={sourcesApi}
+                                previewTarget={previewTarget}
                             />
                         ) : null}
                     </section>
@@ -1924,6 +1954,8 @@ function Configurator({ token }: { token: string }) {
                     }
                     onChangeLang={changeLang}
                     onClose={() => setShowSettings(false)}
+                    sourcesApi={sourcesApi}
+                    onSourcesChanged={setSources}
                 />
             ) : null}
 

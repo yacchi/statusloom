@@ -119,14 +119,14 @@ func stylizeDoc(text string, st docStyle, level colorLevel) string {
 
 // docResolver adapts the existing metricValue plumbing to the dsl.Resolver
 // interface used by when-expressions and color-rules. self maps the special
-// "self" reference to the owning field's self metric ("" when the node has
-// none, which makes "self" unresolvable -> the node is hidden / the rule
-// fails, per markup.md).
+// "self" reference: a direct value (a present source value) wins, else the
+// owning field's self metric; selfRef{} makes "self" unresolvable -> the node
+// is hidden / the rule fails, per markup.md.
 type docResolver struct {
 	snap schema.StatusSnapshot
 	cfg  config.ToolConfig
 	opts Options
-	self string
+	self selfRef
 }
 
 // ResolveMetric resolves a metric reference to a dsl.Value. Numeric metrics
@@ -135,10 +135,18 @@ type docResolver struct {
 // boolean metric (markup.md 付録), derived from the repository snapshot.
 func (r docResolver) ResolveMetric(name string) (dsl.Value, bool) {
 	if name == "self" {
-		if r.self == "" {
+		if r.self.value != nil {
+			return *r.self.value, true
+		}
+		if r.self.metric == "" {
 			return dsl.Value{}, false
 		}
-		name = r.self
+		name = r.self.metric
+	}
+	// source-stale:<id> is true for a defined source without a usable value and
+	// unresolved for an undefined id (or no source lookup at all).
+	if base, param := dsl.ParseMetricRef(name); base == "source-stale" {
+		return sourceStaleMetric(r.opts, param)
 	}
 	// Account identity metrics are STRINGS, resolved from the same lazily read
 	// profile as the account-* fields. An absent profile or an empty key stays
@@ -172,6 +180,21 @@ func (r docResolver) ResolveMetric(name string) (dsl.Value, bool) {
 		}
 		return dsl.Value{Kind: dsl.ValueBool, Bool: value}, true
 	}
+	// Typed prompt-cache metrics (pc-render §3): absent prompt_cache, or an
+	// empty TTL, stays unresolved rather than false / "".
+	if name == "cache-warm" || name == "cache-ttl" {
+		pc := r.snap.Session.PromptCache
+		if pc == nil {
+			return dsl.Value{}, false
+		}
+		if name == "cache-warm" {
+			return dsl.Value{Kind: dsl.ValueBool, Bool: pc.Warm}, true
+		}
+		if pc.TTL == "" {
+			return dsl.Value{}, false
+		}
+		return dsl.Value{Kind: dsl.ValueString, Str: pc.TTL}, true
+	}
 	v, ok := metricValue(name, r.snap, r.cfg, r.opts)
 	if !ok {
 		return dsl.Value{}, false
@@ -186,6 +209,15 @@ func (r docResolver) ResolveMetric(name string) (dsl.Value, bool) {
 // formatter, and enum is a pass-through), the field exposes no self metric,
 // or the metric cannot be resolved. See markup.md "field値の解決" item 4.
 func (e *docEval) applyFormat(f *dsl.FieldNode) (string, bool) {
+	// datetime formats the raw expiry instant, not the self metric, so it
+	// works without resolving minutes (and with a zero Now).
+	if f.Formatter.Name == "datetime" {
+		pc := e.snap.Session.PromptCache
+		if f.Name == "cache-expires-at" && pc != nil && pc.ExpiresAt != nil {
+			return formatDatetime(*pc.ExpiresAt, e.opts.Now), true
+		}
+		return "", false
+	}
 	self := e.selfMetric(f.Name)
 	if self == "" {
 		return "", false
@@ -218,7 +250,7 @@ func (e *docEval) applyFormat(f *dsl.FieldNode) (string, bool) {
 		}
 		return "$" + strconv.FormatFloat(v, 'f', p, 64), true
 	default:
-		// duration / countdown / enum (and any future datetime/boolean):
+		// duration / countdown / enum (datetime is handled above):
 		// keep the renderContent default.
 		return "", false
 	}

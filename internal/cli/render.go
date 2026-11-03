@@ -14,12 +14,14 @@ import (
 	"github.com/yacchi/statusloom/internal/adapters/claude"
 	"github.com/yacchi/statusloom/internal/cache"
 	"github.com/yacchi/statusloom/internal/claudeaccount"
+	"github.com/yacchi/statusloom/internal/claudecfg"
 	"github.com/yacchi/statusloom/internal/config"
 	"github.com/yacchi/statusloom/internal/detect"
 	"github.com/yacchi/statusloom/internal/dsl"
 	"github.com/yacchi/statusloom/internal/gitstatus"
 	"github.com/yacchi/statusloom/internal/render"
 	"github.com/yacchi/statusloom/internal/schema"
+	"github.com/yacchi/statusloom/internal/sources"
 )
 
 // maxStdinBytes caps how much of stdin the render pipeline will read, per
@@ -124,8 +126,11 @@ func runRenderPipeline(stdin io.Reader, stdout, stderr io.Writer, getenv func(st
 // the refresh subprocess is never spawned. Live sessions (including
 // `monitor --draft`) pass false and keep feeding the caches.
 //
-// It performs no network I/O (only the local account/repo/session caches and
-// git status collection), keeping the render path network-free.
+// It performs no network I/O and runs no external command (only the local
+// account/repo/session caches, git status collection, and read-only external
+// source lookups through the sources provider: sources.json, file sources and
+// cache envelopes). Any due refresh work is handed to a detached refresh
+// worker spawned after the render.
 func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool string, stderr io.Writer, draft bool, overrides *metricOverrides, preview bool) ([]string, error) {
 	toolID, err := detect.Detect(explicitTool, raw)
 	if err != nil {
@@ -171,9 +176,12 @@ func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool strin
 	if overrides.active() {
 		overrides.applySnapshot(&snap)
 		profile = overrides.wrapProfile(profileProvider)
-	} else if !preview {
-		maybeStartRefresh(raw, now, rolledOver)
 	}
+
+	// External sources are read-only here (sources.json, file sources and
+	// cache envelopes); previews resolve them too so they show source values.
+	ri, _ := cache.ClaudeRefreshInterval(claudecfg.SettingsPath(getenv))
+	prov := sources.NewProvider(now, ri)
 
 	width := parseWidth(getenv("COLUMNS"))
 	out := render.RenderDocumentString(snap, doc, render.Options{
@@ -181,7 +189,13 @@ func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool strin
 		Now:     now,
 		Env:     getenv,
 		Profile: profile,
+		Sources: prov.Lookup,
 	})
+	if !preview && !overrides.active() {
+		maybeStartRefresh(refreshRequest{Raw: raw, Now: now, ForceUsage: rolledOver, AccountKey: accountCacheKey,
+			UsesTranscript: dsl.UsesTranscript(doc), SourceRefs: dsl.ReferencedSources(doc), Sources: prov.File,
+			RefreshInterval: ri})
+	}
 	if out == "" {
 		return nil, nil
 	}

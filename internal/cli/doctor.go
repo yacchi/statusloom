@@ -13,6 +13,7 @@ import (
 	"github.com/yacchi/statusloom/internal/cache"
 	"github.com/yacchi/statusloom/internal/config"
 	"github.com/yacchi/statusloom/internal/dsl"
+	"github.com/yacchi/statusloom/internal/sources"
 )
 
 func runDoctor(args []string, stdout, stderr io.Writer, version string) int {
@@ -31,6 +32,7 @@ func runDoctor(args []string, stdout, stderr io.Writer, version string) int {
 	}
 	report("PASS", "binary", version)
 	doctorDocument(report)
+	doctorSources(report)
 	doctorCache(report)
 	doctorGit(report)
 	settings, err := claudeSettingsPath(*settingsFlag)
@@ -79,6 +81,49 @@ func doctorDocument(report func(string, string, string)) {
 		report("WARN", "document", strings.Join(warns, "; "))
 	default:
 		report("PASS", "document", tool)
+	}
+}
+
+// doctorSources checks sources.json (external JSON source definitions) and
+// reports undefined source ids referenced by the current claude-code document.
+// It never fetches: it only reads the definitions file and the document. An
+// unreadable sources.json is FAIL; a missing one is simply zero sources. The
+// undefined-reference check is skipped when sources.json failed to load,
+// because every reference would then look undefined.
+func doctorSources(report func(string, string, string)) {
+	f, err := sources.Load()
+	if err != nil {
+		path, pathErr := sources.Path()
+		if pathErr != nil {
+			path = "sources.json"
+		}
+		report("FAIL", "sources", "cannot read "+path+": "+err.Error())
+		return
+	}
+	ids := f.IDs()
+	report("PASS", "sources", fmt.Sprintf("%d defined", len(ids)))
+	for _, id := range ids {
+		def, _ := f.Get(id)
+		for _, w := range def.Warnings() {
+			if w == "allow-remote" {
+				report("WARN", "sources", id+": allowRemote lets this http source reach non-loopback hosts")
+			}
+		}
+	}
+
+	// The built-in default document is checked too, so no DocumentExists gate.
+	doc, _, err := config.LoadDocument("claude-code")
+	if err != nil || doc == nil || doc.Root == nil {
+		return
+	}
+	var missing []string
+	for _, id := range dsl.ReferencedSources(doc) {
+		if _, ok := f.Get(id); !ok {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) > 0 {
+		report("WARN", "sources", "document references undefined source(s): "+strings.Join(missing, ", "))
 	}
 }
 
@@ -183,9 +228,10 @@ func doctorRefreshInterval(report func(string, string, string), settingsPath str
 // idleUpdatedFields is the set of DSL field names whose value only advances
 // via a background timer or the async account-usage refresh, so they can
 // visibly stall while the session is idle unless a refreshInterval re-render
-// timer is configured. It covers the original countdown fields plus the
+// timer is configured. It covers the original countdown fields, the
 // OAuth-usage-API-sourced fields (extra-usage billing and the per-model
-// seven-day windows/countdowns).
+// seven-day windows/countdowns), and the prompt-cache expiry countdown and
+// external source values, which likewise only advance on re-render.
 var idleUpdatedFields = map[string]bool{
 	"five-hour-reset":     true,
 	"weekly-reset":        true,
@@ -196,6 +242,8 @@ var idleUpdatedFields = map[string]bool{
 	"weekly-usage-sonnet": true,
 	"weekly-reset-opus":   true,
 	"weekly-reset-sonnet": true,
+	"cache-expires-at":    true,
+	"source":              true,
 }
 
 // documentHasResetField reports whether the document's active layout (the one

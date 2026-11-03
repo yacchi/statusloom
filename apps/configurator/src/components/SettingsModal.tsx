@@ -5,17 +5,23 @@
 //     localStorage, NOT part of the document.
 //   - Git settings: the document's optional <git/> element, whose form body
 //     lives in GitSettings.
+//   - External sources (when sourcesApi is provided): the local
+//     <configDir>/sources.json definitions, managed through SourcesSettings.
+//     These are machine-local, never part of the document or an export.
 //
 // Every change is applied live (an attribute patch for git, a state update for
-// the language) — there is no separate save step, so this modal has no
-// footer/primary action; the × button and Escape are its only ways to close.
+// the language, a direct API write for sources) — there is no separate save
+// step, so this modal has no footer/primary action; the × button and Escape
+// are its only ways to close.
 
 import type { AttrPatch } from "../ast.ts";
 import type { StatusloomNode } from "../types.ts";
+import type { SourceEntry, SourcesApi } from "../sourcesApi.ts";
 import { t, useLang, type Lang } from "../i18n.ts";
 import { HelpTip } from "./HelpTip.tsx";
 import { GitSettings } from "./GitSettings.tsx";
 import { Modal } from "./Modal.tsx";
+import { SourcesSettings } from "./SourcesSettings.tsx";
 
 interface Props {
     root: StatusloomNode;
@@ -23,9 +29,19 @@ interface Props {
     onPatchGit: (patch: AttrPatch) => void;
     onChangeLang: (lang: Lang) => void;
     onClose: () => void;
+    sourcesApi?: SourcesApi;
+    onSourcesChanged?: (sources: SourceEntry[]) => void;
 }
 
-export function SettingsModal({ root, readOnly, onPatchGit, onChangeLang, onClose }: Props) {
+export function SettingsModal({
+    root,
+    readOnly,
+    onPatchGit,
+    onChangeLang,
+    onClose,
+    sourcesApi,
+    onSourcesChanged,
+}: Props) {
     const lang = useLang();
     return (
         <Modal
@@ -52,6 +68,14 @@ export function SettingsModal({ root, readOnly, onPatchGit, onChangeLang, onClos
                 {t(lang, "settingsTitle")} <HelpTip k="helpGit" />
             </h3>
             <GitSettings root={root} readOnly={readOnly} onPatchGit={onPatchGit} />
+            {sourcesApi && (
+                <>
+                    <h3 className="settings-section">
+                        {t(lang, "sourcesSection")} <HelpTip k="helpSources" />
+                    </h3>
+                    <SourcesSettings sourcesApi={sourcesApi} onChanged={onSourcesChanged} />
+                </>
+            )}
         </Modal>
     );
 }

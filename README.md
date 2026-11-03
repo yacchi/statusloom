@@ -212,11 +212,19 @@ confirmation.
 
 `--refresh-interval <seconds>` sets Claude Code's own `refreshInterval`
 setting (minimum 1 second), applied to both `statusLine` and
-`subagentStatusLine`. Claude Code doesn't emit new statusline events
-while idle, so countdown widgets like `five-hour-reset` and
-`weekly-reset` otherwise freeze until the next event; use this flag if
+`subagentStatusLine`. We recommend 30–60 seconds; one render costs roughly
+5–10 ms, so a short interval is cheap. Claude Code doesn't emit new
+statusline events while idle, so countdown widgets like `five-hour-reset`
+and `weekly-reset` otherwise freeze until the next event; use this flag if
 you configure those widgets. `statusloom doctor` warns when
 `refreshInterval` is unset while a countdown widget is configured.
+
+The same value also sets how often statusloom refreshes what the status
+line derives from the transcript. When `refreshInterval` is unset that
+interval is 30 seconds, and transcript parsing runs only when the document
+uses a transcript-derived value. Each external source's default ttl is
+`max(30 s, refreshInterval)`, never below 5 seconds, unless you set
+`--ttl` on that source.
 
 ### Format
 
@@ -238,7 +246,42 @@ canonicalizer.
 Run `statusloom doctor` to check the binary, the status-line document,
 the cache, Git, and Claude Code setup — including whether
 `refreshInterval` is configured when countdown fields (`five-hour-reset`,
-`weekly-reset`) are in use.
+`weekly-reset`) are in use. It also lists source references in the
+document that point at undefined ids, and warns about any source defined
+with `allowRemote`.
+
+### Sources from the CLI
+
+```
+statusloom source list [--json]
+statusloom source add <id> (--file PATH | --url URL | --command) [--allow-remote] [--ttl N] [--stale-after N] [--timeout N] [--force] [-- ARGV...]
+statusloom source rm <id>
+statusloom source test <id> [--select EXPR] [--payload FILE]
+```
+
+```sh
+statusloom source add ccprofile --file ~/.local/state/ccprofile/sessions.json
+# added source ccprofile (file)
+statusloom source add keepalive --command --ttl 60 -- ccprofile sessions --json
+statusloom source add x --url http://127.0.0.1:47921/sessions.json
+statusloom source test ccprofile --payload sample.json
+```
+
+- `add` refuses to overwrite an existing id unless you pass `--force`.
+  Exactly one of `--file`, `--url`, or `--command` is required, and the
+  argv after `--` is required only with `--command`.
+- `--ttl`, `--stale-after`, and `--timeout` are in seconds.
+- `--allow-remote` lets an `http` source reach non-loopback hosts.
+- `test` fetches the saved definition once and prints the value that
+  `--select` selects, as JSON. With `--payload`,
+  `${...}` placeholders are filled from that sample stdin file. `test`
+  never reads or writes the cache, so it is safe to run while iterating.
+  If nothing matches, it prints `statusloom: source test: no match for select`.
+- Exit codes: `0` success, `1` runtime failure (unknown id, validation
+  error, unreadable `sources.json`, fetch error, no match), `2` usage error.
+  Errors go to stderr.
+- `list` shows each source's kind, target, and ttl; `--json` prints the raw
+  `sources.json` document.
 
 ### Editing the draft from your editor or an agent
 
@@ -599,6 +642,113 @@ shown:
 ```xml
 <field name="env" var="KEYBOARD_LAYOUT" unmask="true"/>
 ```
+
+### Prompt cache
+
+Claude Code (v2.1.251+) passes the state of the prompt cache on stdin as
+`prompt_cache`, and statusloom exposes it as the `cache-*` fields. Two
+things to know before you use them:
+
+- The data is absent until the main conversation's first API response, so
+  these fields render empty until then.
+- Claude Code re-renders the status line when the previous `expires_at` is
+  reached, so a "went cold" state shows up on its own. A countdown that
+  ticks down between events needs `refreshInterval` (see
+  [Setup](#setup)).
+
+`expires_at` is epoch seconds; the fields take care of the conversion.
+
+| Field | Shows |
+|---|---|
+| `cache-warm` | whether the cached prefix is still warm |
+| `cache-ttl` | the cache lifetime in use, `5m` or `1h` |
+| `cache-expires-at` | when the cached prefix goes cold (counts down with `format="countdown"`) |
+| `cache-hit-ratio` | the session-wide cache hit ratio reported by Claude Code |
+| `cache-requests` | the number of cache-eligible requests |
+| `cache-misses` | the number of requests that missed the cache |
+| `cache-recache-tokens` | the tokens that would be re-cached if the cache went cold |
+| `cache-last-miss-cause` | why the most recent miss happened, as reported by Claude Code |
+
+`cache-hit-ratio` is the ratio over the whole session as Claude Code
+computes it. It is not the same as `cache-hit-rate`, which is the hit rate
+over recent individual API calls.
+
+The metrics `cache-warm`, `cache-ttl` (`5m` / `1h`, with `eq` / `ne`),
+`cache-expires-minutes`, `cache-hit-ratio-percent`, `cache-requests`,
+`cache-misses`, and `cache-recache-tokens` are available to `when` and
+`<color-rule>`:
+
+```xml
+<span prefix="cache: " optional="cache-expires-at">
+    <field name="cache-expires-at" format="countdown" color="green">
+        <color-rule when="self lt 5" color="yellow"/>
+    </field>
+</span>
+```
+
+### External sources
+
+Sometimes something other than Claude Code keeps a session's cache warm.
+For example, a tool such as ccprofile can send its own keep-alive requests
+from another process. Then the `expires_at` on stdin goes stale, and the
+value you want to show lives somewhere else. A *source* is a JSON value
+that statusloom reads from outside the status line:
+
+```sh
+statusloom source add ccprofile --file ~/.local/state/ccprofile/sessions.json
+```
+
+Then reference the source in the document. The value comes from the source
+and falls back to the built-in `cache-expires-at` when the source has no
+value:
+
+```xml
+<span prefix="cache: " optional="cache-expires-at">
+    <field name="source" source="ccprofile"
+           select="[id=${session_id}].keepalive.expiresAt"
+           fallback="cache-expires-at" format="countdown"/>
+</span>
+```
+
+Gate this span on `cache-expires-at` (or no gate at all), not on
+`source:ccprofile`. `optional="source:ccprofile"` would hide the span
+whenever the source has no value, and that is exactly the case where the
+fallback should show.
+
+**Definitions live only in `<configDir>/sources.json`, never in the
+document.** A source's path, command, or URL is never written in the DSL,
+so importing a shared document can't run a command or read a file on your
+machine. The document refers only to the source id. A reference to an
+undefined id renders empty and reports nothing; `statusloom doctor` lists
+such references, and it also warns about any source that sets
+`allowRemote`.
+
+`select` picks one value out of the JSON. It supports:
+
+- `.key` for an object member and `[n]` for an array index
+- `[key=value]` for the first array element whose `key` matches (scalars
+  are compared by their canonical string, so types are not distinguished)
+- placeholders that are filled in at render time: `${session_id}`,
+  `${cwd}`, `${workspace.project_dir}`, and `${CLAUDE_CONFIG_DIR}`
+
+It is not full JSONPath. `fallback` names one built-in field; a source
+can't fall back to another source. A source has "no value" when its id is
+undefined, its last fetch failed, its last value is stale beyond
+`staleAfter` (default 3× its ttl), or the `select` matches nothing. The
+metric `source-stale:<id>` tells you when the source's value is stale.
+
+There are three kinds of source:
+
+| Kind | Defined with | How it is read |
+|---|---|---|
+| `file` | `--file PATH` | Read at render time. Re-read only when the file's mtime or size changes; capped at 1 MB. |
+| `command` | `--command -- ARGV...` | An argv array run without a shell. Timeout defaults to 2 s; stdout is capped at 1 MB. Fetched only by the refresh subprocess. |
+| `http` | `--url URL` | Loopback addresses only, unless the source is added with `--allow-remote`. ETag aware. Fetched only by the refresh subprocess. |
+
+Rendering never touches the network or runs a command. Command and HTTP
+sources are fetched once per ttl for the whole machine, not once per
+session, by the background `statusloom refresh` subprocess. There is no
+resident process. A failed fetch backs off exponentially, up to 10 minutes.
 
 ## Configuration
 

@@ -47,6 +47,10 @@ type FieldDef struct {
 	// every other field, and the configurator renders a var text input in
 	// the properties panel for it.
 	RequiresVar bool
+	// RequiresSource marks a field parameterized by the `source`/`select`/`fallback`
+	// attributes (only "source"): validation rejects those attributes on every other
+	// field, and the configurator renders source/select/fallback inputs for it.
+	RequiresSource bool
 	// Capability, when non-empty, names a runtime capability the field
 	// depends on (e.g. "oauth-usage" fields need the authenticated usage
 	// API to be reachable). Capability gating is entirely client-side and
@@ -55,6 +59,10 @@ type FieldDef struct {
 	// probe fails), while "subagent-effort" — which has no probe at all —
 	// is hidden unconditionally. Empty means always available.
 	Capability string
+	// Transcript marks a field whose value is derived from the session transcript
+	// (schema.SessionAnalytics), which only the background refresh worker computes.
+	// The render path schedules transcript refreshes only for documents that use one.
+	Transcript bool
 }
 
 // MetricDef describes one named metric usable in `when`/`color-rule`
@@ -79,7 +87,18 @@ type MetricDef struct {
 	// configurator offers them as suggestions; a value outside the list is
 	// still valid, since these strings come from Claude Code, not from us.
 	Values []string
+	// Param, when non-empty, makes the metric parameterized: it is referenced as
+	// "<Name>:<param>" and Param names the parameter kind. "source" is the only kind:
+	// the parameter is a source id.
+	Param string
+	// Transcript marks a metric derived from schema.SessionAnalytics (see FieldDef.Transcript).
+	Transcript bool
 }
+
+// SourceSelfMetric is the SelfMetric of the "source" field. It is NOT a registered
+// metric: the renderer resolves `self` on a source field to the field's own value
+// (or its fallback's self metric).
+const SourceSelfMetric = "source-value"
 
 // claudeCodeFields is the tool="claude-code" content field catalog
 // (markup.md "コンテンツfield", 25 entries - the spec text says "26種"
@@ -231,19 +250,27 @@ var claudeCodeFields = []FieldDef{
 		Name: "cache-hit-rate", Category: "claude", DisplayName: "Cache Hit Rate", SelfMetric: "cache-hit-percent", Formats: []string{"percent"},
 		Descriptions: Descriptions{EN: "Cache-read hit rate of the last API call.", JA: "直近API呼び出しのキャッシュ読み取りヒット率です。"},
 	},
-	{Name: "compaction-count", Category: "claude", DisplayName: "Compactions", SelfMetric: "compaction-count", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of transcript compactions.", JA: "transcriptのcompact回数です。"}},
-	{Name: "compaction-auto", Category: "claude", DisplayName: "Automatic Compactions", SelfMetric: "compaction-auto", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of automatic compactions.", JA: "自動compact回数です。"}},
-	{Name: "compaction-manual", Category: "claude", DisplayName: "Manual Compactions", SelfMetric: "compaction-manual", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of manual compactions.", JA: "手動compact回数です。"}},
-	{Name: "compaction-unknown", Category: "claude", DisplayName: "Unknown Compactions", SelfMetric: "compaction-unknown", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Compactions with an unknown trigger.", JA: "起点不明のcompact回数です。"}},
-	{Name: "compaction-tokens-reclaimed", Category: "claude", DisplayName: "Reclaimed Tokens", SelfMetric: "compaction-tokens-reclaimed", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Tokens reclaimed by compaction.", JA: "compactで回収されたトークン数です。"}},
-	{Name: "session-input-tokens", Category: "claude", DisplayName: "Session Input Tokens", SelfMetric: "session-input-tokens", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Transcript-derived session input tokens.", JA: "transcript由来のセッション入力トークン数です。"}},
-	{Name: "session-output-tokens", Category: "claude", DisplayName: "Session Output Tokens", SelfMetric: "session-output-tokens", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Transcript-derived session output tokens.", JA: "transcript由来のセッション出力トークン数です。"}},
-	{Name: "session-cache-creation-tokens", Category: "claude", DisplayName: "Session Cache Creation Tokens", SelfMetric: "session-cache-creation-tokens", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Session cache-creation tokens.", JA: "セッションのキャッシュ作成トークン数です。"}},
-	{Name: "session-cache-read-tokens", Category: "claude", DisplayName: "Session Cache Read Tokens", SelfMetric: "session-cache-read-tokens", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Session cache-read tokens.", JA: "セッションのキャッシュ読取トークン数です。"}},
-	{Name: "session-total-tokens", Category: "claude", DisplayName: "Session Total Tokens", SelfMetric: "session-total-tokens", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Total transcript-derived session tokens.", JA: "transcript由来のセッション総トークン数です。"}},
-	{Name: "input-token-speed", Category: "claude", DisplayName: "Input Token Speed", SelfMetric: "input-token-speed", Formats: []string{"number"}, Descriptions: Descriptions{EN: "Average session input tokens per second.", JA: "セッション平均入力トークン毎秒です。"}},
-	{Name: "output-token-speed", Category: "claude", DisplayName: "Output Token Speed", SelfMetric: "output-token-speed", Formats: []string{"number"}, Descriptions: Descriptions{EN: "Average session output tokens per second.", JA: "セッション平均出力トークン毎秒です。"}},
-	{Name: "total-token-speed", Category: "claude", DisplayName: "Total Token Speed", SelfMetric: "total-token-speed", Formats: []string{"number"}, Descriptions: Descriptions{EN: "Average total tokens per second.", JA: "セッション平均総トークン毎秒です。"}},
+	{Name: "cache-warm", Category: "claude", DisplayName: "Prompt Cache Warm", SelfMetric: "cache-warm", Formats: []string{"enum"}, Descriptions: Descriptions{EN: "Whether the session's prompt cache is still warm, so the next request can reuse the cached prefix.", JA: "セッションのプロンプトキャッシュがまだ有効で、次のリクエストでキャッシュ済みのプレフィックスを再利用できるかどうかです。"}},
+	{Name: "cache-ttl", Category: "claude", DisplayName: "Prompt Cache TTL", SelfMetric: "cache-ttl", Formats: []string{"enum"}, Descriptions: Descriptions{EN: "The prompt cache time-to-live Claude Code reports for the session (5m or 1h).", JA: "Claude Codeが報告するセッションのプロンプトキャッシュの有効期間（5m または 1h）です。"}},
+	{Name: "cache-expires-at", Category: "claude", DisplayName: "Prompt Cache Expiry", SelfMetric: "cache-expires-minutes", Formats: []string{"countdown", "datetime"}, Descriptions: Descriptions{EN: "Countdown to the moment the cached prefix goes cold (its prompt cache expires).", JA: "キャッシュ済みプレフィックスがコールドになる（プロンプトキャッシュが失効する）時刻までのカウントダウンです。"}},
+	{Name: "cache-hit-ratio", Category: "claude", DisplayName: "Prompt Cache Hit Ratio", SelfMetric: "cache-hit-ratio-percent", Formats: []string{"percent"}, Descriptions: Descriptions{EN: "Session-wide prompt cache hit ratio reported by Claude Code; unlike cache-hit-rate, it covers the whole session, not only the last API call.", JA: "Claude Codeが報告するセッション全体のプロンプトキャッシュヒット率です。直近API呼び出しのみが対象のcache-hit-rateと異なり、セッション全体が対象です。"}},
+	{Name: "cache-requests", Category: "claude", DisplayName: "Prompt Cache Requests", SelfMetric: "cache-requests", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of API requests counted in the session's prompt cache statistics.", JA: "セッションのプロンプトキャッシュ統計に含まれるAPIリクエスト数です。"}},
+	{Name: "cache-misses", Category: "claude", DisplayName: "Prompt Cache Misses", SelfMetric: "cache-misses", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of API requests in this session that missed the prompt cache.", JA: "今セッションでプロンプトキャッシュをヒットしなかったAPIリクエスト数です。"}},
+	{Name: "cache-recache-tokens", Category: "claude", DisplayName: "Recache Tokens If Cold", SelfMetric: "cache-recache-tokens", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Tokens that would have to be written to the cache again if the prompt cache went cold now.", JA: "今プロンプトキャッシュがコールドになった場合に、再度キャッシュへ書き込む必要があるトークン数です。"}},
+	{Name: "cache-last-miss-cause", Category: "claude", DisplayName: "Last Cache Miss Cause", Formats: []string{"enum"}, Descriptions: Descriptions{EN: "The cause Claude Code reports for the most recent prompt cache miss.", JA: "Claude Codeが報告する直近のプロンプトキャッシュミスの原因です。"}},
+	{Name: "compaction-count", Category: "claude", Transcript: true, DisplayName: "Compactions", SelfMetric: "compaction-count", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of transcript compactions.", JA: "transcriptのcompact回数です。"}},
+	{Name: "compaction-auto", Category: "claude", Transcript: true, DisplayName: "Automatic Compactions", SelfMetric: "compaction-auto", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of automatic compactions.", JA: "自動compact回数です。"}},
+	{Name: "compaction-manual", Category: "claude", Transcript: true, DisplayName: "Manual Compactions", SelfMetric: "compaction-manual", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of manual compactions.", JA: "手動compact回数です。"}},
+	{Name: "compaction-unknown", Category: "claude", Transcript: true, DisplayName: "Unknown Compactions", SelfMetric: "compaction-unknown", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Compactions with an unknown trigger.", JA: "起点不明のcompact回数です。"}},
+	{Name: "compaction-tokens-reclaimed", Category: "claude", Transcript: true, DisplayName: "Reclaimed Tokens", SelfMetric: "compaction-tokens-reclaimed", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Tokens reclaimed by compaction.", JA: "compactで回収されたトークン数です。"}},
+	{Name: "session-input-tokens", Category: "claude", Transcript: true, DisplayName: "Session Input Tokens", SelfMetric: "session-input-tokens", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Transcript-derived session input tokens.", JA: "transcript由来のセッション入力トークン数です。"}},
+	{Name: "session-output-tokens", Category: "claude", Transcript: true, DisplayName: "Session Output Tokens", SelfMetric: "session-output-tokens", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Transcript-derived session output tokens.", JA: "transcript由来のセッション出力トークン数です。"}},
+	{Name: "session-cache-creation-tokens", Category: "claude", Transcript: true, DisplayName: "Session Cache Creation Tokens", SelfMetric: "session-cache-creation-tokens", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Session cache-creation tokens.", JA: "セッションのキャッシュ作成トークン数です。"}},
+	{Name: "session-cache-read-tokens", Category: "claude", Transcript: true, DisplayName: "Session Cache Read Tokens", SelfMetric: "session-cache-read-tokens", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Session cache-read tokens.", JA: "セッションのキャッシュ読取トークン数です。"}},
+	{Name: "session-total-tokens", Category: "claude", Transcript: true, DisplayName: "Session Total Tokens", SelfMetric: "session-total-tokens", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Total transcript-derived session tokens.", JA: "transcript由来のセッション総トークン数です。"}},
+	{Name: "input-token-speed", Category: "claude", Transcript: true, DisplayName: "Input Token Speed", SelfMetric: "input-token-speed", Formats: []string{"number"}, Descriptions: Descriptions{EN: "Average session input tokens per second.", JA: "セッション平均入力トークン毎秒です。"}},
+	{Name: "output-token-speed", Category: "claude", Transcript: true, DisplayName: "Output Token Speed", SelfMetric: "output-token-speed", Formats: []string{"number"}, Descriptions: Descriptions{EN: "Average session output tokens per second.", JA: "セッション平均出力トークン毎秒です。"}},
+	{Name: "total-token-speed", Category: "claude", Transcript: true, DisplayName: "Total Token Speed", SelfMetric: "total-token-speed", Formats: []string{"number"}, Descriptions: Descriptions{EN: "Average total tokens per second.", JA: "セッション平均総トークン毎秒です。"}},
 	{
 		Name: "extra-usage-cost", Category: "claude", Capability: "oauth-usage", SelfMetric: "extra-usage-cost-usd", Formats: []string{"currency"},
 		DisplayName:  "Extra Usage Cost",
@@ -332,6 +359,15 @@ var claudeCodeFields = []FieldDef{
 			JA: "var属性で指定した環境変数の値です。秘匿情報に見える変数名はunmaskを付けない限り***で隠されます。",
 		},
 	},
+	{
+		Name: "source", Category: "common", DisplayName: "External Source", RequiresSource: true,
+		SelfMetric: SourceSelfMetric,
+		Formats:    []string{"percent", "number", "compact-number", "currency", "duration", "countdown", "datetime", "enum"},
+		Descriptions: Descriptions{
+			EN: "A value picked by the select attribute from a local external JSON source (sources.json). Undefined, failed, stale or unmatched sources render empty, or as the fallback field.",
+			JA: "ローカルの外部JSONソース（sources.json）から select 属性で選んだ値です。未定義・取得失敗・古い・一致なしのときは空、または fallback の field になります。",
+		},
+	},
 }
 
 // claudeCodeMetrics is the tool="claude-code" named-metric catalog
@@ -339,19 +375,19 @@ var claudeCodeFields = []FieldDef{
 // and the compaction/session-token/token-speed metrics derived from
 // transcript analysis.
 var claudeCodeMetrics = []MetricDef{
-	{Name: "compaction-count", DisplayName: "Compactions", Descriptions: Descriptions{EN: "Number of transcript compactions.", JA: "transcriptのcompact回数です。"}},
-	{Name: "compaction-auto", DisplayName: "Automatic Compactions", Descriptions: Descriptions{EN: "Number of automatic compactions.", JA: "自動compact回数です。"}},
-	{Name: "compaction-manual", DisplayName: "Manual Compactions", Descriptions: Descriptions{EN: "Number of manual compactions.", JA: "手動compact回数です。"}},
-	{Name: "compaction-unknown", DisplayName: "Unknown Compactions", Descriptions: Descriptions{EN: "Compactions with an unknown trigger.", JA: "起点不明のcompact回数です。"}},
-	{Name: "compaction-tokens-reclaimed", DisplayName: "Reclaimed Tokens", Descriptions: Descriptions{EN: "Tokens reclaimed by compaction.", JA: "compactで回収されたトークン数です。"}},
-	{Name: "session-input-tokens", DisplayName: "Session Input Tokens", Descriptions: Descriptions{EN: "Transcript-derived session input tokens.", JA: "transcript由来のセッション入力トークン数です。"}},
-	{Name: "session-output-tokens", DisplayName: "Session Output Tokens", Descriptions: Descriptions{EN: "Transcript-derived session output tokens.", JA: "transcript由来のセッション出力トークン数です。"}},
-	{Name: "session-cache-creation-tokens", DisplayName: "Session Cache Creation Tokens", Descriptions: Descriptions{EN: "Session cache-creation tokens.", JA: "セッションのキャッシュ作成トークン数です。"}},
-	{Name: "session-cache-read-tokens", DisplayName: "Session Cache Read Tokens", Descriptions: Descriptions{EN: "Session cache-read tokens.", JA: "セッションのキャッシュ読取トークン数です。"}},
-	{Name: "session-total-tokens", DisplayName: "Session Total Tokens", Descriptions: Descriptions{EN: "Total transcript-derived session tokens.", JA: "transcript由来のセッション総トークン数です。"}},
-	{Name: "input-token-speed", DisplayName: "Input Token Speed", Descriptions: Descriptions{EN: "Average session input tokens per second.", JA: "セッション平均入力トークン毎秒です。"}},
-	{Name: "output-token-speed", DisplayName: "Output Token Speed", Descriptions: Descriptions{EN: "Average session output tokens per second.", JA: "セッション平均出力トークン毎秒です。"}},
-	{Name: "total-token-speed", DisplayName: "Total Token Speed", Descriptions: Descriptions{EN: "Average total tokens per second.", JA: "セッション平均総トークン毎秒です。"}},
+	{Name: "compaction-count", Transcript: true, DisplayName: "Compactions", Descriptions: Descriptions{EN: "Number of transcript compactions.", JA: "transcriptのcompact回数です。"}},
+	{Name: "compaction-auto", Transcript: true, DisplayName: "Automatic Compactions", Descriptions: Descriptions{EN: "Number of automatic compactions.", JA: "自動compact回数です。"}},
+	{Name: "compaction-manual", Transcript: true, DisplayName: "Manual Compactions", Descriptions: Descriptions{EN: "Number of manual compactions.", JA: "手動compact回数です。"}},
+	{Name: "compaction-unknown", Transcript: true, DisplayName: "Unknown Compactions", Descriptions: Descriptions{EN: "Compactions with an unknown trigger.", JA: "起点不明のcompact回数です。"}},
+	{Name: "compaction-tokens-reclaimed", Transcript: true, DisplayName: "Reclaimed Tokens", Descriptions: Descriptions{EN: "Tokens reclaimed by compaction.", JA: "compactで回収されたトークン数です。"}},
+	{Name: "session-input-tokens", Transcript: true, DisplayName: "Session Input Tokens", Descriptions: Descriptions{EN: "Transcript-derived session input tokens.", JA: "transcript由来のセッション入力トークン数です。"}},
+	{Name: "session-output-tokens", Transcript: true, DisplayName: "Session Output Tokens", Descriptions: Descriptions{EN: "Transcript-derived session output tokens.", JA: "transcript由来のセッション出力トークン数です。"}},
+	{Name: "session-cache-creation-tokens", Transcript: true, DisplayName: "Session Cache Creation Tokens", Descriptions: Descriptions{EN: "Session cache-creation tokens.", JA: "セッションのキャッシュ作成トークン数です。"}},
+	{Name: "session-cache-read-tokens", Transcript: true, DisplayName: "Session Cache Read Tokens", Descriptions: Descriptions{EN: "Session cache-read tokens.", JA: "セッションのキャッシュ読取トークン数です。"}},
+	{Name: "session-total-tokens", Transcript: true, DisplayName: "Session Total Tokens", Descriptions: Descriptions{EN: "Total transcript-derived session tokens.", JA: "transcript由来のセッション総トークン数です。"}},
+	{Name: "input-token-speed", Transcript: true, DisplayName: "Input Token Speed", Descriptions: Descriptions{EN: "Average session input tokens per second.", JA: "セッション平均入力トークン毎秒です。"}},
+	{Name: "output-token-speed", Transcript: true, DisplayName: "Output Token Speed", Descriptions: Descriptions{EN: "Average session output tokens per second.", JA: "セッション平均出力トークン毎秒です。"}},
+	{Name: "total-token-speed", Transcript: true, DisplayName: "Total Token Speed", Descriptions: Descriptions{EN: "Average total tokens per second.", JA: "セッション平均総トークン毎秒です。"}},
 	{Name: "thinking-enabled", DisplayName: "Thinking Enabled", Descriptions: Descriptions{EN: "Whether extended thinking is enabled.", JA: "拡張思考が有効かどうかです。"}},
 	{Name: "exceeds-200k", DisplayName: "Exceeds 200K", Descriptions: Descriptions{EN: "Whether context usage exceeds 200,000 tokens.", JA: "コンテキスト使用量が20万トークンを超えているかどうかです。"}},
 	{Name: "git-clean", DisplayName: "Git Clean", Descriptions: Descriptions{EN: "Whether the working tree is clean.", JA: "作業ツリーがクリーンかどうかです。"}},
@@ -375,6 +411,36 @@ var claudeCodeMetrics = []MetricDef{
 		Name: "cache-hit-percent", DisplayName: "Cache Hit Rate (%)",
 		Descriptions: Descriptions{EN: "Cache-read hit rate of the last API call, as a percentage.", JA: "直近API呼び出しのキャッシュ読み取りヒット率（％）です。"},
 		Percent:      true,
+	},
+	{
+		Name: "cache-warm", DisplayName: "Prompt Cache Warm",
+		Descriptions: Descriptions{EN: "Whether the session's prompt cache is still warm.", JA: "セッションのプロンプトキャッシュがまだ有効かどうかです。"},
+	},
+	{
+		Name: "cache-ttl", DisplayName: "Prompt Cache TTL", Text: true,
+		Values:       []string{"5m", "1h"},
+		Descriptions: Descriptions{EN: "Prompt cache time-to-live Claude Code reports for the session: 5m or 1h; usable in when=.", JA: "Claude Codeが報告するセッションのプロンプトキャッシュの有効期間（5m または 1h）です。when= で使えます。"},
+	},
+	{
+		Name: "cache-expires-minutes", DisplayName: "Prompt Cache Expiry (min)",
+		Descriptions: Descriptions{EN: "Minutes until the cached prefix goes cold.", JA: "キャッシュ済みプレフィックスがコールドになるまでの分数です。"},
+	},
+	{
+		Name: "cache-hit-ratio-percent", DisplayName: "Prompt Cache Hit Ratio (%)",
+		Descriptions: Descriptions{EN: "Session-wide prompt cache hit ratio reported by Claude Code, as a percentage.", JA: "Claude Codeが報告するセッション全体のプロンプトキャッシュヒット率（％）です。"},
+		Percent:      true,
+	},
+	{
+		Name: "cache-requests", DisplayName: "Prompt Cache Requests",
+		Descriptions: Descriptions{EN: "Number of API requests counted in the session's prompt cache statistics.", JA: "セッションのプロンプトキャッシュ統計に含まれるAPIリクエスト数です。"},
+	},
+	{
+		Name: "cache-misses", DisplayName: "Prompt Cache Misses",
+		Descriptions: Descriptions{EN: "Number of API requests in this session that missed the prompt cache.", JA: "今セッションでプロンプトキャッシュをヒットしなかったAPIリクエスト数です。"},
+	},
+	{
+		Name: "cache-recache-tokens", DisplayName: "Recache Tokens If Cold",
+		Descriptions: Descriptions{EN: "Tokens that would have to be written to the cache again if the prompt cache went cold now.", JA: "今プロンプトキャッシュがコールドになった場合に、再度キャッシュへ書き込む必要があるトークン数です。"},
 	},
 	{
 		Name: "context-percent", DisplayName: "Context Used (%)",
@@ -514,6 +580,13 @@ var claudeCodeMetrics = []MetricDef{
 	{
 		Name: "account-email", DisplayName: "Account Email", Text: true,
 		Descriptions: Descriptions{EN: "Email address of the logged-in account.", JA: "ログイン中アカウントのメールアドレスです。"},
+	},
+	{
+		Name: "source-stale", DisplayName: "Source Stale", Param: "source",
+		Descriptions: Descriptions{
+			EN: "True when the external source named after the colon (source-stale:<id>) is defined but has no usable value: never fetched, last fetch failed, past staleAfter, or unreadable. Undefined sources leave it unresolved, so the condition hides.",
+			JA: "コロンの後に書いた外部ソース（source-stale:<id>）が定義済みなのに使える値が無い（未取得・取得失敗・staleAfter超過・読めない）ときに真になります。未定義のソースでは未解決となり、条件は偽として隠れます。",
+		},
 	},
 	widthMetric,
 }

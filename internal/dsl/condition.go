@@ -251,6 +251,16 @@ func lexWord(src string, start int) (token, int) {
 	for i < n && (isLowerByte(src[i]) || isDigitByte(src[i]) || src[i] == '-') {
 		i++
 	}
+	// `name:param` metric references (e.g. source-stale:cc) lex as a single
+	// identifier. A ':' not followed by a lowercase letter is left unconsumed
+	// so the main loop reports it at its own offset.
+	if i+1 < n && src[i] == ':' && isLowerByte(src[i+1]) {
+		i++
+		for i < n && (isLowerByte(src[i]) || isDigitByte(src[i]) || src[i] == '-') {
+			i++
+		}
+		return token{kind: tkIdent, text: src[start:i], pos: start}, i
+	}
 	word := src[start:i]
 	kind, ok := keywords[word]
 	if !ok {

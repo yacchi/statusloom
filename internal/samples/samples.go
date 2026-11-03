@@ -86,6 +86,12 @@ func fptr(v float64) *float64 {
 	return &v
 }
 
+// iptr returns a pointer to v, for populating the optional int fields of
+// schema.PromptCache in sample snapshots.
+func iptr(v int) *int {
+	return &v
+}
+
 // fullSample is a mid-session snapshot with data for every widget: model,
 // effort, thinking, context usage, cost, a dirty repository, and both
 // rate-limit windows.
@@ -99,6 +105,20 @@ func fullSample(now time.Time) schema.StatusSnapshot {
 	// Cost carries the work-volume/timing fields the session-duration,
 	// api-duration, and lines-changed widgets read. USD is unchanged so the
 	// session-cost preview stays "$1.23".
+	// Prompt-cache stats feed the cache-* palette previews. ExpiresAt is derived
+	// from now so the countdown preview is stable.
+	expiresAt := now.Add(42 * time.Minute)
+	promptCache := schema.PromptCache{
+		Warm:                true,
+		CachingObserved:     true,
+		TTL:                 "1h",
+		ExpiresAt:           &expiresAt,
+		Requests:            14,
+		Misses:              2,
+		HitRatio:            fptr(0.91),
+		RecacheTokensIfCold: iptr(45000),
+		LastMissCauses:      []string{"tools_changed"},
+	}
 	cost := schema.CostUsage{
 		USD:          1.23,
 		Duration:     75 * time.Minute,
@@ -124,6 +144,7 @@ func fullSample(now time.Time) schema.StatusSnapshot {
 			ThinkingEnabled: &thinking,
 			OutputStyle:     &outputStyle,
 			Analytics:       &schema.SessionAnalytics{Compactions: 2, CompactionsAuto: 1, CompactionsManual: 1, TokensReclaimed: 28000, InputTokens: 12000, OutputTokens: 4000, CacheCreationTokens: 1000, CacheReadTokens: 30000, TotalTokens: 47000, InputTokensPerSecond: 3.2, OutputTokensPerSecond: 1.1, TotalTokensPerSecond: 12.5},
+			PromptCache:     &promptCache,
 			Context: &schema.ContextUsage{
 				TotalInputTokens:    64000,
 				TotalOutputTokens:   1200,

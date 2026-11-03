@@ -360,6 +360,9 @@ Claude Codeの`subagentStatusLine`（実行中subagentタスクのパネル。**
 * `hyperlink` — `true`でOSC 8ハイパーリンクを出力（linkableなfieldのみ）
 * `var` — 読み取る環境変数名（`name="env"`専用。後述）
 * `unmask` — `true`で`env`の秘匿マスクを解除（`name="env"`専用。後述）
+* `source` — 外部JSONソースのid（`name="source"`専用。後述）
+* `select` — ソースから値を取り出す式（`name="source"`専用。後述）
+* `fallback` — 値が無いときに表示する組み込みfield名（`name="source"`専用。後述）
 * `min-width` — フィールドの整形済み値を最低N桁までパディングする（後述）
 * `align` — `min-width`のパディング方向（後述）
 * `prefix`
@@ -420,6 +423,71 @@ fieldが存在しない、または値が空の場合、field本体は空文字�
 ```
 
 `unmask`は`var`を伴わない場合validation error。`var`/`unmask`を`env`以外のfieldに付けた場合もvalidation error。
+
+#### source（source/select/fallback属性）
+
+`name="source"`は、ローカルの外部JSONソースから値を読むfield。Claude Code以外の状態（例: プロファイルごとのキープアライブ期限）をステータスラインへ出すために使う。DSLが参照するのはソースidだけ。
+
+```xml
+<field name="source" source="ccprofile" select="[id=${session_id}].keepalive.expiresAt" format="countdown" fallback="cache-expires-at"/>
+```
+
+* `source` — ソースid（1〜64文字の`a-z`・`0-9`・`-`。先頭は英字）
+* `select` — ソースから値を取り出す式（後述「`select`構文」）
+* `fallback` — 値が無いときに表示する組み込みfield名（後述「`fallback`」）
+
+ソースの定義（ファイルパス・コマンドのargv・URL）はDSLには**書かない**。定義は`<configDir>/sources.json`にだけ置き、`statusloom source add/list/rm/test`と設定UIで編集する。Room presetは第三者が書くため、定義をDSLに含めるとインポートしただけでコマンドが走ってしまう。
+
+**値が無い場合**
+
+* 次のいずれかは「値なし」: 未定義のid、取得失敗、`staleAfter`を過ぎた値、`select`の不一致。値なしのfieldは空になる（`var`が無い`env`と同じ扱い）。`fallback`があればそれを表示する。
+* `source`が未指定または空の場合は、診断を一切出さず空になる。
+* `statusloom doctor`は、参照されているが定義されていないidを一覧に出す。
+* command/httpのソースは`statusloom refresh`サブプロセスの中でだけ取得する。描画はキャッシュとファイルのソースを読むだけで、ネットワークもコマンドも呼ばない。
+
+**値の型と表示**
+
+* 値はスカラーのみ（文字列・数値・真偽値）。オブジェクト・配列・`null`は値なし。
+* 真偽値は`true`/`false`で出す。文字列はそのまま出し、`format`は無視する（数字に見える文字列も数値に変換しない）。
+* 数値は`format`に従う。`percent`（0〜100のスケール）、`number`、`compact-number`、`currency`（`$`＋小数2桁。`precision`を指定するとその桁数に置き換わる）、`duration`（秒）、`countdown`と`datetime`（epoch秒）。`enum`または指定なしは最短の10進表記。
+* `raw`とcompactは適用されず、hyperlinkも付かない。`min-width`/`align`は他のfieldと同じく適用される。
+* `datetime`は、epoch秒を現在と同じ暦日なら`15:04`、それ以外は`01-02 15:04`で表示する（現在のローカルタイムゾーン基準）。
+
+**`self`**
+
+* 値がある場合: その値。`countdown`/`datetime`の数値では「epoch値までの残り分」（0で下限。`*-reset-minutes`と同じ単位）になるので、`when="self lt 5"`のように書ける。
+* 値がなくfallbackがある場合: fallback fieldのselfメトリック。
+* 値もfallbackも無い場合: 未解決（`when="self ..."`は非表示、`color-rule`は基底色）。
+
+**`fallback`**
+
+* 1段のみ。組み込みfieldだけを指定でき、`source`・`env`・`subagent`のfieldは不可。
+* fallbackは、source fieldに書いた属性（`format`/`precision`/`currency`/`raw`/`unmask`）で描画される。出力されるノードはsource fieldのまま。
+* source fieldに書く`format`は、fallback fieldのformatsに含まれていなければならない。
+
+**`select`構文**
+
+JSONPathは使わない小さな構文。
+
+* `.key` — オブジェクトのキー。先頭のキーは`.`を省略できる（`a.b`は`.a.b`と同じ）。
+* `[n]` — 配列の添字（ASCIIの数字）。
+* `[key=value]` — 配列の中で、メンバ`key`のスカラー値が`value`に等しい最初のオブジェクト。比較は正規化した文字列で行う（数値は最短の10進表記、真偽値は`true`/`false`、文字列はそのまま）。型は区別しないため、`[id=42]`は数値`42`と文字列`"42"`の両方に一致する。`null`は一致しない。一致しなければ値なし。
+* 空の`select`はドキュメントのルートを指す。
+* `${name}`テンプレートは、キー・`key=value`のキー部分と値部分で使える。`name`は`session_id`・`cwd`・`workspace.project_dir`・`CLAUDE_CONFIG_DIR`のいずれか。置換された値はそのまま使われ、再解析はされない（値に含まれる`]`・`.`・`=`はただの文字）。未設定の変数は空文字になる。
+* 空白はトリムしない。キーには`.`・`[`・`]`・`=`を含められない。
+
+```text
+[id=${session_id}].keepalive.expiresAt
+.sessions[0].profile
+profile
+[configDir=${CLAUDE_CONFIG_DIR}].profile
+```
+
+構文エラーはvalidation error（`invalid select "<expr>": <message>`。「validation」節）。
+
+**staleness**
+
+値は`staleAfter`を過ぎると値なしになる。その状態は`source-stale:<id>`で条件に使える（「`when`」節）。
 
 #### アカウントfield
 
@@ -618,6 +686,16 @@ padding、prefix、suffixは、その属性を持つノード自身の文字装�
 
 `env`に変数名を付けない（`optional="env"`）、逆に`var`を取らないfieldへ変数名を付ける（`optional="model:X"`）のはいずれもvalidation error。マスクされた値は空ではないので、存在判定は`unmask`の有無に依存しない。
 
+`name="source"`のfieldを参照する場合も同様に、`optional="source:<id>"`の形でソースidまで指定する。ソースが定義されていて、使える値（新鮮で読める値）を持つときだけtrueになる。
+
+```xml
+<span prefix="profile: " optional="source:ccprofile">
+  <field name="source" source="ccprofile" select="profile"/>
+</span>
+```
+
+`optional="source"`のようにidを省くとvalidation error（`optional "source" requires a source id, as in optional="source:SOURCE_ID"`）。不正なidは後述の`invalid source id`と同じ規則で検査する。
+
 #### `when`
 
 条件式による表示制御。
@@ -665,6 +743,19 @@ padding、prefix、suffixは、その属性を持つノード自身の文字装�
 メトリクスが解決不能な場合（対応する値がスナップショットに存在しないなど）は、そのノードを非表示扱いにする。
 
 CELなどの外部式言語は、初期実装では必須としない。将来差し替え可能なinterfaceへ分離する。
+
+##### パラメータ付きメトリクス
+
+メトリクスがパラメータを取る場合は`name:param`の形で参照する（最初の`:`で分割）。現在パラメータを取るのは`source-stale:<id>`だけ。
+
+* `source-stale:<id>`は真偽値。idが**定義されている**のに使える値が無い（未取得、直近の取得失敗、`staleAfter`超過、読めない）場合はtrue。
+* idが**未定義**の場合は未解決になるので、条件は非表示扱いになる。
+
+```xml
+<text dim="true" when="source-stale:ccprofile">stale</text>
+```
+
+validationは`sources.json`を読まない。未定義のidは診断にならない（「validation」節）。
 
 ## prefix / suffix
 
@@ -781,7 +872,7 @@ fieldには型に応じたformatterを適用できるようにする。現行実
 * `currency` — `$`+小数2桁。adaptive precision（有効桁に応じた桁数）を候補とする
 * `duration` — `42s` / `5m 12s` / `1h 15m`（`formatDuration`相当）
 * `countdown` — `2d3h` / `1h23m` / `45m`（`countdown`相当。現行`five-hour-reset`/`weekly-reset`が使用）
-* `datetime`
+* `datetime` — epoch秒を表示する。同じ暦日なら`15:04`、それ以外は`01-02 15:04`（現在のローカルタイムゾーン基準）。`source`のfieldと`cache-expires-at`で使う
 * `boolean`
 * `enum`
 
@@ -812,13 +903,35 @@ formatterの属性は、field definitionの型に応じてsemantic validationす
 
 field名・formatter対応・selfMetric・linkableは、宣言的なfield定義レジストリとしてGo側で一元管理する。現行はrenderの`switch`ハードコードと`webconfig/catalog.go`のハンドメンテが重複しているため、これを単一レジストリへ集約する。DSLのvalidation、Web UIのカタログ提供、rendererはこの単一の情報源を参照する。
 
-### コンテンツfield（現行62種）
+### コンテンツfield（現行71種）
 
-`model`、`model-id`、`output-style`、`session-id`、`thinking-enabled`、`git-branch`、`git-changes`、`tool-version`、`current-directory`、`project-directory`、`git-root`、`thinking-effort`、`context-length`、`context-window-size`、`context-remaining`、`context-output-tokens`、`current-input-tokens`、`current-output-tokens`、`cache-creation-tokens`、`cache-read-tokens`、`exceeds-200k`、`context-percentage`、`context-percentage-usable`、`session-cost`、`five-hour-usage`、`five-hour-reset`、`weekly-usage`、`weekly-reset`、`session-name`、`agent-name`、`vim-mode`、`pr-number`、`pr-review-state`、`repo-name`、`worktree`、`session-duration`、`api-duration`、`lines-changed`、`lines-added`、`lines-removed`、`cache-hit-rate`、`git-staged`、`git-unstaged`、`git-untracked`、`git-ahead`、`git-behind`、`git-clean`、`extra-usage-cost`、`extra-usage-limit`、`extra-usage-percent`、`weekly-usage-opus`、`weekly-usage-sonnet`、`weekly-reset-opus`、`weekly-reset-sonnet`、`account-email`、`account-name`、`account-org`、`account-role`、`account-type`、`account-plan`、`account-seat`、`env`
+`model`、`model-id`、`output-style`、`session-id`、`thinking-enabled`、`git-branch`、`git-changes`、`tool-version`、`current-directory`、`project-directory`、`git-root`、`thinking-effort`、`context-length`、`context-window-size`、`context-remaining`、`context-output-tokens`、`current-input-tokens`、`current-output-tokens`、`cache-creation-tokens`、`cache-read-tokens`、`exceeds-200k`、`context-percentage`、`context-percentage-usable`、`session-cost`、`five-hour-usage`、`five-hour-reset`、`weekly-usage`、`weekly-reset`、`session-name`、`agent-name`、`vim-mode`、`pr-number`、`pr-review-state`、`repo-name`、`worktree`、`session-duration`、`api-duration`、`lines-changed`、`lines-added`、`lines-removed`、`cache-hit-rate`、`cache-warm`、`cache-ttl`、`cache-expires-at`、`cache-hit-ratio`、`cache-requests`、`cache-misses`、`cache-recache-tokens`、`cache-last-miss-cause`、`git-staged`、`git-unstaged`、`git-untracked`、`git-ahead`、`git-behind`、`git-clean`、`extra-usage-cost`、`extra-usage-limit`、`extra-usage-percent`、`weekly-usage-opus`、`weekly-usage-sonnet`、`weekly-reset-opus`、`weekly-reset-sonnet`、`account-email`、`account-name`、`account-org`、`account-role`、`account-type`、`account-plan`、`account-seat`、`env`、`source`
 
 `separator`・`flex-separator`はノード（`role="separator"`の`text` / `<flex/>`）へ置き換わるため、fieldカタログには含めない。
 
 linkable（`hyperlink`可）: `pr-number`、`pr-review-state`、`repo-name`
+
+#### プロンプトキャッシュfield
+
+Claude Codeのstdin `prompt_cache`（Claude Code v2.1.251以降）から読むfield。メイン会話の最初のAPI応答が返るまでは`prompt_cache`が存在しないため、全fieldは空になり、対応するメトリクスは未解決になる。
+
+| field | 表示する内容 | 既定の表示 |
+|---|---|---|
+| `cache-warm` | キャッシュが温かいか | `warm` / `cold` |
+| `cache-ttl` | キャッシュの有効期間 | `5m` / `1h` |
+| `cache-expires-at` | キャッシュされたprefixが冷える（期限切れになる）時刻までのカウントダウン | `format="countdown"`で残り時間（期限切れなら`0m`）。`format="datetime"`で時刻（formatterの`datetime`）。値が無ければ空 |
+| `cache-hit-ratio` | Claude Codeが報告するセッション全体のキャッシュヒット率 | `percent`（0〜1の比率を％で表示） |
+| `cache-requests` | セッション全体のキャッシュ対象リクエスト数 | 整数（`number` / `compact-number`） |
+| `cache-misses` | セッション全体のキャッシュミス数 | 整数（`number` / `compact-number`） |
+| `cache-recache-tokens` | キャッシュが冷えている場合に再書き込みが必要になるトークン数 | 整数。不明なら空 |
+| `cache-last-miss-cause` | 直近のキャッシュミスの原因 | 原因を`,`で連結。無ければ空 |
+
+* `cache-hit-ratio`はClaude Codeが報告するセッション全体の比率。個々のAPI呼び出しの`cache-hit-rate`（既存field）とは別物なので混同しないこと。
+* `cache-expires-at`は、キャッシュが冷えるまでのカウントダウンなので、`self`では残り分（`cache-expires-minutes`）として扱われる。
+
+```xml
+<span prefix="cache: " optional="cache-expires-at"><field name="cache-expires-at" format="countdown"><color-rule when="self lt 5" color="red"/></field></span>
+```
 
 #### extra-usage / per-model weekly rate-limit field
 
@@ -856,15 +969,23 @@ extra-usage の利用枠（allocation）が割り当てられていないアカ�
 
 #### アカウントfield / `env` field
 
-`account-*`（ログイン中アカウントの識別情報）と`env`（環境変数の表示）は、他のfieldと違いスナップショット由来ではない。詳細は「`field`」節の「`env`（`var`/`unmask`属性）」「アカウントfield」を参照。
+`account-*`（ログイン中アカウントの識別情報）、`env`（環境変数の表示）、`source`（外部JSONソースの値）は、他のfieldと違いスナップショット由来ではない。詳細は「`field`」節の「`env`（`var`/`unmask`属性）」「`source`（source/select/fallback属性）」「アカウントfield」を参照。
 
-`env`は`var`属性を要する唯一のfieldで、レジストリ上は`RequiresVar`で表現する（validationと設定UIの入力欄がこれを見る）。`account-*`はcapabilityを持たない（ローカルファイルの有無だけなのでprobe不要で、無ければ空を返す）。
+`env`は`var`属性を、`source`は`source`属性を要するfieldで、レジストリ上はそれぞれ`RequiresVar`・`RequiresSource`で表現する（validationと設定UIの入力欄がこれを見る。設定UIは`source`の`select`・`fallback`の入力欄も出す）。`account-*`はcapabilityを持たない（ローカルファイルの有無だけなのでprobe不要で、無ければ空を返す）。`account-*`はcapabilityを持たない（ローカルファイルの有無だけなのでprobe不要で、無ければ空を返す）。
 
 ### メトリクス名（when / color-ruleで参照可能）
 
 kebab-caseの名前付きメトリクス:
 
-`api-duration-minutes`、`cache-hit-percent`、`cache-creation-tokens`、`cache-read-tokens`、`context-output-tokens`、`context-percent`、`context-remaining-percent`、`context-tokens`、`context-usable-percent`、`context-window-tokens`、`current-input-tokens`、`current-output-tokens`、`exceeds-200k`、`extra-usage-cost-usd`、`extra-usage-limit-usd`、`extra-usage-percent`、`five-hour-percent`、`five-hour-projected-percent`、`five-hour-reset-minutes`、`git-ahead`、`git-behind`、`git-clean`、`git-dirty`、`git-staged`、`git-unstaged`、`git-untracked`、`lines-added`、`lines-changed-total`、`lines-removed`、`session-cost-usd`、`session-duration-minutes`、`seven-day-opus-percent`、`seven-day-opus-projected-percent`、`seven-day-opus-reset-minutes`、`seven-day-percent`、`seven-day-projected-percent`、`seven-day-reset-minutes`、`seven-day-sonnet-percent`、`seven-day-sonnet-projected-percent`、`seven-day-sonnet-reset-minutes`、`thinking-enabled`、`width`
+`api-duration-minutes`、`cache-creation-tokens`、`cache-expires-minutes`、`cache-hit-percent`、`cache-hit-ratio-percent`、`cache-misses`、`cache-read-tokens`、`cache-recache-tokens`、`cache-requests`、`cache-ttl`、`cache-warm`、`context-output-tokens`、`context-percent`、`context-remaining-percent`、`context-tokens`、`context-usable-percent`、`context-window-tokens`、`current-input-tokens`、`current-output-tokens`、`exceeds-200k`、`extra-usage-cost-usd`、`extra-usage-limit-usd`、`extra-usage-percent`、`five-hour-percent`、`five-hour-projected-percent`、`five-hour-reset-minutes`、`git-ahead`、`git-behind`、`git-clean`、`git-dirty`、`git-staged`、`git-unstaged`、`git-untracked`、`lines-added`、`lines-changed-total`、`lines-removed`、`session-cost-usd`、`session-duration-minutes`、`seven-day-opus-percent`、`seven-day-opus-projected-percent`、`seven-day-opus-reset-minutes`、`seven-day-percent`、`seven-day-projected-percent`、`seven-day-reset-minutes`、`seven-day-sonnet-percent`、`seven-day-sonnet-projected-percent`、`seven-day-sonnet-reset-minutes`、`source-stale:<id>`、`thinking-enabled`、`width`
+
+補足:
+
+* `cache-warm` — 真偽値。キャッシュが温かいとtrue（フラグなし。`git-dirty`と同じ扱い）。
+* `cache-ttl` — テキストメトリクス（値は`5m`/`1h`）。`eq`/`ne`のみ使える（例: `when="cache-ttl eq 1h"`）。
+* `cache-hit-ratio-percent` — セッション全体のキャッシュヒット率（％）。`percent`扱い。
+* `cache-expires-minutes` / `cache-requests` / `cache-misses` / `cache-recache-tokens` — 数値。`cache-expires-minutes`は`cache-expires-at`のselfメトリック。
+* `source-stale:<id>` — パラメータ付きメトリクス（fieldは持たない）。詳細は「`when`」節の「パラメータ付きメトリクス」。
 
 `*-projected-percent`（`five-hour-projected-percent` / `seven-day-projected-percent` / per-modelの`seven-day-opus-projected-percent` / `seven-day-sonnet-projected-percent`）は、**現在の消費ペースをリセット時点まで外挿した予測使用率（％）**。`使用率 ÷ ウィンドウ経過割合` で計算し、`100`なら「このペースなら上限に到達」を意味する。selfメトリックを持たない純粋な派生メトリクス（対応fieldは無い）で、`when`/`color-rule`から参照する。ウィンドウ序盤（経過が10%未満）は外挿が不安定なため値を出さず、`color-rule`は基底色にフォールバックする（→「color-rule」の例参照）。
 
@@ -903,6 +1024,15 @@ selfメトリックを持つfield（`self`参照が可能）と対応メトリ�
 * `api-duration` → `api-duration-minutes`
 * `lines-changed` → `lines-changed-total`
 * `cache-hit-rate` → `cache-hit-percent`
+* `cache-expires-at` → `cache-expires-minutes`
+* `cache-hit-ratio` → `cache-hit-ratio-percent`
+* `cache-requests` → `cache-requests`
+* `cache-misses` → `cache-misses`
+* `cache-recache-tokens` → `cache-recache-tokens`
+* `cache-warm` → `cache-warm`
+* `cache-ttl` → `cache-ttl`
+
+`cache-last-miss-cause`と`source`は登録されたselfメトリックを持たない（`source`は後述のとおり描画側で解決する）。
 * `extra-usage-cost` → `extra-usage-cost-usd`
 * `extra-usage-limit` → `extra-usage-limit-usd`
 * `extra-usage-percent` → `extra-usage-percent`
@@ -1224,6 +1354,19 @@ XMLコメントをサポートする。
 * 未知のfield参照 / 未知のメトリクス参照
 * 不正なpadding値
 * 不正なネスト
+* `source`・`select`・`fallback`を`source`以外のfieldに付けた場合: `field "X" does not take a source attribute` / `field "X" does not take a select attribute` / `field "X" does not take a fallback attribute`
+* 不正なsource id: `invalid source id "X": use 1-64 characters of a-z, 0-9 and -, starting with a letter`
+* 不正な`select`: `invalid select "<expr>": <message>`。`<message>`は`unknown variable "<name>"`、`expected an index or key=value`、`.`の後の空のキー、閉じていない`[`、括弧の外の`]`・`=`、閉じていない`${`のいずれか
+* fallbackが未知のfield: `fallback references unknown field "X"`
+* fallbackが`source`・`env`: `fallback "X" must be a built-in field; source and env cannot be a fallback`
+* fallbackが`subagent`のfield: `fallback "X" cannot be used outside <subagent>`
+* source fieldの`format`がfallback fieldのformatsに無い: `formatter "F" is not applicable to fallback field "X"`
+* `optional="source"`（id無し）: `optional "source" requires a source id, as in optional="source:SOURCE_ID"`
+* パラメータを取らないメトリクスに`:`を付けた: `metric "X" takes no parameter`
+* `source-stale`にid無し: `metric "X" requires a source id, as in "source-stale:SOURCE_ID"`
+* 不正なid（`source-stale:<id>`・`optional="source:<id>"`とも）: 上記`invalid source id`と同じ規則
+
+`source`が未指定または空の場合は、いかなる診断も出さない。`sources.json`は検証時に読まないので、未定義のidも診断にならない。
 
 diagnosticには可能な限りsource rangeを含める。
 

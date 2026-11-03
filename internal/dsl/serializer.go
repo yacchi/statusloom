@@ -446,6 +446,15 @@ func serializeField(b *strings.Builder, depth int, n *FieldNode) {
 	if n.Var != "" {
 		writeAttr(b, "var", n.Var)
 	}
+	if n.Source != "" {
+		writeAttr(b, "source", n.Source)
+	}
+	if n.Select != "" {
+		writeAttr(b, "select", n.Select)
+	}
+	if n.Fallback != "" {
+		writeAttr(b, "fallback", n.Fallback)
+	}
 	if n.Formatter.Name != "" {
 		writeAttr(b, "format", n.Formatter.Name)
 	}

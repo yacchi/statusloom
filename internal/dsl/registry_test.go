@@ -1,6 +1,9 @@
 package dsl
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestFieldByName_Found(t *testing.T) {
 	f, ok := FieldByName("claude-code", "context-percentage")
@@ -31,11 +34,11 @@ func TestFieldByName_UnknownTool(t *testing.T) {
 }
 
 func TestFields_Count(t *testing.T) {
-	// 75 base claude-code fields (67 + 7 account-* + env) + 9 merged
+	// 84 base claude-code fields (67 + 7 account-* + env + 8 cache-* + source) + 9 merged
 	// subagent task-* fields.
 	fields := Fields("claude-code")
-	if len(fields) != 84 {
-		t.Errorf("Fields count = %d, want 84", len(fields))
+	if len(fields) != 93 {
+		t.Errorf("Fields count = %d, want 93", len(fields))
 	}
 }
 
@@ -92,14 +95,22 @@ func TestFields_SelfMetrics(t *testing.T) {
 		"session-cache-read-tokens":     "session-cache-read-tokens",
 		"session-total-tokens":          "session-total-tokens",
 		"input-token-speed":             "input-token-speed", "output-token-speed": "output-token-speed",
-		"total-token-speed":   "total-token-speed",
-		"extra-usage-cost":    "extra-usage-cost-usd",
-		"extra-usage-limit":   "extra-usage-limit-usd",
-		"extra-usage-percent": "extra-usage-percent",
-		"weekly-usage-opus":   "seven-day-opus-percent",
-		"weekly-usage-sonnet": "seven-day-sonnet-percent",
-		"weekly-reset-opus":   "seven-day-opus-reset-minutes",
-		"weekly-reset-sonnet": "seven-day-sonnet-reset-minutes",
+		"total-token-speed":    "total-token-speed",
+		"extra-usage-cost":     "extra-usage-cost-usd",
+		"extra-usage-limit":    "extra-usage-limit-usd",
+		"extra-usage-percent":  "extra-usage-percent",
+		"weekly-usage-opus":    "seven-day-opus-percent",
+		"weekly-usage-sonnet":  "seven-day-sonnet-percent",
+		"weekly-reset-opus":    "seven-day-opus-reset-minutes",
+		"weekly-reset-sonnet":  "seven-day-sonnet-reset-minutes",
+		"cache-warm":           "cache-warm",
+		"cache-ttl":            "cache-ttl",
+		"cache-expires-at":     "cache-expires-minutes",
+		"cache-hit-ratio":      "cache-hit-ratio-percent",
+		"cache-requests":       "cache-requests",
+		"cache-misses":         "cache-misses",
+		"cache-recache-tokens": "cache-recache-tokens",
+		"source":               SourceSelfMetric,
 		// Merged subagent task-* fields with self metrics.
 		"task-tokens":          "task-token-count",
 		"task-context-size":    "task-context-window-tokens",
@@ -185,12 +196,12 @@ func TestMetricByName_Unknown(t *testing.T) {
 }
 
 func TestMetrics_Count(t *testing.T) {
-	// 61 base claude-code metrics (51 original + 4 *-projected-percent + 6
-	// account-* identity metrics) + 4 merged subagent task-* metrics (the
+	// 69 base claude-code metrics (51 original + 4 *-projected-percent + 6
+	// account-* identity metrics + 7 cache-* + source-stale) + 4 merged subagent task-* metrics (the
 	// shared widthMetric is deduplicated across the two catalogs).
 	m := Metrics("claude-code")
-	if len(m) != 65 {
-		t.Errorf("Metrics count = %d, want 65", len(m))
+	if len(m) != 73 {
+		t.Errorf("Metrics count = %d, want 73", len(m))
 	}
 }
 
@@ -354,5 +365,193 @@ func TestMetrics_ClaudeCodeSubagentCatalog(t *testing.T) {
 		if m.Descriptions.EN == "" || m.Descriptions.JA == "" {
 			t.Errorf("metric %q missing localized descriptions: %+v", name, m.Descriptions)
 		}
+	}
+}
+
+// TestFields_CacheEntriesFollowCacheHitRate pins the prompt-cache block's
+// position (directly after cache-hit-rate) and the self metric and formats the
+// renderer and validator resolve for each entry.
+func TestFields_CacheEntriesFollowCacheHitRate(t *testing.T) {
+	want := []struct {
+		name       string
+		selfMetric string
+		formats    []string
+	}{
+		{"cache-warm", "cache-warm", []string{"enum"}},
+		{"cache-ttl", "cache-ttl", []string{"enum"}},
+		{"cache-expires-at", "cache-expires-minutes", []string{"countdown", "datetime"}},
+		{"cache-hit-ratio", "cache-hit-ratio-percent", []string{"percent"}},
+		{"cache-requests", "cache-requests", []string{"number", "compact-number"}},
+		{"cache-misses", "cache-misses", []string{"number", "compact-number"}},
+		{"cache-recache-tokens", "cache-recache-tokens", []string{"number", "compact-number"}},
+		{"cache-last-miss-cause", "", []string{"enum"}},
+	}
+	fields := Fields("claude-code")
+	start := -1
+	for i, f := range fields {
+		if f.Name == "cache-hit-rate" {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatal("cache-hit-rate not found")
+	}
+	for i, w := range want {
+		pos := start + 1 + i
+		if pos >= len(fields) {
+			t.Fatalf("cache entry %q missing after cache-hit-rate", w.name)
+		}
+		f := fields[pos]
+		if f.Name != w.name {
+			t.Fatalf("fields[%d] = %q, want %q", pos, f.Name, w.name)
+		}
+		if f.SelfMetric != w.selfMetric {
+			t.Errorf("field %q SelfMetric = %q, want %q", w.name, f.SelfMetric, w.selfMetric)
+		}
+		if !slices.Equal(f.Formats, w.formats) {
+			t.Errorf("field %q Formats = %v, want %v", w.name, f.Formats, w.formats)
+		}
+	}
+}
+
+// TestMetrics_CacheEntriesFollowCacheHitPercent pins the cache-* metric block
+// (directly after cache-hit-percent) and its Text/Percent kinds: cache-ttl is
+// the only string metric and cache-hit-ratio-percent the only percentage.
+func TestMetrics_CacheEntriesFollowCacheHitPercent(t *testing.T) {
+	want := []string{
+		"cache-warm", "cache-ttl", "cache-expires-minutes", "cache-hit-ratio-percent",
+		"cache-requests", "cache-misses", "cache-recache-tokens",
+	}
+	metrics := Metrics("claude-code")
+	start := -1
+	for i, m := range metrics {
+		if m.Name == "cache-hit-percent" {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatal("cache-hit-percent not found")
+	}
+	for i, name := range want {
+		pos := start + 1 + i
+		if pos >= len(metrics) || metrics[pos].Name != name {
+			t.Fatalf("metric after cache-hit-percent at offset %d = %q, want %q", i+1, metricNameAt(metrics, pos), name)
+		}
+		m := metrics[pos]
+		if m.Text != (name == "cache-ttl") {
+			t.Errorf("metric %q Text = %v", name, m.Text)
+		}
+		if m.Percent != (name == "cache-hit-ratio-percent") {
+			t.Errorf("metric %q Percent = %v", name, m.Percent)
+		}
+	}
+	ttl, _ := MetricByName("claude-code", "cache-ttl")
+	if !slices.Equal(ttl.Values, []string{"5m", "1h"}) {
+		t.Errorf("cache-ttl Values = %v, want [5m 1h]", ttl.Values)
+	}
+}
+
+func metricNameAt(ms []MetricDef, pos int) string {
+	if pos < 0 || pos >= len(ms) {
+		return "<out of range>"
+	}
+	return ms[pos].Name
+}
+
+// TestFields_SourceFieldAfterEnv pins the source field's position and its
+// parameterization: RequiresSource is set on source alone, so validation rejects
+// the source/select/fallback attributes on every other field.
+func TestFields_SourceFieldAfterEnv(t *testing.T) {
+	fields := Fields("claude-code")
+	envIdx, srcIdx := -1, -1
+	for i, f := range fields {
+		switch f.Name {
+		case "env":
+			envIdx = i
+		case "source":
+			srcIdx = i
+		}
+	}
+	if envIdx < 0 || srcIdx != envIdx+1 {
+		t.Fatalf("source at %d, env at %d; want source directly after env", srcIdx, envIdx)
+	}
+	src := fields[srcIdx]
+	if !src.RequiresSource {
+		t.Error("source field must set RequiresSource")
+	}
+	if src.SelfMetric != SourceSelfMetric {
+		t.Errorf("source SelfMetric = %q, want %q", src.SelfMetric, SourceSelfMetric)
+	}
+	for _, f := range fields {
+		if f.RequiresSource && f.Name != "source" {
+			t.Errorf("field %q sets RequiresSource; only source may", f.Name)
+		}
+	}
+}
+
+// TestMetrics_SourceStaleBeforeWidth pins source-stale as a bool, source-parameterized
+// metric placed directly before width, and checks that source-value is never a metric.
+func TestMetrics_SourceStaleBeforeWidth(t *testing.T) {
+	metrics := Metrics("claude-code")
+	staleIdx, widthIdx := -1, -1
+	for i, m := range metrics {
+		switch m.Name {
+		case "source-stale":
+			staleIdx = i
+		case "width":
+			widthIdx = i
+		}
+	}
+	if staleIdx < 0 || widthIdx != staleIdx+1 {
+		t.Fatalf("source-stale at %d, width at %d; want source-stale directly before width", staleIdx, widthIdx)
+	}
+	stale := metrics[staleIdx]
+	if stale.Param != "source" {
+		t.Errorf("source-stale Param = %q, want %q", stale.Param, "source")
+	}
+	if stale.Text || stale.Percent {
+		t.Errorf("source-stale must be a bool metric, got Text=%v Percent=%v", stale.Text, stale.Percent)
+	}
+}
+
+func TestMetricByName_SourceValueIsNotAMetric(t *testing.T) {
+	if _, ok := MetricByName("claude-code", SourceSelfMetric); ok {
+		t.Fatalf("%q must not be registered as a metric", SourceSelfMetric)
+	}
+}
+
+// TestTranscriptFlags pins the Transcript catalog flag to exactly the 13
+// transcript-derived fields and same-named metrics, so the render path schedules
+// transcript refreshes only for documents that actually use one.
+func TestTranscriptFlags(t *testing.T) {
+	want := map[string]bool{
+		"compaction-count": true, "compaction-auto": true, "compaction-manual": true,
+		"compaction-unknown": true, "compaction-tokens-reclaimed": true,
+		"session-input-tokens": true, "session-output-tokens": true,
+		"session-cache-creation-tokens": true, "session-cache-read-tokens": true,
+		"session-total-tokens": true, "input-token-speed": true,
+		"output-token-speed": true, "total-token-speed": true,
+	}
+	fieldHits, metricHits := 0, 0
+	for _, f := range Fields("claude-code") {
+		if f.Transcript != want[f.Name] {
+			t.Errorf("field %q Transcript = %v, want %v", f.Name, f.Transcript, want[f.Name])
+		}
+		if f.Transcript {
+			fieldHits++
+		}
+	}
+	for _, m := range Metrics("claude-code") {
+		if m.Transcript != want[m.Name] {
+			t.Errorf("metric %q Transcript = %v, want %v", m.Name, m.Transcript, want[m.Name])
+		}
+		if m.Transcript {
+			metricHits++
+		}
+	}
+	if fieldHits != len(want) || metricHits != len(want) {
+		t.Errorf("Transcript field/metric counts = %d/%d, want %d/%d", fieldHits, metricHits, len(want), len(want))
 	}
 }

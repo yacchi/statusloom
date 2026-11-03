@@ -3,6 +3,7 @@
 package claude
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -118,11 +119,90 @@ type payload struct {
 		FiveHour *rateWindow `json:"five_hour"`
 		SevenDay *rateWindow `json:"seven_day"`
 	} `json:"rate_limits"`
+
+	// PromptCache is decoded separately by decodePromptCache so a malformed
+	// object can never fail the whole payload.
+	PromptCache json.RawMessage `json:"prompt_cache"`
 }
 
 type rateWindow struct {
 	UsedPercentage float64 `json:"used_percentage"`
 	ResetsAt       int64   `json:"resets_at"`
+}
+
+// promptCachePayload mirrors Claude Code's stdin prompt_cache object. Every
+// number is a pointer or float so that null, fractional, and absent values
+// are all accepted; conversion to schema types happens in decodePromptCache.
+type promptCachePayload struct {
+	Warm              bool     `json:"warm"`
+	CachingObserved   bool     `json:"caching_observed"`
+	TTL               string   `json:"ttl"`
+	ExpiresAt         *float64 `json:"expires_at"`
+	Requests          *float64 `json:"requests"`
+	Misses            *float64 `json:"misses"`
+	ExpectedRebuilds  *float64 `json:"expected_rebuilds"`
+	HitRatio          *float64 `json:"hit_ratio"`
+	CacheWriteTokens  *float64 `json:"cache_write_tokens"`
+	MissRecacheTokens *float64 `json:"miss_recache_tokens"`
+	LastMissAt        *float64 `json:"last_miss_at"`
+	LastMissCause     *struct {
+		Causes []string `json:"causes"`
+	} `json:"last_miss_cause"`
+	RecacheTokensIfCold *float64 `json:"recache_tokens_if_cold"`
+}
+
+// decodePromptCache converts the raw stdin prompt_cache value. It returns nil
+// when the key is absent, JSON null, or does not decode into the expected
+// shape; it never reports an error because prompt_cache is advisory.
+func decodePromptCache(raw json.RawMessage) *schema.PromptCache {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+	var p promptCachePayload
+	if err := json.Unmarshal(trimmed, &p); err != nil {
+		return nil
+	}
+
+	pc := &schema.PromptCache{
+		Warm:              p.Warm,
+		CachingObserved:   p.CachingObserved,
+		TTL:               p.TTL,
+		ExpiresAt:         toTime(p.ExpiresAt),
+		Requests:          toInt(p.Requests),
+		Misses:            toInt(p.Misses),
+		ExpectedRebuilds:  toInt(p.ExpectedRebuilds),
+		HitRatio:          p.HitRatio,
+		CacheWriteTokens:  toInt(p.CacheWriteTokens),
+		MissRecacheTokens: toInt(p.MissRecacheTokens),
+		LastMissAt:        toTime(p.LastMissAt),
+	}
+	if p.LastMissCause != nil && len(p.LastMissCause.Causes) > 0 {
+		pc.LastMissCauses = p.LastMissCause.Causes
+	}
+	if p.RecacheTokensIfCold != nil {
+		v := int(*p.RecacheTokensIfCold)
+		pc.RecacheTokensIfCold = &v
+	}
+	return pc
+}
+
+// toTime converts a Unix epoch-seconds value, returning nil for absent or
+// null input rather than the zero time.
+func toTime(v *float64) *time.Time {
+	if v == nil {
+		return nil
+	}
+	t := time.Unix(int64(*v), 0)
+	return &t
+}
+
+// toInt truncates an optional counter, treating absent or null as zero.
+func toInt(v *float64) int {
+	if v == nil {
+		return 0
+	}
+	return int(*v)
 }
 
 // Decode implements adapters.Adapter.
@@ -247,6 +327,8 @@ func (a *Adapter) Decode(raw []byte) (schema.StatusSnapshot, error) {
 		}
 	}
 	snap.Account.Stale = false
+
+	snap.Session.PromptCache = decodePromptCache(p.PromptCache)
 
 	return snap, nil
 }

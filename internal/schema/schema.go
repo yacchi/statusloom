@@ -71,6 +71,7 @@ type SessionSnapshot struct {
 	Cost            *CostUsage
 	OutputStyle     *string
 	Analytics       *SessionAnalytics
+	PromptCache     *PromptCache // stdin prompt_cache; nil before the first API response or on Claude Code < v2.1.251
 }
 
 // SessionAnalytics contains transcript-derived, asynchronously refreshed
@@ -89,6 +90,24 @@ type SessionAnalytics struct {
 	InputTokensPerSecond  float64
 	OutputTokensPerSecond float64
 	TotalTokensPerSecond  float64
+}
+
+// PromptCache is Claude Code's stdin prompt_cache object: prompt-cache
+// statistics of the session's main conversation.
+type PromptCache struct {
+	Warm                bool       // warm
+	CachingObserved     bool       // caching_observed
+	TTL                 string     // ttl: "5m" | "1h"; "" when absent
+	ExpiresAt           *time.Time // expires_at; nil when null/absent
+	Requests            int        // requests
+	Misses              int        // misses
+	ExpectedRebuilds    int        // expected_rebuilds
+	HitRatio            *float64   // hit_ratio, 0..1; nil when null/absent
+	CacheWriteTokens    int        // cache_write_tokens
+	MissRecacheTokens   int        // miss_recache_tokens
+	LastMissAt          *time.Time // last_miss_at; nil when null/absent
+	LastMissCauses      []string   // last_miss_cause.causes; nil when last_miss_cause is null/absent
+	RecacheTokensIfCold *int       // recache_tokens_if_cold; nil when null/absent
 }
 
 // ContextUsage describes context-window consumption for the session.

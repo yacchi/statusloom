@@ -55,6 +55,12 @@ func configDir() (string, error) {
 	return filepath.Dir(p), nil
 }
 
+// ConfigDir returns statusloom's configuration directory (the directory holding
+// statusloom.json and sources.json). It wraps the existing unexported configDir().
+func ConfigDir() (string, error) {
+	return configDir()
+}
+
 // StorePath returns the single cross-tool store location:
 // <configDir>/statusloom.json. The file need not exist.
 func StorePath() (string, error) {

@@ -33,7 +33,13 @@ func TestParseErrors(t *testing.T) {
 		{"[abc]", "expected an index or key=value", 0},
 		{"[${session_id}]", "expected an index or key=value", 0},
 		{"[=v]", "empty key in filter", 0},
-		{"[a.b=c]", `invalid character "." in filter key`, 2},
+		{"[a[b=c]", `invalid character "[" in filter key`, 2},
+		{"[a=1,]", "empty condition in filter", 5},
+		{"[,a=1]", "empty condition in filter", 1},
+		{"[a=1,,b=2]", "empty condition in filter", 5},
+		{"[a=1,b]", "expected an index or key=value", 0},
+		{"[a.=1]", "empty key in filter", 0},
+		{"[a..b=1]", "empty key in filter", 0},
 		{"a]", `unexpected "]"`, 1},
 		{"a=b", `unexpected "="`, 1},
 		{"[0]a", `expected "." or "["`, 3},
@@ -78,6 +84,9 @@ func TestParseOK(t *testing.T) {
 		". a",
 		"a$b",
 		"[007]",
+		"[a=1,b=2]",
+		"[a.b=c]",
+		"[id=${session_id},keepalive.enabled=true].keepalive.expiresAt",
 	} {
 		if _, err := Parse(src); err != nil {
 			t.Errorf("Parse(%q): %v", src, err)
@@ -194,12 +203,129 @@ func TestEvalUseNumber(t *testing.T) {
 	}
 }
 
+func TestEvalFilterAND(t *testing.T) {
+	// Element 1 matches only id, element 2 only enabled; neither is selected.
+	const doc = `{"s":[{"id":"x","k":{"enabled":true},"v":1},{"id":"x","k":{"enabled":false},"v":2},{"id":"y","k":{"enabled":true},"v":3}]}`
+	tests := []struct {
+		name   string
+		expr   string
+		want   any
+		wantOK bool
+	}{
+		{"both conds match the same element", ".s[id=x,k.enabled=true].v", float64(1), true},
+		{"second element matches both", ".s[id=x,k.enabled=false].v", float64(2), true},
+		{"only one cond matches any element", ".s[id=y,k.enabled=false].v", nil, false},
+		{"no element matches all conds", ".s[id=x,v=3].v", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, err := Parse(tt.expr)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.expr, err)
+			}
+			got, ok := e.Eval(decode(t, doc), nil)
+			if ok != tt.wantOK {
+				t.Fatalf("Eval(%q) ok = %v, want %v", tt.expr, ok, tt.wantOK)
+			}
+			if ok && !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("Eval(%q) = %#v, want %#v", tt.expr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEvalFilterDottedKey(t *testing.T) {
+	const doc = `{"s":[{"name":"null-k","k":null},{"name":"str-k","k":"str"},{"name":"obj","k":{"enabled":true,"n":{"deep":1}}},{"name":"noK","n":5}]}`
+	tests := []struct {
+		name   string
+		expr   string
+		want   any
+		wantOK bool
+	}{
+		{"nested member", ".s[k.enabled=true].name", "obj", true},
+		{"two levels deep", ".s[k.n.deep=1].name", "obj", true},
+		{"object is not a scalar", ".s[k.n=1].name", nil, false},
+		{"non-object on the way", ".s[k.enabled.x=true].name", nil, false},
+		{"string on the way", ".s[name.x=1].name", nil, false},
+		{"null on the way", ".s[k.x=1].name", nil, false},
+		{"missing intermediate", ".s[k.missing.x=1].name", nil, false},
+		{"missing key in one cond", ".s[k.enabled=true,nope=1].name", nil, false},
+		{"array as the element", ".s[0.x=1].name", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, err := Parse(tt.expr)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.expr, err)
+			}
+			got, ok := e.Eval(decode(t, doc), nil)
+			if ok != tt.wantOK {
+				t.Fatalf("Eval(%q) ok = %v, want %v", tt.expr, ok, tt.wantOK)
+			}
+			if ok && !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("Eval(%q) = %#v, want %#v", tt.expr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEvalFilterTemplateValueLiteral(t *testing.T) {
+	// A variable value containing "," is one literal value, never split.
+	const doc = `{"s":[{"id":"a,b","v":1},{"id":"a","v":2},{"id":"b","v":3}]}`
+	vars := func(name string) string {
+		if name == "session_id" {
+			return "a,b"
+		}
+		return ""
+	}
+	tests := []struct {
+		name string
+		expr string
+		want any
+	}{
+		{"comma inside a template value", ".s[id=${session_id}].v", float64(1)},
+		{"template value with another cond", ".s[id=${session_id},v=1].v", float64(1)},
+		{"template value cond does not match", ".s[id=${session_id},v=2].v", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, err := Parse(tt.expr)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.expr, err)
+			}
+			got, ok := e.Eval(decode(t, doc), vars)
+			if tt.want == nil {
+				if ok {
+					t.Fatalf("Eval(%q) = %#v, want no match", tt.expr, got)
+				}
+				return
+			}
+			if !ok || !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("Eval(%q) = (%#v, %v), want %#v", tt.expr, got, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestEvalFilterFirstMatchWins(t *testing.T) {
+	const doc = `{"s":[{"a":1,"g":"p","v":"first"},{"a":1,"g":"p","v":"second"},{"a":2,"g":"p","v":"third"}]}`
+	e, err := Parse(".s[a=1,g=p].v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := e.Eval(decode(t, doc), nil)
+	if !ok || got != "first" {
+		t.Fatalf("Eval = (%#v, %v), want (\"first\", true)", got, ok)
+	}
+}
+
 func TestVars(t *testing.T) {
 	tests := []struct {
 		expr string
 		want []string
 	}{
 		{"[a=${cwd}].${session_id}[b=${cwd}]", []string{"cwd", "session_id"}},
+		{"[a=${cwd},b.c=${session_id}].x", []string{"cwd", "session_id"}},
 		{".a", nil},
 		{"", nil},
 	}

@@ -197,7 +197,7 @@ const EN = {
     helpSource:
         "The external source this field reads its value from. Definitions live in your local sources.json; they are never part of the shared document.",
     helpSelect:
-        "Path into the source's JSON: .key for a member, [n] for an array index, [key=value] to pick the first array item whose key equals value. Placeholders ${session_id}, ${cwd}, ${workspace.project_dir} and ${CLAUDE_CONFIG_DIR} are substituted.",
+        "Path into the source's JSON: .key for a member, [n] for an array index, [key=value] to pick the first array item whose key equals value; [a=1,b.c=2] requires every condition to match (b.c is a path inside the item). Values cannot contain a comma or a closing bracket. Placeholders ${session_id}, ${cwd}, ${workspace.project_dir} and ${CLAUDE_CONFIG_DIR} are substituted.",
     helpFallback:
         "Built-in field shown when the source has no value (for example, when the source is missing or stale).",
     helpSourceTest:
@@ -368,7 +368,7 @@ const JA: Record<MessageKey, string> = {
     helpSource:
         "このフィールドが値を読み取る外部ソース。定義はローカルの sources.json にあり、共有されるドキュメントには含まれません。",
     helpSelect:
-        "ソースJSON内のパス。.key はメンバー、[n] は配列の番号、[key=value] は key が value に一致する最初の配列要素を指します。${session_id}・${cwd}・${workspace.project_dir}・${CLAUDE_CONFIG_DIR} は置換されます。",
+        "ソースJSON内のパス。.key はメンバー、[n] は配列の番号、[key=value] は key が value に一致する最初の配列要素を指します。[a=1,b.c=2] はすべての条件が一致する必要があり（b.c は要素内のパス）、値にカンマや閉じ括弧は含められません。${session_id}・${cwd}・${workspace.project_dir}・${CLAUDE_CONFIG_DIR} は置換されます。",
     helpFallback:
         "ソースに値がない場合（ソースが無い・古い場合など）に表示する組み込みフィールド。",
     helpSourceTest:

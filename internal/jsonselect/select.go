@@ -9,7 +9,18 @@
 //	first    := key | segment            // "a.b" is the same as ".a.b"
 //	segment  := "." key
 //	          | "[" index "]"            // index: ASCII digits only
-//	          | "[" fkey "=" value "]"   // split at the first "=" outside a template
+//	          | "[" cond ("," cond)* "]" // filter: an element matches when ALL conds match
+//	cond     := fkey "=" value          // split at the first "=" of the cond
+//	fkey     := key ("." key)*          // a path resolved inside the element object
+//
+// A filter returns the first array element that is an object and for which
+// every cond matches. A cond matches when the value at fkey's path is a scalar
+// whose canonical form equals value. A missing key, a non-object on the way,
+// or a null never matches.
+//
+// "," and "=" are structural only outside a template. A value therefore cannot
+// contain "," or "]" (it may contain "=", "." and "["). An empty cond, as in
+// "[a=1,]" or "[,a=1]", is a SyntaxError.
 //
 // A template ${name} may appear in keys, fkeys and values. It is read as one
 // unit (so ${workspace.project_dir} is not split at its dot) and, at eval time,
@@ -62,10 +73,17 @@ const (
 	segFilter
 )
 
+// cond is one "fkey=value" test of a filter. path holds the fkey's dot-separated
+// parts, each one a member name resolved inside the element object.
+type cond struct {
+	path  [][]part
+	value []part
+}
+
 type segment struct {
 	kind  segmentKind
-	key   []part // segKey: member name; segFilter: filter key
-	value []part // segFilter only
+	key   []part // segKey only: member name
+	conds []cond // segFilter only
 	index int    // segIndex only
 }
 
@@ -213,35 +231,85 @@ func readBracket(src string, i int) (segment, int, error) {
 		return segment{kind: segIndex, index: n}, end + 1, nil
 	}
 
-	// Filter: split at the first literal "=" (templates skipped). Only the
-	// text before it is checked for stray "." or "[".
-	_, eq, err := readText(src[:end], i+1, "=")
-	if err != nil {
-		return segment{}, 0, err
-	}
-	if eq >= end {
+	if body == "" {
 		return segment{}, 0, newSyntaxError(i, "expected an index or key=value")
 	}
-	_, bad, err := readText(src[:eq], i+1, ".[")
+
+	// Filter: one or more conds separated by literal ",".
+	var conds []cond
+	pos := i + 1
+	for {
+		c, next, err := readCond(src, pos, end, i)
+		if err != nil {
+			return segment{}, 0, err
+		}
+		conds = append(conds, c)
+		if next >= end {
+			break
+		}
+		pos = next + 1
+	}
+	return segment{kind: segFilter, conds: conds}, end + 1, nil
+}
+
+// readCond parses the cond spanning src[cs:] up to the next literal "," or the
+// bracket close at end. open is the offset of the "[" that owns the cond. It
+// returns the cond and the offset where it stopped (a "," or end).
+func readCond(src string, cs, end, open int) (cond, int, error) {
+	_, ce, err := readText(src[:end], cs, ",")
 	if err != nil {
-		return segment{}, 0, err
+		return cond{}, 0, err
 	}
-	if bad < eq {
-		return segment{}, 0, newSyntaxError(bad, "invalid character %q in filter key", string(src[bad]))
+	if ce == cs {
+		return cond{}, 0, newSyntaxError(cs, "empty condition in filter")
 	}
-	keyParts, _, err := readText(src[:eq], i+1, "")
+
+	// Split at the first literal "=" (templates skipped).
+	_, eq, err := readText(src[:ce], cs, "=")
 	if err != nil {
-		return segment{}, 0, err
+		return cond{}, 0, err
 	}
-	if len(keyParts) == 0 {
-		return segment{}, 0, newSyntaxError(i, "empty key in filter")
+	if eq >= ce {
+		return cond{}, 0, newSyntaxError(open, "expected an index or key=value")
 	}
-	// The value may contain ".", "=" and "["; the bracket close is already fixed at end.
-	valueParts, _, err := readText(src[:end], eq+1, "")
+	path, err := readFilterKey(src[:eq], cs, open)
 	if err != nil {
-		return segment{}, 0, err
+		return cond{}, 0, err
 	}
-	return segment{kind: segFilter, key: keyParts, value: valueParts}, end + 1, nil
+	// The value may contain ".", "=" and "["; it ends at ce.
+	valueParts, _, err := readText(src[:ce], eq+1, "")
+	if err != nil {
+		return cond{}, 0, err
+	}
+	return cond{path: path, value: valueParts}, ce, nil
+}
+
+// readFilterKey splits the fkey src[cs:] at "." into member names. A "[" is
+// invalid in a filter key. An empty member name is reported at open.
+func readFilterKey(src string, cs, open int) ([][]part, error) {
+	_, bad, err := readText(src, cs, "[")
+	if err != nil {
+		return nil, err
+	}
+	if bad < len(src) {
+		return nil, newSyntaxError(bad, "invalid character %q in filter key", string(src[bad]))
+	}
+	var path [][]part
+	pos := cs
+	for {
+		parts, next, err := readText(src, pos, ".")
+		if err != nil {
+			return nil, err
+		}
+		if len(parts) == 0 {
+			return nil, newSyntaxError(open, "empty key in filter")
+		}
+		path = append(path, parts)
+		if next >= len(src) {
+			return path, nil
+		}
+		pos = next + 1
+	}
 }
 
 func isIndexBody(s string) bool {
@@ -295,29 +363,49 @@ func step(cur any, s segment, vars Vars) (any, bool) {
 		if !ok {
 			return nil, false
 		}
-		return firstMatch(arr, substitute(s.key, vars), substitute(s.value, vars))
+		return firstMatch(arr, s.conds, vars)
 	}
 	return nil, false
 }
 
-// firstMatch returns the first object element whose member key is a scalar
-// whose canonical form equals want. JSON null never matches.
-func firstMatch(arr []any, key, want string) (any, bool) {
+// firstMatch returns the first object element for which every cond matches.
+func firstMatch(arr []any, conds []cond, vars Vars) (any, bool) {
 	for _, el := range arr {
-		m, ok := el.(map[string]any)
-		if !ok {
-			continue
-		}
-		member, ok := m[key]
-		if !ok {
-			continue
-		}
-		s, ok := Canonical(member)
-		if ok && s == want {
+		if matchAll(el, conds, vars) {
 			return el, true
 		}
 	}
 	return nil, false
+}
+
+// matchAll reports whether el is an object for which every cond matches.
+func matchAll(el any, conds []cond, vars Vars) bool {
+	for _, c := range conds {
+		if !c.match(el, vars) {
+			return false
+		}
+	}
+	return true
+}
+
+// match reports whether the value at the cond's path inside el is a scalar
+// whose canonical form equals the cond's value. A missing key or a non-object
+// on the way does not match, and neither does a JSON null.
+func (c cond) match(el any, vars Vars) bool {
+	cur := el
+	for _, name := range c.path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return false
+		}
+		v, ok := m[substitute(name, vars)]
+		if !ok {
+			return false
+		}
+		cur = v
+	}
+	s, ok := Canonical(cur)
+	return ok && s == substitute(c.value, vars)
 }
 
 // substitute concatenates the literal parts and the resolved variables. The
@@ -351,7 +439,12 @@ func (e *Expr) Vars() []string {
 	}
 	for _, s := range e.segs {
 		add(s.key)
-		add(s.value)
+		for _, c := range s.conds {
+			for _, name := range c.path {
+				add(name)
+			}
+			add(c.value)
+		}
 	}
 	return out
 }

@@ -493,16 +493,25 @@ JSONPathは使わない小さな構文。
 
 * `.key` — オブジェクトのキー。先頭のキーは`.`を省略できる（`a.b`は`.a.b`と同じ）。
 * `[n]` — 配列の添字（ASCIIの数字）。
-* `[key=value]` — 配列の中で、メンバ`key`のスカラー値が`value`に等しい最初のオブジェクト。比較は正規化した文字列で行う（数値は最短の10進表記、真偽値は`true`/`false`、文字列はそのまま）。型は区別しないため、`[id=42]`は数値`42`と文字列`"42"`の両方に一致する。`null`は一致しない。一致しなければ値なし。
+* `[cond,cond,...]` — 配列の中で、すべての条件（`cond`）が一致する最初のオブジェクト。`cond`は`fkey=value`で、`fkey`は`.`区切りのパス（`keepalive.enabled`）としてそのオブジェクトの中で解決する。比較は正規化した文字列で行う（数値は最短の10進表記、真偽値は`true`/`false`、文字列はそのまま）。型は区別しないため、`[id=42]`は数値`42`と文字列`"42"`の両方に一致する。`null`は一致しない。途中のキーが無い・途中がオブジェクトでない場合はその条件は一致しない。一致するものが無ければ値なし。
+* `value`には`,`と`]`を含められない（`,`と`]`は区切りとして扱われる）。`=`・`.`・`[`は含められる。空の条件（`[a=1,]`・`[,a=1]`）は構文エラー。
 * 空の`select`はドキュメントのルートを指す。
-* `${name}`テンプレートは、キー・`key=value`のキー部分と値部分で使える。`name`は`session_id`・`cwd`・`workspace.project_dir`・`CLAUDE_CONFIG_DIR`のいずれか。置換された値はそのまま使われ、再解析はされない（値に含まれる`]`・`.`・`=`はただの文字）。未設定の変数は空文字になる。
-* 空白はトリムしない。キーには`.`・`[`・`]`・`=`を含められない。
+* `${name}`テンプレートは、キー・`fkey`・値の部分で使える。`name`は`session_id`・`cwd`・`workspace.project_dir`・`CLAUDE_CONFIG_DIR`のいずれか。テンプレートは1つの単位として読まれるため、中の`,`・`.`・`=`では分割されない。置換された値はそのまま使われ、再解析はされない（値に含まれる`]`・`,`・`.`・`=`はただの文字）。未設定の変数は空文字になる。
+* 空白はトリムしない。キーには`.`・`[`・`]`・`=`・`,`を含められない。
 
 ```text
-[id=${session_id}].keepalive.expiresAt
+[id=${session_id},keepalive.enabled=true].keepalive.expiresAt
 .sessions[0].profile
 profile
 [configDir=${CLAUDE_CONFIG_DIR}].profile
+```
+
+ccprofileの`sessions.json`では、keepaliveを無効にした後も`keepalive.expiresAt`が過去の値のまま残る。`[id=${session_id}].keepalive.expiresAt`だけだと、この古い値が一致して`fallback`が効かない。上の例のように`keepalive.enabled=true`を条件に加えると、keepaliveが有効なセッションだけが一致し、無効なら一致せず`fallback="cache-expires-at"`に切り替わる。
+
+```xml
+<field name="source" source="ccprofile"
+       select="[id=${session_id},keepalive.enabled=true].keepalive.expiresAt"
+       fallback="cache-expires-at" format="countdown"/>
 ```
 
 構文エラーはvalidation error（`invalid select "<expr>": <message>`。「validation」節）。
@@ -1378,7 +1387,7 @@ XMLコメントをサポートする。
 * 不正なネスト
 * `source`・`select`・`fallback`を`source`以外のfieldに付けた場合: `field "X" does not take a source attribute` / `field "X" does not take a select attribute` / `field "X" does not take a fallback attribute`
 * 不正なsource id: `invalid source id "X": use 1-64 characters of a-z, 0-9 and -, starting with a letter`
-* 不正な`select`: `invalid select "<expr>": <message>`。`<message>`は`unknown variable "<name>"`、`expected an index or key=value`、`.`の後の空のキー、閉じていない`[`、括弧の外の`]`・`=`、閉じていない`${`のいずれか
+* 不正な`select`: `invalid select "<expr>": <message>`。`<message>`は`unknown variable "<name>"`、`expected an index or key=value`、`.`の後の空のキー、空の条件（`empty condition in filter`）、フィルタ内の空のキー（`empty key in filter`）、フィルタキー内の`[`（`invalid character "[" in filter key`）、閉じていない`[`、括弧の外の`]`・`=`、閉じていない`${`のいずれか
 * fallbackが未知のfield: `fallback references unknown field "X"`
 * fallbackが`source`・`env`: `fallback "X" must be a built-in field; source and env cannot be a fallback`
 * fallbackが`subagent`のfield: `fallback "X" cannot be used outside <subagent>`

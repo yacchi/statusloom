@@ -721,10 +721,16 @@ value:
 ```xml
 <span prefix="cache: " optional="cache-expires-at">
     <field name="source" source="ccprofile"
-           select="[id=${session_id}].keepalive.expiresAt"
+           select="[id=${session_id},keepalive.enabled=true].keepalive.expiresAt"
            fallback="cache-expires-at" format="countdown"/>
 </span>
 ```
+
+The `keepalive.enabled=true` condition matters. ccprofile keeps the last
+`keepalive.expiresAt` in the file after keepalive is turned off, and that
+stale value would otherwise keep matching. With the extra condition, a
+session whose keepalive is off has no match, so the fallback shows the
+stdin `cache-expires-at` instead.
 
 Gate this span on `cache-expires-at` (or no gate at all), not on
 `source:ccprofile`. `optional="source:ccprofile"` would hide the span
@@ -743,7 +749,10 @@ such references, and it also warns about any source that sets
 
 - `.key` for an object member and `[n]` for an array index
 - `[key=value]` for the first array element whose `key` matches (scalars
-  are compared by their canonical string, so types are not distinguished)
+  are compared by their canonical string, so types are not distinguished).
+  Several conditions can be joined with commas (`[id=x,keepalive.enabled=true]`),
+  and all must match. A condition key may be a dotted path such as
+  `keepalive.enabled`. A value cannot contain `,` or `]`.
 - placeholders that are filled in at render time: `${session_id}`,
   `${cwd}`, `${workspace.project_dir}`, and `${CLAUDE_CONFIG_DIR}`
 

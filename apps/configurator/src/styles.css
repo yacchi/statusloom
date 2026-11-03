@@ -1977,6 +1977,104 @@ button.link-button.danger-text {
     flex: 0 0 150px;
 }
 
+/* The settings modal is taller than the viewport on small screens and when
+   the source test prints a document. The modal scrolls as a whole and its
+   header stays pinned, so the × button is always reachable. */
+.settings-modal {
+    overflow-y: auto;
+}
+
+.settings-modal > .modal-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--panel);
+}
+
+/* ---- settings: external sources list ---- */
+
+.sources-path {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+}
+
+.sources-path-label {
+    flex: none;
+}
+
+.sources-path-value {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.source-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.source-id {
+    flex: none;
+}
+
+.source-kind {
+    flex: none;
+}
+
+.source-target {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.source-edit {
+    flex: none;
+    margin-left: auto;
+}
+
+.source-entry + .source-entry {
+    margin-top: 6px;
+}
+
+/* The test result is the answer, so it reads larger than the form hints. */
+.source-test-result {
+    font-family: ui-monospace, monospace;
+    font-size: var(--fs-md);
+    font-weight: 600;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+/* The full fetched document stays collapsed by default and scrolls inside
+   its own box, so it never pushes the modal past the viewport. */
+.source-test-document > summary {
+    cursor: pointer;
+    color: var(--text-dim);
+    font-size: var(--fs-sm);
+}
+
+.source-test-document > pre {
+    max-height: 240px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: ui-monospace, monospace;
+    font-size: var(--fs-sm);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px;
+    margin: 6px 0 0;
+}
+
 .modal-close {
     flex: none;
     width: 28px;

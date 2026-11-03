@@ -22,6 +22,12 @@ started passing `COLUMNS`/`LINES` to the status line command in that
 release. On v2.1.132–v2.1.152, flex-separators fall back to a single
 space and compact mode never triggers.
 
+**Upgrading and downgrading**: from v0.0.8 on, a version that cannot read
+the current saved layout shows the newest saved layout it can read. v0.0.7
+and earlier show the built-in default layout instead. Do not run v0.0.7
+side by side with v0.0.8 or later on the same config: downgrading from
+v0.0.8 to v0.0.7 shows the default layout until you upgrade again.
+
 ## Installation
 
 ### Homebrew (macOS / Linux, recommended)

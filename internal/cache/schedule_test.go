@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"bytes"
 	"math"
 	"os"
 	"path/filepath"
@@ -10,12 +11,12 @@ import (
 
 var schedNow = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 
-// writeManifest writes raw JSON at manifestPath() inside an isolated cache dir.
-func writeManifest(t *testing.T, body string) {
+// writeSchedule writes raw JSON at schedulePath() inside an isolated cache dir.
+func writeSchedule(t *testing.T, body string) {
 	t.Helper()
-	path, err := manifestPath()
+	path, err := schedulePath()
 	if err != nil {
-		t.Fatalf("manifestPath: %v", err)
+		t.Fatalf("schedulePath: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -46,13 +47,13 @@ func assertEmptyV2(t *testing.T, s RefreshSchedule) {
 func TestLoadRefreshScheduleFallsBackToEmptyV2(t *testing.T) {
 	cases := map[string]func(t *testing.T){
 		"missing file": func(t *testing.T) {},
-		"corrupt json": func(t *testing.T) { writeManifest(t, "not json") },
+		"corrupt json": func(t *testing.T) { writeSchedule(t, "not json") },
 		// A v1 manifest must not be partially decoded into the v2 shape.
 		"v1 manifest": func(t *testing.T) {
-			writeManifest(t, `{"schemaVersion":1,"sessions":{"s1":{"nextDueAt":"2026-11-03T12:00:00Z"}},`+
+			writeSchedule(t, `{"schemaVersion":1,"sessions":{"s1":{"nextDueAt":"2026-11-03T12:00:00Z"}},`+
 				`"accountUsage":{"nextDueAt":"2026-11-03T12:05:00Z","failures":3}}`)
 		},
-		"unknown version": func(t *testing.T) { writeManifest(t, `{"schemaVersion":3}`) },
+		"unknown version": func(t *testing.T) { writeSchedule(t, `{"schemaVersion":3}`) },
 	}
 	for name, setup := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -65,7 +66,7 @@ func TestLoadRefreshScheduleFallsBackToEmptyV2(t *testing.T) {
 
 func TestLoadRefreshScheduleNormalizesNullAndOmittedMaps(t *testing.T) {
 	isolateScheduleDir(t)
-	writeManifest(t, `{"schemaVersion":2,"usage":{"default":{"nextDueAt":"2026-11-03T12:05:00Z","failures":1}},`+
+	writeSchedule(t, `{"schemaVersion":2,"usage":{"default":{"nextDueAt":"2026-11-03T12:05:00Z","failures":1}},`+
 		`"transcripts":null}`)
 
 	s := LoadRefreshSchedule()
@@ -95,6 +96,46 @@ func TestStoreRefreshScheduleForcesVersionAndRoundTrips(t *testing.T) {
 	w, ok := got.Sources["weather"]
 	if !ok || w.DefHash != "abc" || !w.NextDueAt.Equal(schedNow) {
 		t.Fatalf("Sources[weather] = %+v (ok=%v), want DefHash abc due at %v", w, ok, schedNow)
+	}
+}
+
+// v0.0.7 owns <cache>/refresh/manifest.json (schemaVersion 1). The new schedule must never
+// read, rewrite or delete it, otherwise the two versions sharing one cache thrash each other.
+func TestScheduleLeavesV1ManifestUntouched(t *testing.T) {
+	isolateScheduleDir(t)
+	dir, err := refreshDir()
+	if err != nil {
+		t.Fatalf("refreshDir: %v", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	manifest := filepath.Join(dir, "manifest.json")
+	v1 := []byte(`{"schemaVersion":1,"sessions":{"s1":{"nextDueAt":"2026-11-03T12:00:00Z"}},` +
+		`"accountUsage":{"nextDueAt":"2026-11-03T12:05:00Z","failures":3}}`)
+	if err := os.WriteFile(manifest, v1, 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	s := LoadRefreshSchedule()
+	assertEmptyV2(t, s)
+	s.Usage["default"] = WorkSchedule{NextDueAt: schedNow, Failures: 1}
+	if err := StoreRefreshSchedule(s); err != nil {
+		t.Fatalf("StoreRefreshSchedule: %v", err)
+	}
+	if got := LoadRefreshSchedule().Usage["default"].Failures; got != 1 {
+		t.Fatalf("schedule did not round-trip through schedule.json: Usage[default].Failures = %d", got)
+	}
+
+	got, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if !bytes.Equal(got, v1) {
+		t.Fatalf("manifest.json was modified:\n got %s\nwant %s", got, v1)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "schedule.json")); err != nil {
+		t.Fatalf("schedule.json not written: %v", err)
 	}
 }
 

@@ -280,4 +280,38 @@ describe("SettingsModal sources section", () => {
         expect(screen.getByText(t("en", "sourcesSection"))).toBeTruthy();
         expect(await screen.findByTestId("sources-settings")).toBeTruthy();
     });
+
+    it("keeps the test result and the full document inside the modal card", async () => {
+        const api = fakeApi({
+            initial: [toEntry("cc", { kind: "file", path: "/a.json" })],
+            test: async () => ({
+                ok: true,
+                error: "",
+                matched: true,
+                value: 1793667322,
+                display: "1793667322",
+                documentPreview: '{\n  "sessions": []\n}',
+            }),
+        });
+        render(
+            <SettingsModal
+                root={root}
+                readOnly={false}
+                onPatchGit={noop}
+                onChangeLang={noop}
+                onClose={noop}
+                sourcesApi={api}
+            />,
+        );
+        fireEvent.click(await screen.findByTestId("source-edit-cc"));
+        fireEvent.click(screen.getByTestId("source-test"));
+
+        const result = await screen.findByTestId("source-test-result");
+        const details = screen.getByTestId("source-test-document");
+        const card = result.closest(".modal") as HTMLElement;
+        expect(card).toBeTruthy();
+        expect(within(card).getByTestId("source-test-document")).toBe(details);
+        expect(details.tagName).toBe("DETAILS");
+        expect(details.querySelector("pre")?.textContent).toBe('{\n  "sessions": []\n}');
+    });
 });

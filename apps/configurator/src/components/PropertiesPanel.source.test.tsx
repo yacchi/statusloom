@@ -42,7 +42,15 @@ const TASK_FIELD: FieldCatalogEntry = {
     preview: { text: "", ansi: "" },
 };
 
-const FIELDS: FieldCatalogEntry[] = [SOURCE_FIELD, MODEL_FIELD, ENV_FIELD, TASK_FIELD];
+const OUTPUT_FIELD: FieldCatalogEntry = {
+    name: "output-style",
+    displayName: "Output Style",
+    descriptions: DESC,
+    category: "claude",
+    preview: { text: "default", ansi: "default" },
+};
+
+const FIELDS: FieldCatalogEntry[] = [SOURCE_FIELD, MODEL_FIELD, ENV_FIELD, TASK_FIELD, OUTPUT_FIELD];
 
 const SOURCE_A: SourceEntry = {
     id: "a",
@@ -137,12 +145,24 @@ describe("PropertiesPanel source field", () => {
 
     it("offers only plain built-in fields as fallback", () => {
         renderPanel({ sources: [SOURCE_A] });
-        expect(optionValues("attr-fallback")).toStrictEqual(["", "model"]);
+        expect(optionValues("attr-fallback")).toStrictEqual(["", "model", "output-style"]);
+    });
+
+    it("groups fallback options under their category optgroups", () => {
+        renderPanel({ sources: [SOURCE_A] });
+        const select = screen.getByTestId("attr-fallback") as HTMLSelectElement;
+        expect(select.options[0].value).toBe("");
+        const groups = Array.from(select.querySelectorAll("optgroup"));
+        expect(groups.map((g) => g.label)).toStrictEqual(["Common", "Claude Code"]);
+        const valuesOf = (group: Element) =>
+            Array.from(group.querySelectorAll("option")).map((o) => o.value);
+        expect(valuesOf(groups[0])).toStrictEqual(["model"]);
+        expect(valuesOf(groups[1])).toStrictEqual(["output-style"]);
     });
 
     it("keeps an out-of-list fallback selectable", () => {
         renderPanel({ node: fieldNode({ source: "a", fallback: "task-model" }), sources: [SOURCE_A] });
-        expect(optionValues("attr-fallback")).toStrictEqual(["", "model", "task-model"]);
+        expect(optionValues("attr-fallback")).toStrictEqual(["", "model", "output-style", "task-model"]);
     });
 
     it("disables Test without sourcesApi or without a source", () => {

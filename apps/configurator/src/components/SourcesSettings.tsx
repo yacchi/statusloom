@@ -256,8 +256,13 @@ export function SourcesSettings({ sourcesApi, onChanged }: Props) {
     return (
         <div data-testid="sources-settings">
             {path !== null && (
-                <div className="hint" data-testid="sources-path">
-                    {path}
+                <div className="sources-path" data-testid="sources-path">
+                    <span className="hint sources-path-label">
+                        {t(lang, "sourcesStoredIn")}
+                    </span>
+                    <span className="hint sources-path-value" title={path}>
+                        {path}
+                    </span>
                 </div>
             )}
             {loadError !== null && (
@@ -266,28 +271,37 @@ export function SourcesSettings({ sourcesApi, onChanged }: Props) {
                 </div>
             )}
 
-            {sources.map((entry) => (
-                <div key={entry.id} data-testid={`source-row-${entry.id}`}>
-                    <strong>{entry.id}</strong> <span className="hint">{entry.kind}</span>{" "}
-                    <span className="hint">{summaryOf(entry)}</span>{" "}
-                    <button
-                        type="button"
-                        data-testid={`source-edit-${entry.id}`}
-                        onClick={() => editEntry(entry)}
-                    >
-                        Edit
-                    </button>
-                    {entry.warnings.map((code) => (
-                        <div
-                            key={code}
-                            className="inline-error"
-                            data-testid={`source-warning-${entry.id}-${code}`}
-                        >
-                            {t(lang, WARNING_KEYS[code])}
+            {sources.map((entry) => {
+                const summary = summaryOf(entry);
+                return (
+                    <div key={entry.id} className="source-entry" data-testid={`source-row-${entry.id}`}>
+                        <div className="source-row">
+                            <strong className="source-id">{entry.id}</strong>
+                            <span className="hint source-kind">{entry.kind}</span>
+                            <span className="hint source-target" title={summary}>
+                                {summary}
+                            </span>
+                            <button
+                                type="button"
+                                className="source-edit"
+                                data-testid={`source-edit-${entry.id}`}
+                                onClick={() => editEntry(entry)}
+                            >
+                                Edit
+                            </button>
                         </div>
-                    ))}
-                </div>
-            ))}
+                        {entry.warnings.map((code) => (
+                            <div
+                                key={code}
+                                className="inline-error"
+                                data-testid={`source-warning-${entry.id}-${code}`}
+                            >
+                                {t(lang, WARNING_KEYS[code])}
+                            </div>
+                        ))}
+                    </div>
+                );
+            })}
 
             <div className="modal-actions">
                 <button type="button" data-testid="source-new" onClick={newEntry}>
@@ -493,10 +507,15 @@ export function SourcesSettings({ sourcesApi, onChanged }: Props) {
             </fieldset>
 
             {testView !== null && (
-                <div data-testid="source-test-result">{testView.text}</div>
+                <div className="source-test-result" data-testid="source-test-result">
+                    {testView.text}
+                </div>
             )}
             {testView !== null && testView.document !== "" && (
-                <pre data-testid="source-test-document">{testView.document}</pre>
+                <details className="source-test-document" data-testid="source-test-document">
+                    <summary>{t(lang, "sourceTestDocument")}</summary>
+                    <pre>{testView.document}</pre>
+                </details>
             )}
         </div>
     );

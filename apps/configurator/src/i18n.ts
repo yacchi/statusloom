@@ -205,6 +205,8 @@ const EN = {
     sourceNoMatch:
         "The source was fetched, but the select expression matched nothing.",
     sourcesSection: "External sources",
+    sourcesStoredIn: "Stored in",
+    sourceTestDocument: "Full document",
     helpSources:
         "Definitions stay on this machine in sources.json. They are never included in the shared document or in exports.",
     helpSourceTtl:
@@ -372,6 +374,8 @@ const JA: Record<MessageKey, string> = {
     sourceNoMatch:
         "ソースは取得できましたが、select 式が何にも一致しませんでした。",
     sourcesSection: "External sources",
+    sourcesStoredIn: "保存先",
+    sourceTestDocument: "ドキュメント全体",
     helpSources:
         "定義はこのマシンの sources.json に保存されます。共有ドキュメントやエクスポートには含まれません。",
     helpSourceTtl:

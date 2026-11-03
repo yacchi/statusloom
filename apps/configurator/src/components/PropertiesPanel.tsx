@@ -525,6 +525,27 @@ function ColorRulesSection({
 
 // ---- kind-specific top sections ----
 
+// Group labels for the fallback picker's optgroups. These mirror the palette
+// headings; an unknown category shows its raw key.
+const FALLBACK_GROUP_LABEL: Record<string, string> = {
+    common: "Common",
+    claude: "Claude Code",
+};
+
+// Entries grouped by category, in first-appearance order of the catalog.
+function groupByCategory(entries: FieldCatalogEntry[]): [string, FieldCatalogEntry[]][] {
+    const groups = new Map<string, FieldCatalogEntry[]>();
+    for (const entry of entries) {
+        const group = groups.get(entry.category);
+        if (group) {
+            group.push(entry);
+        } else {
+            groups.set(entry.category, [entry]);
+        }
+    }
+    return [...groups.entries()];
+}
+
 // Source / select / fallback controls for the `source` field, plus a Test
 // button that fetches the source once now. Rendered with key={node.id} by
 // FieldSection so a test result never carries over to another node.
@@ -636,10 +657,14 @@ function SourceSection({
                     }}
                 >
                     <option value="">(none)</option>
-                    {fallbackChoices.map((f) => (
-                        <option key={f.name} value={f.name}>
-                            {f.displayName}
-                        </option>
+                    {groupByCategory(fallbackChoices).map(([category, entries]) => (
+                        <optgroup key={category} label={FALLBACK_GROUP_LABEL[category] ?? category}>
+                            {entries.map((f) => (
+                                <option key={f.name} value={f.name}>
+                                    {f.displayName}
+                                </option>
+                            ))}
+                        </optgroup>
                     ))}
                     {/* Keep an out-of-list fallback (written in the DSL editor)
                         selectable, so opening the panel does not reset it. */}

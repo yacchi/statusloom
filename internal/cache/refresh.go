@@ -50,9 +50,13 @@ type TranscriptEnvelope struct {
 }
 
 func refreshDir() (string, error) { d, err := Dir(); return filepath.Join(d, "refresh"), err }
-func manifestPath() (string, error) {
+
+// schedulePath is <cache>/refresh/schedule.json. It is deliberately not manifest.json:
+// v0.0.7 owns manifest.json with a different (schemaVersion 1) shape, and every installed
+// version shares this cache directory.
+func schedulePath() (string, error) {
 	d, err := refreshDir()
-	return filepath.Join(d, "manifest.json"), err
+	return filepath.Join(d, "schedule.json"), err
 }
 func leasePath() (string, error) { d, err := refreshDir(); return filepath.Join(d, "lease.json"), err }
 func transcriptPath(sessionID string) (string, error) {

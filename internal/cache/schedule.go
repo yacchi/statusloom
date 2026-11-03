@@ -4,9 +4,9 @@ import (
 	"time"
 )
 
-// RefreshSchedule is persisted at the existing manifestPath() (<cache>/refresh/manifest.json)
-// with SchemaVersion 2. Only the refresh worker holding the refresh lease writes it; the
-// render path only reads it.
+// RefreshSchedule is persisted at schedulePath() (<cache>/refresh/schedule.json) with
+// SchemaVersion 2. Only the refresh worker holding the refresh lease writes it; the render
+// path only reads it. manifest.json belongs to v0.0.7 and is never touched here.
 type RefreshSchedule struct {
 	SchemaVersion int                     `json:"schemaVersion"` // 2
 	Transcripts   map[string]WorkSchedule `json:"transcripts"`   // key: Claude session id
@@ -31,7 +31,7 @@ const (
 )
 
 // scheduleSchemaVersion is the RefreshSchedule layout written by StoreRefreshSchedule.
-// Older manifests (the machine-wide RefreshManifest, schemaVersion 1) are ignored.
+// Any other version found at schedulePath() is ignored.
 const scheduleSchemaVersion = 2
 
 // newRefreshSchedule returns an empty schedule with all maps non-nil.
@@ -47,7 +47,7 @@ func newRefreshSchedule() RefreshSchedule {
 // LoadRefreshSchedule never fails: a missing/unreadable file or a SchemaVersion other
 // than 2 yields an empty schedule (SchemaVersion 2, all three maps non-nil).
 func LoadRefreshSchedule() RefreshSchedule {
-	path, err := manifestPath()
+	path, err := schedulePath()
 	if err != nil {
 		return newRefreshSchedule()
 	}
@@ -70,7 +70,7 @@ func LoadRefreshSchedule() RefreshSchedule {
 
 // StoreRefreshSchedule writes s with SchemaVersion forced to 2 (WriteJSONAtomic).
 func StoreRefreshSchedule(s RefreshSchedule) error {
-	path, err := manifestPath()
+	path, err := schedulePath()
 	if err != nil {
 		return err
 	}

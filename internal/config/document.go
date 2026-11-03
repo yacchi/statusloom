@@ -12,6 +12,8 @@ package config
 // render.
 
 import (
+	"time"
+
 	"github.com/yacchi/statusloom/internal/dsl"
 	"github.com/yacchi/statusloom/internal/store"
 )
@@ -29,27 +31,80 @@ func DocumentExists(tool string) bool {
 	return err == nil && ok
 }
 
+// maxAncestorHops bounds the parent-chain walk in LoadDocument so a corrupted
+// store cannot make the render path loop or read the whole history.
+const maxAncestorHops = 50
+
 // LoadDocument returns tool's current committed document, parsed but not
 // re-validated: a committed revision already passed the store's Save
 // validation boundary (dsl.ParseAndValidate), so rendering only needs to
 // Parse it again (plans/config-store-and-format.md §7). A missing store or
 // tool ref falls back to DefaultDocument(tool), parsed the same way. A store
 // read/decode failure is returned as err (with a nil document).
+//
+// When the current revision does not parse (it was saved by a newer version
+// that uses syntax this binary cannot read), the newest ancestor on its
+// parent chain that does parse is returned instead, with a single warning
+// diagnostic naming that revision. The current revision's parse errors are
+// not returned in that case. If no ancestor parses, DefaultDocument(tool) is
+// returned together with the current revision's parse diagnostics, so the
+// caller sees the errors and falls back to the default as before.
 func LoadDocument(tool string) (*dsl.Document, []dsl.Diagnostic, error) {
 	st, err := store.Open()
 	if err != nil {
 		return nil, nil, err
 	}
-	rev, _, ok, err := st.Current(tool)
+	rev, id, ok, err := st.Current(tool)
 	if err != nil {
 		return nil, nil, err
 	}
-	src := DefaultDocument(tool)
-	if ok {
-		src = rev.Source
+	if !ok {
+		doc, diags := dsl.Parse(DefaultDocument(tool))
+		return doc, diags, nil
 	}
-	doc, diags := dsl.Parse(src)
-	return doc, diags, nil
+	doc, diags := dsl.Parse(rev.Source)
+	if parsesCleanly(doc, diags) {
+		return doc, diags, nil
+	}
+	if ancestorID, ancestor, ancestorDoc, found := readableAncestor(st, tool, id, rev); found {
+		warning := dsl.Warnf(dsl.SourceRange{},
+			"current revision uses features this version cannot read; showing revision %s (saved %s) instead",
+			ancestorID, ancestor.SavedAt.UTC().Format(time.RFC3339))
+		return ancestorDoc, []dsl.Diagnostic{warning}, nil
+	}
+	fallback, _ := dsl.Parse(DefaultDocument(tool))
+	return fallback, diags, nil
+}
+
+// parsesCleanly reports whether a Parse result has a root and no
+// error-severity diagnostics.
+func parsesCleanly(doc *dsl.Document, diags []dsl.Diagnostic) bool {
+	return doc != nil && doc.Root != nil && !dsl.HasErrors(diags)
+}
+
+// readableAncestor walks rev's parent chain (rev is revision id) and returns
+// the first ancestor that parses cleanly. It stops at a missing or
+// foreign-tool parent, a cycle, or after maxAncestorHops.
+func readableAncestor(st *store.Store, tool, id string, rev store.Revision) (string, store.Revision, *dsl.Document, bool) {
+	seen := map[string]bool{id: true}
+	cur := rev
+	for hop := 0; hop < maxAncestorHops && cur.Parent != nil; hop++ {
+		pid := *cur.Parent
+		if seen[pid] {
+			break
+		}
+		seen[pid] = true
+		prev, ok, err := st.Revision(pid)
+		if err != nil || !ok || prev.Tool != tool {
+			break
+		}
+		doc, diags := dsl.Parse(prev.Source)
+		if parsesCleanly(doc, diags) {
+			return pid, prev, doc, true
+		}
+		cur = prev
+	}
+	return "", store.Revision{}, nil, false
 }
 
 // defaultDocuments holds the built-in DSL source for each tool. The

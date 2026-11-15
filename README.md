@@ -305,7 +305,7 @@ statusloom source test <id> [--select EXPR] [--payload FILE]
 statusloom source add ccprofile --file ~/.local/state/ccprofile/sessions.json
 # added source ccprofile (file)
 statusloom source add keepalive --command --ttl 60 -- ccprofile sessions --json
-statusloom source add x --url http://127.0.0.1:47921/sessions.json
+statusloom source add x --url http://127.0.0.1:17921/sessions.json
 statusloom source test ccprofile --payload sample.json
 ```
 

@@ -8,13 +8,29 @@ on:
 
 jobs:
   go:
-    runs-on: ubuntu-latest
+    # Build and test on every OS statusloom ships for: file sharing,
+    # process handling and paths differ enough (internal/atomicfile,
+    # procinfo, the refresh relay's Setsid/process-group handling) that
+    # Linux-only CI misses regressions. gofmt and govulncheck are
+    # OS-independent and run on Linux only (on Windows, checkout's CRLF
+    # conversion would make gofmt flag every file).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
-      - run: test -z "$(gofmt -l .)"
+      - if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go build ./...
       - run: go test ./...
-      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
-      - run: govulncheck ./...
+      - if: runner.os == 'Linux'
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - if: runner.os == 'Linux'
+        run: govulncheck ./...

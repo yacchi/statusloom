@@ -67,12 +67,12 @@ func (l *limitedBuffer) Write(p []byte) (int, error) {
 }
 
 // runGit executes `git --no-optional-locks -C dir <args...>` with the
-// given timeout (falling back to defaultTimeout when timeout <= 0),
+// given timeout (falling back to DefaultTimeout when timeout <= 0),
 // no stdin, GIT_OPTIONAL_LOCKS=0 in the environment, and a capped
 // stdout buffer.
 func runGit(ctx context.Context, dir string, timeout time.Duration, args ...string) ([]byte, error) {
 	if timeout <= 0 {
-		timeout = defaultTimeout
+		timeout = DefaultTimeout
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)

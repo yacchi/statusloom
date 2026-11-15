@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/yacchi/statusloom/internal/atomicfile"
 	"github.com/yacchi/statusloom/internal/claudecfg"
 )
 
@@ -42,7 +43,7 @@ func cleanupDeadMonitorEntries() {
 	if path == "" {
 		return
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := atomicfile.ReadFile(path)
 	if err != nil {
 		return
 	}
@@ -54,25 +55,11 @@ func cleanupDeadMonitorEntries() {
 		return
 	}
 
-	// Atomic write: temp file in the same dir + rename, so a reader never sees
-	// a half-written config.
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".claude.json.statusloom-*")
-	if err != nil {
-		return
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(out); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
-	}
+	// Atomic write (sibling temp file + rename, see atomicfile.Write), so a
+	// reader never sees a half-written config. Claude Code and every statusline
+	// render read this file concurrently, which on Windows makes the rename
+	// fail transiently; atomicfile retries that.
+	_ = atomicfile.Write(path, out, false)
 }
 
 // pruneDeadMonitorEntries is the pure core of the janitor, factored out so it

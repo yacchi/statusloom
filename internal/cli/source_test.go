@@ -47,10 +47,16 @@ func writeAbsFile(t *testing.T, name, body string) string {
 	return p
 }
 
+// absPath returns a platform-absolute path under the OS temp dir (a Unix
+// "/tmp/x" is not absolute on Windows, which source validation requires).
+func absPath(elem ...string) string {
+	return filepath.Join(append([]string{os.TempDir()}, elem...)...)
+}
+
 func TestSourceAddAndListFormats(t *testing.T) {
 	setupEnv(t)
 
-	out, _, code := runCLI(t, []string{"source", "add", "ccfile", "--file", "/tmp/s.json"}, nil, nil)
+	out, _, code := runCLI(t, []string{"source", "add", "ccfile", "--file", absPath("tmp", "s.json")}, nil, nil)
 	if code != 0 || out != "added source ccfile (file)\n" {
 		t.Fatalf("add file: code=%d out=%q", code, out)
 	}
@@ -65,7 +71,7 @@ func TestSourceAddAndListFormats(t *testing.T) {
 
 	out, _, code = runCLI(t, []string{"source", "list"}, nil, nil)
 	want := "api\thttp\thttps://example.com/a.json\tttl=default\tWARN:allow-remote\n" +
-		"ccfile\tfile\t/tmp/s.json\t-\n" +
+		"ccfile\tfile\t" + absPath("tmp", "s.json") + "\t-\n" +
 		"mycmd\tcommand\tccprofile sessions --json\tttl=7s\tWARN:short-ttl\n"
 	if code != 0 || out != want {
 		t.Fatalf("list: code=%d out=%q, want %q", code, out, want)
@@ -132,12 +138,12 @@ func TestSourceAddRuntimeErrors(t *testing.T) {
 func TestSourceAddExistingNeedsForce(t *testing.T) {
 	setupEnv(t)
 
-	if _, _, code := runCLI(t, []string{"source", "add", "ccfile", "--file", "/a/s.json"}, nil, nil); code != 0 {
+	if _, _, code := runCLI(t, []string{"source", "add", "ccfile", "--file", absPath("a", "s.json")}, nil, nil); code != 0 {
 		t.Fatalf("first add: code=%d", code)
 	}
 	before := readSourcesJSON(t)
 
-	_, stderr, code := runCLI(t, []string{"source", "add", "ccfile", "--file", "/b/s.json"}, nil, nil)
+	_, stderr, code := runCLI(t, []string{"source", "add", "ccfile", "--file", absPath("b", "s.json")}, nil, nil)
 	if code != 1 || !strings.Contains(stderr, `already exists (use --force to replace)`) {
 		t.Fatalf("add without force: code=%d stderr=%q", code, stderr)
 	}
@@ -145,12 +151,12 @@ func TestSourceAddExistingNeedsForce(t *testing.T) {
 		t.Fatal("sources.json changed by a rejected add")
 	}
 
-	out, _, code := runCLI(t, []string{"source", "add", "ccfile", "--file", "/b/s.json", "--force"}, nil, nil)
+	out, _, code := runCLI(t, []string{"source", "add", "ccfile", "--file", absPath("b", "s.json"), "--force"}, nil, nil)
 	if code != 0 || out != "replaced source ccfile (file)\n" {
 		t.Fatalf("add --force: code=%d out=%q", code, out)
 	}
 	out, _, _ = runCLI(t, []string{"source", "list"}, nil, nil)
-	if out != "ccfile\tfile\t/b/s.json\t-\n" {
+	if out != "ccfile\tfile\t"+absPath("b", "s.json")+"\t-\n" {
 		t.Fatalf("list after replace = %q", out)
 	}
 }
@@ -171,7 +177,7 @@ func TestSourceListEmpty(t *testing.T) {
 func TestSourceRemove(t *testing.T) {
 	setupEnv(t)
 
-	runCLI(t, []string{"source", "add", "ccfile", "--file", "/a/s.json"}, nil, nil)
+	runCLI(t, []string{"source", "add", "ccfile", "--file", absPath("a", "s.json")}, nil, nil)
 	out, _, code := runCLI(t, []string{"source", "rm", "ccfile"}, nil, nil)
 	if code != 0 || out != "removed source ccfile\n" {
 		t.Fatalf("rm: code=%d out=%q", code, out)

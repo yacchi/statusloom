@@ -94,7 +94,7 @@ const EN = {
     settingsAppSection: "Editor",
     settingsLanguage: "Language",
     // help texts
-    helpGit: "Git data collection settings (the optional <git/> element). Defaults apply when unset.",
+    helpGit: "Git data collection settings (the optional <git/> element). Git runs in the background refresh process, never while rendering; Cache TTL is the minimum interval between collections for a directory and Timeout bounds each git command. Defaults apply when unset.",
     helpFlex:
         "How this flex node expands to fill the terminal width: full = fill the full width, full-minus-N = leave N columns free. When a line has multiple flex nodes with different sizes, the smallest target wins.",
     helpCompactThreshold:
@@ -206,6 +206,13 @@ const EN = {
         "This source id is not defined in sources.json, so the field renders empty.",
     sourceNoMatch:
         "The source was fetched, but the select expression matched nothing.",
+    refreshSection: "Refresh wait",
+    helpRefresh:
+        "Lets a render wait for background work (the optional <refresh/> element). By default (wait-on cold) a render waits only the first time it sees a new directory, session, account or source, and at most Timeout (1–3000 ms, default 2000); later renders show the cache and update in the background. wait-on due waits whenever a selected item is due, which makes most renders slower. Only items this document uses are offered; usage is always offered.",
+    refreshCovered: "Already covered by all / sources in the wait list.",
+    refreshReadOnlyToken: "Edit this token in the DSL editor.",
+    refreshKeptTokens: "Also in the wait list (not used by this document; kept as is):",
+    refreshTimeoutInvalid: "Timeout must be a whole number from 1 to 3000. This value is not saved.",
     sourcesSection: "External sources",
     sourcesStoredIn: "Stored in",
     sourceTestDocument: "Full document",
@@ -271,7 +278,7 @@ const JA: Record<MessageKey, string> = {
     globalSettingsTitle: "設定",
     settingsAppSection: "エディタ",
     settingsLanguage: "言語",
-    helpGit: "git 情報収集の設定です（省略可能な <git/> 要素）。未設定の項目は既定値が使われます。",
+    helpGit: "git 情報収集の設定です（省略可能な <git/> 要素）。git は描画中ではなくバックグラウンドの refresh プロセスで実行されます。Cache TTL は同じディレクトリを集め直す最小間隔、Timeout は git コマンド 1 回ごとの上限です。未設定の項目は既定値が使われます。",
     helpFlex:
         "このフレックスノードが端末幅を埋める方法。full = 全幅まで埋める、full-minus-N = N 桁分を残して埋める。1 行に複数のフレックスノードがありサイズが異なる場合は、最小のターゲットが適用されます。",
     helpCompactThreshold:
@@ -377,6 +384,13 @@ const JA: Record<MessageKey, string> = {
         "このソースIDは sources.json に定義されていないため、フィールドは空で描画されます。",
     sourceNoMatch:
         "ソースは取得できましたが、select 式が何にも一致しませんでした。",
+    refreshSection: "Refresh wait",
+    helpRefresh:
+        "描画がバックグラウンド処理の完了を待つ設定です（省略可能な <refresh/> 要素）。既定（wait-on cold）では、新しいディレクトリ・セッション・アカウント・ソースを最初に描画するときだけ、最大 Timeout（1〜3000 ms、既定 2000）待ちます。2回目以降はキャッシュを表示し、更新はバックグラウンドで行います。wait-on due は選んだ項目の期限が来るたびに待つため、多くの描画が遅くなります。このドキュメントが使っている項目だけを表示します（usage は常に表示）。",
+    refreshCovered: "wait に all / sources があるため、この項目は既に待機対象です。",
+    refreshReadOnlyToken: "このトークンは DSL エディタで編集してください。",
+    refreshKeptTokens: "wait にある他の項目（このドキュメントでは未使用。そのまま保持します）:",
+    refreshTimeoutInvalid: "Timeout は 1〜3000 の整数で指定してください。この値は保存されません。",
     sourcesSection: "External sources",
     sourcesStoredIn: "保存先",
     sourceTestDocument: "ドキュメント全体",

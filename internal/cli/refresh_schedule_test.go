@@ -39,11 +39,11 @@ func captureSpawns(t *testing.T) *[][]string {
 	var mu sync.Mutex
 	var calls [][]string
 	prev := startRefreshProcess
-	startRefreshProcess = func(args ...string) error {
+	startRefreshProcess = func(args ...string) (int, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		calls = append(calls, append([]string(nil), args...))
-		return nil
+		return 0, nil
 	}
 	t.Cleanup(func() { startRefreshProcess = prev })
 	return &calls

@@ -11,11 +11,13 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/creack/pty"
+
+	"github.com/yacchi/statusloom/internal/atomicfile"
+	"github.com/yacchi/statusloom/internal/procinfo"
 )
 
 // maxTerminals bounds how many embedded terminals may run concurrently.
@@ -26,9 +28,14 @@ const maxTerminals = 2
 // terminalReadBuffer is the size of the PTY->WebSocket copy buffer.
 const terminalReadBuffer = 32 * 1024
 
-// terminalKillGrace is how long close waits after SIGTERM before escalating
-// to SIGKILL on the child process.
+// terminalKillGrace is how long close waits after terminateProcess (SIGTERM
+// on Unix) before escalating to SIGKILL on the child process.
 const terminalKillGrace = 2 * time.Second
+
+// terminalUnsupportedMessage is the 501 error body of POST
+// /api/terminal/session on platforms where terminalSupported is false (no PTY
+// backend). The configurator's terminal drawer displays it verbatim.
+const terminalUnsupportedMessage = "the embedded terminal is not supported on this platform; run claude in your own terminal instead"
 
 // monitorLockName is the lockfile that enforces single-session use of the
 // stable monitor workspace, and monitorLockTTL is how long a lock is honored
@@ -45,28 +52,6 @@ const (
 type monitorLock struct {
 	PID       int       `json:"pid"`
 	StartedAt time.Time `json:"startedAt"`
-}
-
-// processAlive reports whether a process with pid is currently running. It
-// uses the POSIX "signal 0" probe (Signal(0) performs permission/existence
-// checking without delivering a signal): a nil error means alive, EPERM means
-// the process exists but is owned by another user (still alive), and anything
-// else (typically ESRCH) means dead. This is a best-effort check targeting
-// macOS/Linux; on platforms where it is unsupported it errs toward "dead",
-// which only means a stale lock is reclaimed slightly more eagerly.
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = p.Signal(syscall.Signal(0))
-	if err == nil {
-		return true
-	}
-	return errors.Is(err, syscall.EPERM)
 }
 
 // acquireMonitorLock attempts to take the single-session lock for the monitor
@@ -91,7 +76,7 @@ func acquireMonitorLock(dir string, now time.Time) (bool, error) {
 		_, werr := f.Write(b)
 		cerr := f.Close()
 		if werr != nil {
-			_ = os.Remove(p)
+			_ = atomicfile.Remove(p)
 			return false, werr
 		}
 		return true, cerr
@@ -102,17 +87,20 @@ func acquireMonitorLock(dir string, now time.Time) (bool, error) {
 
 	// A lock already exists: keep it only if its holder is alive and it is
 	// still within the TTL. Otherwise reclaim it.
-	if raw, rerr := os.ReadFile(p); rerr == nil {
+	if raw, rerr := atomicfile.ReadFile(p); rerr == nil {
 		var old monitorLock
 		if json.Unmarshal(raw, &old) == nil &&
 			now.Sub(old.StartedAt) < monitorLockTTL &&
-			processAlive(old.PID) {
+			procinfo.Alive(old.PID) {
 			return false, nil
 		}
 	}
 
+	// The lockfile is read by every config server that opens this workspace,
+	// so the reclaim (and the reads/removes below) go through atomicfile, which
+	// rides out a reader's momentary open on Windows.
 	stale := p + ".stale"
-	if os.Rename(p, stale) != nil {
+	if atomicfile.Rename(p, stale) != nil {
 		// Lost a race to reclaim it; treat as held.
 		return false, nil
 	}
@@ -125,20 +113,20 @@ func acquireMonitorLock(dir string, now time.Time) (bool, error) {
 // lock another process has since taken over).
 func releaseMonitorLock(dir string, pid int) {
 	p := filepath.Join(dir, monitorLockName)
-	raw, err := os.ReadFile(p)
+	raw, err := atomicfile.ReadFile(p)
 	if err != nil {
 		return
 	}
 	var l monitorLock
 	if json.Unmarshal(raw, &l) == nil && l.PID == pid {
-		_ = os.Remove(p)
+		_ = atomicfile.Remove(p)
 	}
 }
 
 // readMonitorLock reads and parses the workspace lockfile at dir. ok is false
 // when the file is absent or unparseable.
 func readMonitorLock(dir string) (l monitorLock, ok bool) {
-	raw, err := os.ReadFile(filepath.Join(dir, monitorLockName))
+	raw, err := atomicfile.ReadFile(filepath.Join(dir, monitorLockName))
 	if err != nil {
 		return monitorLock{}, false
 	}
@@ -154,7 +142,7 @@ func readMonitorLock(dir string) (l monitorLock, ok bool) {
 // torn down every embedded session this server was running, so no live claude
 // process remains behind it.
 func forceReleaseMonitorLock(dir string) {
-	_ = os.Remove(filepath.Join(dir, monitorLockName))
+	_ = atomicfile.Remove(filepath.Join(dir, monitorLockName))
 }
 
 // acquireWorkspaceLock takes the single-session workspace lock. The caller
@@ -274,7 +262,7 @@ func (ts *terminalSession) close() {
 					}
 				}
 			}()
-			_ = ts.cmd.Process.Signal(syscall.SIGTERM)
+			terminateProcess(ts.cmd.Process)
 			select {
 			case <-done:
 			case <-time.After(terminalKillGrace):
@@ -367,6 +355,14 @@ type terminalSessionResponse struct {
 //
 // SECURITY: see spawnTerminalCmd - this opens a real interactive claude.
 func (s *server) handleTerminalSession(w http.ResponseWriter, r *http.Request) {
+	// Platforms without PTY support (Windows: creack/pty has no ConPTY
+	// backend) refuse up front with 501, before touching the workspace or its
+	// lock. The configurator shows the error message in the terminal drawer.
+	if !terminalSupported {
+		writeError(w, http.StatusNotImplemented, terminalUnsupportedMessage)
+		return
+	}
+
 	// Serialize session creation: two rapid requests must not both take over
 	// and spawn a claude at the same time.
 	s.spawnMu.Lock()

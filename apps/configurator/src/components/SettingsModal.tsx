@@ -5,21 +5,24 @@
 //     localStorage, NOT part of the document.
 //   - Git settings: the document's optional <git/> element, whose form body
 //     lives in GitSettings.
+//   - Refresh wait: the document's optional <refresh/> element
+//     (RefreshSettings).
 //   - External sources (when sourcesApi is provided): the local
 //     <configDir>/sources.json definitions, managed through SourcesSettings.
 //     These are machine-local, never part of the document or an export.
 //
-// Every change is applied live (an attribute patch for git, a state update for
-// the language, a direct API write for sources) — there is no separate save
-// step, so this modal has no footer/primary action; the × button and Escape
-// are its only ways to close.
+// Every change is applied live (an attribute patch for git / refresh, a state
+// update for the language, a direct API write for sources) — there is no
+// separate save step, so this modal has no footer/primary action; the ×
+// button and Escape are its only ways to close.
 
 import type { AttrPatch } from "../ast.ts";
-import type { StatusloomNode } from "../types.ts";
+import type { RefreshItems, StatusloomNode } from "../types.ts";
 import type { SourceEntry, SourcesApi } from "../sourcesApi.ts";
 import { t, useLang, type Lang } from "../i18n.ts";
 import { HelpTip } from "./HelpTip.tsx";
 import { GitSettings } from "./GitSettings.tsx";
+import { RefreshSettings } from "./RefreshSettings.tsx";
 import { Modal } from "./Modal.tsx";
 import { SourcesSettings } from "./SourcesSettings.tsx";
 
@@ -27,6 +30,11 @@ interface Props {
     root: StatusloomNode;
     readOnly: boolean;
     onPatchGit: (patch: AttrPatch) => void;
+    // Work items the document uses (parse response) and the defined sources,
+    // for the Refresh panel's toggles.
+    refreshItems: RefreshItems | null;
+    sources: readonly SourceEntry[];
+    onPatchRefresh: (patch: AttrPatch) => void;
     onChangeLang: (lang: Lang) => void;
     onClose: () => void;
     sourcesApi?: SourcesApi;
@@ -37,6 +45,9 @@ export function SettingsModal({
     root,
     readOnly,
     onPatchGit,
+    refreshItems,
+    sources,
+    onPatchRefresh,
     onChangeLang,
     onClose,
     sourcesApi,
@@ -68,6 +79,16 @@ export function SettingsModal({
                 {t(lang, "settingsTitle")} <HelpTip k="helpGit" />
             </h3>
             <GitSettings root={root} readOnly={readOnly} onPatchGit={onPatchGit} />
+            <h3 className="settings-section">
+                {t(lang, "refreshSection")} <HelpTip k="helpRefresh" />
+            </h3>
+            <RefreshSettings
+                root={root}
+                readOnly={readOnly}
+                refreshItems={refreshItems}
+                sources={sources}
+                onPatchRefresh={onPatchRefresh}
+            />
             {sourcesApi && (
                 <>
                     <h3 className="settings-section">

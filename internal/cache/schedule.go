@@ -7,11 +7,15 @@ import (
 // RefreshSchedule is persisted at schedulePath() (<cache>/refresh/schedule.json) with
 // SchemaVersion 2. Only the refresh worker holding the refresh lease writes it; the render
 // path only reads it. manifest.json belongs to v0.0.7 and is never touched here.
+// The "git" map is an additive key (added after v0.0.9 shipped schedule.json): JSON readers
+// that predate it ignore it, and an older worker rewriting the file merely drops it, which
+// only makes the next git collection due early - so it stays in the same file and version.
 type RefreshSchedule struct {
 	SchemaVersion int                     `json:"schemaVersion"` // 2
 	Transcripts   map[string]WorkSchedule `json:"transcripts"`   // key: Claude session id
 	Usage         map[string]WorkSchedule `json:"usage"`         // key: account cache key
 	Sources       map[string]WorkSchedule `json:"sources"`       // key: external source id
+	Git           map[string]WorkSchedule `json:"git"`           // key: session cwd (git status collection)
 }
 
 // WorkSchedule is one work item's schedule.
@@ -41,11 +45,12 @@ func newRefreshSchedule() RefreshSchedule {
 		Transcripts:   map[string]WorkSchedule{},
 		Usage:         map[string]WorkSchedule{},
 		Sources:       map[string]WorkSchedule{},
+		Git:           map[string]WorkSchedule{},
 	}
 }
 
 // LoadRefreshSchedule never fails: a missing/unreadable file or a SchemaVersion other
-// than 2 yields an empty schedule (SchemaVersion 2, all three maps non-nil).
+// than 2 yields an empty schedule (SchemaVersion 2, all maps non-nil).
 func LoadRefreshSchedule() RefreshSchedule {
 	path, err := schedulePath()
 	if err != nil {
@@ -64,6 +69,9 @@ func LoadRefreshSchedule() RefreshSchedule {
 	}
 	if s.Sources == nil {
 		s.Sources = map[string]WorkSchedule{}
+	}
+	if s.Git == nil {
+		s.Git = map[string]WorkSchedule{}
 	}
 	return s
 }
@@ -131,12 +139,17 @@ func TranscriptInterval(refreshInterval time.Duration) time.Duration {
 }
 
 // Prune deletes Transcripts entries whose LastAttempt is older than now-TranscriptRetention
-// (entries with a zero LastAttempt are kept). The worker calls it before storing.
+// and Git entries whose LastAttempt is older than now-GitRetention (entries with a zero
+// LastAttempt are kept). The worker calls it before storing.
 func (s *RefreshSchedule) Prune(now time.Time) {
-	cutoff := now.Add(-TranscriptRetention)
-	for id, w := range s.Transcripts {
+	pruneIdle(s.Transcripts, now.Add(-TranscriptRetention))
+	pruneIdle(s.Git, now.Add(-GitRetention))
+}
+
+func pruneIdle(m map[string]WorkSchedule, cutoff time.Time) {
+	for k, w := range m {
 		if !w.LastAttempt.IsZero() && w.LastAttempt.Before(cutoff) {
-			delete(s.Transcripts, id)
+			delete(m, k)
 		}
 	}
 }
@@ -158,4 +171,80 @@ func (w WorkSchedule) SkipUsage(now time.Time) WorkSchedule {
 	w.LastAttempt = now
 	w.NextDueAt = now.Add(UsageRefreshInterval)
 	return w
+}
+
+const (
+	// MinGitInterval floors the per-cwd git collection interval (the <git cacheTtlMs>
+	// value), so a zero or tiny value can never make the failure backoff zero.
+	MinGitInterval = time.Second
+	// GitNotRepoInterval is the minimum interval after a collection found the cwd is not
+	// inside a git working tree, so a non-repo cwd does not spawn the worker on almost
+	// every render. A `git init` there shows up within this long.
+	GitNotRepoInterval = time.Minute
+	GitBackoffMax      = 5 * time.Minute
+	GitRetention       = 24 * time.Hour // Prune drops git entries idle this long
+)
+
+// RecordGit records one git collection for a cwd. interval is the <git cacheTtlMs>
+// value (floored at MinGitInterval). A successful collection that found no repository
+// waits at least GitNotRepoInterval; a failure (git error or timeout) backs off up to
+// GitBackoffMax.
+func (w WorkSchedule) RecordGit(now time.Time, success, isRepo bool, interval time.Duration) WorkSchedule {
+	base := max(interval, MinGitInterval)
+	if success && !isRepo {
+		base = max(base, GitNotRepoInterval)
+	}
+	return w.Record(now, success, base, GitBackoffMax)
+}
+
+// WorkKind names one kind of refresh work item - one RefreshSchedule map. The
+// values double as the <refresh wait> token names (markup.md "refresh"), with
+// WorkSource matched by `source:<id>` and the `sources` group token.
+type WorkKind string
+
+const (
+	WorkGit        WorkKind = "git"        // RefreshSchedule.Git, key: session cwd
+	WorkTranscript WorkKind = "transcript" // RefreshSchedule.Transcripts, key: session id
+	WorkUsage      WorkKind = "usage"      // RefreshSchedule.Usage, key: account cache key
+	WorkSource     WorkKind = "source"     // RefreshSchedule.Sources, key: source id
+)
+
+// WorkKinds lists every WorkKind (tests use it to keep the DSL tokens in step).
+var WorkKinds = []WorkKind{WorkGit, WorkTranscript, WorkUsage, WorkSource}
+
+// WorkItem is one due refresh work item: a schedule map (Kind) and its key.
+// DefHash is set for WorkSource only: the current definition's hash, against
+// which the entry's DefHash is compared (a changed definition is cold).
+type WorkItem struct {
+	Kind    WorkKind
+	Key     string
+	DefHash string
+}
+
+// Entry returns item's schedule entry (the zero WorkSchedule and false when the
+// schedule has none).
+func (s RefreshSchedule) Entry(it WorkItem) (WorkSchedule, bool) {
+	var m map[string]WorkSchedule
+	switch it.Kind {
+	case WorkGit:
+		m = s.Git
+	case WorkTranscript:
+		m = s.Transcripts
+	case WorkUsage:
+		m = s.Usage
+	case WorkSource:
+		m = s.Sources
+	}
+	w, ok := m[it.Key]
+	return w, ok
+}
+
+// Cold reports whether item has never been attempted: no entry, a zero
+// LastAttempt, or (sources) an entry recorded for a different definition.
+func (s RefreshSchedule) Cold(it WorkItem) bool {
+	w, ok := s.Entry(it)
+	if !ok || w.LastAttempt.IsZero() {
+		return true
+	}
+	return it.Kind == WorkSource && it.DefHash != "" && w.DefHash != it.DefHash
 }

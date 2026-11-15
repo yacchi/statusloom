@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/yacchi/statusloom/internal/cache"
@@ -33,6 +34,7 @@ func runDoctor(args []string, stdout, stderr io.Writer, version string) int {
 	report("PASS", "binary", version)
 	doctorDocument(report)
 	doctorSources(report)
+	doctorRefreshWait(report, os.Getenv)
 	doctorCache(report)
 	doctorGit(report)
 	settings, err := claudeSettingsPath(*settingsFlag)
@@ -124,6 +126,80 @@ func doctorSources(report func(string, string, string)) {
 	}
 	if len(missing) > 0 {
 		report("WARN", "sources", "document references undefined source(s): "+strings.Join(missing, ", "))
+	}
+}
+
+// doctorRefreshWait checks the current claude-code document's <refresh wait>
+// list (markup.md "refresh"). Tokens for work the document does not use are
+// not validation diagnostics (so removing a field never makes a document
+// unsavable); they are reported here instead, together with source ids that
+// are undefined or name a file source (read directly, nothing to wait for),
+// wait-on="due" with git (every render then waits for a git run), and the
+// STATUSLOOM_NO_WAIT kill switch. Nothing is reported for a document without
+// a wait list.
+func doctorRefreshWait(report func(string, string, string), getenv func(string) string) {
+	doc, _, err := config.LoadDocument("claude-code")
+	if err != nil || doc == nil || doc.Root == nil {
+		return
+	}
+	policy := dsl.DocumentRefreshPolicy(doc)
+	if !policy.Waits() {
+		return
+	}
+	if refreshWaitDisabled(getenv) {
+		report("WARN", "refresh", "STATUSLOOM_NO_WAIT is set: renders ignore <refresh> and never wait")
+	}
+	f, ferr := sources.Load()
+	refs := dsl.ReferencedSources(doc)
+	waitable := func(id string) bool {
+		def, ok := f.Get(id)
+		return ok && (def.Kind == sources.KindCommand || def.Kind == sources.KindHTTP)
+	}
+	var unused, problems []string
+	for _, tok := range policy.Tokens() {
+		switch tok {
+		case dsl.WaitTokenAll:
+		case dsl.WaitTokenGit:
+			if !dsl.UsesGit(doc) {
+				unused = append(unused, tok)
+			}
+		case dsl.WaitTokenTranscript:
+			if !dsl.UsesTranscript(doc) {
+				unused = append(unused, tok)
+			}
+		case dsl.WaitTokenUsage:
+			if getenv("STATUSLOOM_NO_USAGE_API") != "" {
+				problems = append(problems, "usage: STATUSLOOM_NO_USAGE_API is set, so there is no usage poll to wait for")
+			}
+		case dsl.WaitTokenSources:
+			if ferr == nil && !slices.ContainsFunc(refs, waitable) {
+				unused = append(unused, tok)
+			}
+		default:
+			id := strings.TrimPrefix(tok, dsl.WaitTokenSourcePrefix)
+			def, defined := f.Get(id)
+			switch {
+			case !slices.Contains(refs, id):
+				unused = append(unused, tok)
+			case ferr != nil:
+			case !defined:
+				problems = append(problems, tok+": source is not defined in sources.json")
+			case def.Kind == sources.KindFile:
+				problems = append(problems, tok+": file sources are read directly while rendering; there is nothing to wait for")
+			}
+		}
+	}
+	if len(unused) > 0 {
+		report("WARN", "refresh", "<refresh wait> names work the document does not use (ignored): "+strings.Join(unused, ", "))
+	}
+	for _, p := range problems {
+		report("WARN", "refresh", p)
+	}
+	if policy.WaitOnDue && policy.Wants(string(cache.WorkGit), "") && dsl.UsesGit(doc) {
+		report("WARN", "refresh", `wait-on="due" with git: almost every render waits for a git run (up to timeout-ms)`)
+	}
+	if len(unused) == 0 && len(problems) == 0 {
+		report("PASS", "refresh", "waits for "+strings.Join(policy.Tokens(), " ")+fmt.Sprintf(" (timeout %dms)", policy.TimeoutMS))
 	}
 }
 

@@ -61,6 +61,7 @@ import {
     setActiveLayout,
     updateAttrs,
     updateGitAttrs,
+    updateRefreshAttrs,
     updateRootAttrs,
     type AttrPatch,
 } from "./ast.ts";
@@ -89,6 +90,7 @@ import {
     type PreviewSource,
     type ResponsiveNode,
     type SessionSummary,
+    type RefreshItems,
     type StatusloomNode,
     type ToolInfo,
 } from "./types.ts";
@@ -150,6 +152,9 @@ interface DocState {
     lastValidSource: string;
     diagnostics: Diagnostic[];
     valid: boolean;
+    // Work items the last valid AST uses (parse response), for the Refresh
+    // panel's wait toggles. null until a parse produced them.
+    refreshItems: RefreshItems | null;
     fields: FieldCatalogEntry[];
     metrics: Metric[];
     selection: string | null;
@@ -230,6 +235,7 @@ function Configurator({ token }: { token: string }) {
     const [lastValidSource, setLastValidSource] = useState<string>("");
     const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
     const [valid, setValidState] = useState(true);
+    const [refreshItems, setRefreshItems] = useState<RefreshItems | null>(null);
 
     const [fields, setFields] = useState<FieldCatalogEntry[]>([]);
     const [metrics, setMetrics] = useState<Metric[]>([]);
@@ -397,6 +403,8 @@ function Configurator({ token }: { token: string }) {
     savedSourceRef.current = savedSource;
     const diagnosticsRef = useRef<Diagnostic[]>([]);
     diagnosticsRef.current = diagnostics;
+    const refreshItemsRef = useRef<RefreshItems | null>(null);
+    refreshItemsRef.current = refreshItems;
     const metricsRef = useRef<Metric[]>([]);
     metricsRef.current = metrics;
     const activeLineRef = useRef(0);
@@ -473,6 +481,7 @@ function Configurator({ token }: { token: string }) {
                 lastValidSource: ok ? source : "",
                 diagnostics: parsed.diagnostics,
                 valid: ok,
+                refreshItems: ok ? (parsed.refreshItems ?? null) : null,
                 fields: fieldList,
                 metrics: metricList,
                 selection: null,
@@ -512,6 +521,7 @@ function Configurator({ token }: { token: string }) {
             originRef.current = s.history.present === presentRef.current ? "text" : "ast";
             setAst(s.ast);
             setValid(s.valid);
+            setRefreshItems(s.refreshItems);
             setLastValidSource(s.lastValidSource);
             setDiagnostics(s.diagnostics);
             setFields(s.fields);
@@ -545,6 +555,7 @@ function Configurator({ token }: { token: string }) {
             lastValidSource: lastValidSourceRef.current,
             diagnostics: diagnosticsRef.current,
             valid: validRef.current,
+            refreshItems: refreshItemsRef.current,
             fields: fieldsRef.current,
             metrics: metricsRef.current,
             selection: selectionRef.current,
@@ -688,6 +699,7 @@ function Configurator({ token }: { token: string }) {
                 setValid(ok);
                 if (ok) {
                     setAst(res.ast ?? null);
+                    setRefreshItems(res.refreshItems ?? null);
                     setLastValidSource(present);
                 }
             } catch (err) {
@@ -742,6 +754,7 @@ function Configurator({ token }: { token: string }) {
                 setValid(ok);
                 if (ok) {
                     setAst(par.ast ?? null);
+                    setRefreshItems(par.refreshItems ?? null);
                     setLastValidSource(ser.source);
                 }
                 if (opts && opts.select !== undefined) {
@@ -1951,6 +1964,11 @@ function Configurator({ token }: { token: string }) {
                     readOnly={!valid}
                     onPatchGit={(patch: AttrPatch) =>
                         applyAstEdit((root) => updateGitAttrs(root, patch))
+                    }
+                    refreshItems={refreshItems}
+                    sources={sources}
+                    onPatchRefresh={(patch: AttrPatch) =>
+                        applyAstEdit((root) => updateRefreshAttrs(root, patch))
                     }
                     onChangeLang={changeLang}
                     onClose={() => setShowSettings(false)}

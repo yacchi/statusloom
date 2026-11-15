@@ -24,6 +24,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/yacchi/statusloom/internal/atomicfile"
 	"github.com/yacchi/statusloom/internal/dsl"
 )
 
@@ -132,7 +133,7 @@ func SourceVersion(tool, src string) string {
 // load reads and unmarshals the store file, returning an empty (but non-nil)
 // store when the file does not exist.
 func (s *Store) load() (*storeFile, error) {
-	data, err := os.ReadFile(s.path)
+	data, err := atomicfile.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return &storeFile{

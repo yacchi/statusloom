@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+
+	"github.com/yacchi/statusloom/internal/atomicfile"
 )
 
 type atomicTestPayload struct {
@@ -37,7 +39,7 @@ func TestWriteJSONAtomic_ConcurrentReadersAlwaysValid(t *testing.T) {
 			default:
 			}
 
-			data, err := os.ReadFile(path)
+			data, err := atomicfile.ReadFile(path)
 			if err != nil {
 				if errors.Is(err, os.ErrNotExist) {
 					continue

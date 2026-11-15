@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -215,6 +216,14 @@ func TestMergeRemovesMarkerBeforeReading(t *testing.T) {
 }
 
 func TestMergeRemovesMarkerWhenReadDirFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows answers opening a regular file as a directory with
+		// ERROR_PATH_NOT_FOUND, which is fs.ErrNotExist (merge rightly treats
+		// that as "no detail files"), and there is no unprivileged portable way
+		// to make ReadDir fail otherwise. Session export is never written on
+		// Windows anyway (procinfo has no reader there).
+		t.Skip("cannot induce a non-ErrNotExist ReadDir failure on Windows")
+	}
 	base := mergeIsolate(t)
 	stateDir := filepath.Join(base, "statusloom")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {

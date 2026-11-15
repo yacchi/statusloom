@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/yacchi/statusloom/internal/dsl"
+	"github.com/yacchi/statusloom/internal/gitstatus"
 	"github.com/yacchi/statusloom/internal/store"
 )
 
@@ -172,10 +173,11 @@ func DefaultDocument(tool string) string {
 }
 
 // DocumentGitConfig derives a GitConfig from a document's optional <git/>
-// element, applying the built-in defaults (3000ms / 200ms / include-untracked
-// / collect-numstat) for a missing element or missing attributes.
+// element, applying the built-in defaults (3000ms interval / gitstatus.DefaultTimeout
+// / include-untracked / collect-numstat) for a missing element or missing
+// attributes.
 func DocumentGitConfig(doc *dsl.Document) GitConfig {
-	gc := GitConfig{CacheTTLMs: 3000, TimeoutMs: 200, IncludeUntracked: true, CollectNumstat: true}
+	gc := GitConfig{CacheTTLMs: 3000, TimeoutMs: int(gitstatus.DefaultTimeout / time.Millisecond), IncludeUntracked: true, CollectNumstat: true}
 	if doc == nil || doc.Root == nil || doc.Root.Git == nil {
 		return gc
 	}

@@ -10,17 +10,20 @@ package testenv
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
 
 // isolatedVars are the environment variables that decide where statusloom and
 // claudecfg resolve files. HOME covers the XDG defaults (~/.config,
-// ~/.cache, ~/.local/state) and ~/.claude / ~/.claude.json. XDG_STATE_HOME
+// ~/.cache, ~/.local/state) and ~/.claude / ~/.claude.json. USERPROFILE is what
+// os.UserHomeDir reads on Windows, so it must be isolated alongside HOME. XDG_STATE_HOME
 // decides the state dir. CLAUDE_PID names the user's real Claude Code process,
 // so it is unset.
 var isolatedVars = []string{
 	"HOME",
+	"USERPROFILE",
 	"XDG_CONFIG_HOME",
 	"XDG_CACHE_HOME",
 	"XDG_STATE_HOME",
@@ -28,6 +31,15 @@ var isolatedVars = []string{
 	"STATUSLOOM_CACHE_DIR",
 	"CLAUDE_CONFIG_DIR",
 	"CLAUDE_PID",
+}
+
+// SetHome points the home directory at dir for the duration of the test, for
+// both HOME (Unix, and the injected getenv in tests) and USERPROFILE (what
+// os.UserHomeDir reads on Windows). Use it instead of t.Setenv("HOME", ...).
+func SetHome(t testing.TB, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 }
 
 // Main isolates the environment, runs the tests and exits. Use it as the
@@ -52,6 +64,7 @@ func run(m *testing.M) int {
 	home := filepath.Join(root, "home")
 	values := map[string]string{
 		"HOME":                 home,
+		"USERPROFILE":          home,
 		"XDG_CONFIG_HOME":      filepath.Join(home, ".config"),
 		"XDG_CACHE_HOME":       filepath.Join(home, ".cache"),
 		"XDG_STATE_HOME":       filepath.Join(home, ".local", "state"),
@@ -72,4 +85,21 @@ func run(m *testing.M) int {
 		}
 	}
 	return m.Run()
+}
+
+// ExitedPID starts a real child process (this test binary, running no tests),
+// waits for it to exit and returns its pid: a pid that is provably dead right
+// now, without guessing at unused pid numbers. The OS may recycle the pid
+// later, which can only make it look alive again.
+func ExitedPID(t testing.TB) int {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("testenv: os.Executable: %v", err)
+	}
+	cmd := exec.Command(exe, "-test.run=^$")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("testenv: run %s: %v", exe, err)
+	}
+	return cmd.Process.Pid
 }

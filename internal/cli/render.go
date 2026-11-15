@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 	"github.com/yacchi/statusloom/internal/config"
 	"github.com/yacchi/statusloom/internal/detect"
 	"github.com/yacchi/statusloom/internal/dsl"
-	"github.com/yacchi/statusloom/internal/gitstatus"
 	"github.com/yacchi/statusloom/internal/render"
 	"github.com/yacchi/statusloom/internal/schema"
 	"github.com/yacchi/statusloom/internal/sources"
@@ -126,12 +124,16 @@ func runRenderPipeline(stdin io.Reader, stdout, stderr io.Writer, getenv func(st
 // the refresh subprocess is never spawned. Live sessions (including
 // `monitor --draft`) pass false and keep feeding the caches.
 //
-// It performs no network I/O and runs no external command (only the local
-// account/repo/session caches, git status collection, and read-only external
+// It performs no network I/O and runs no external command - in particular it
+// never runs git (only the local account/repo/session caches and read-only external
 // source lookups through the sources provider: sources.json, file sources and
 // cache envelopes). Any due refresh work is handed to a detached refresh
-// worker spawned after the render.
+// worker spawned after the render - or, when the document has a <refresh wait>
+// naming a work item that is cold (see waitForRefresh), spawned before it,
+// with the render waiting up to the element's timeout for the worker to
+// attempt that item. Previews never wait.
 func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool string, stderr io.Writer, draft bool, overrides *metricOverrides, preview bool) ([]string, error) {
+	start := time.Now()
 	toolID, err := detect.Detect(explicitTool, raw)
 	if err != nil {
 		return nil, err
@@ -160,29 +162,50 @@ func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool strin
 	accountCacheKey := cache.ResolveAccountCacheKey(profileProvider())
 
 	now := time.Now()
-	var rolledOver bool
-	if preview {
-		rolledOver = cache.FillAccountFromCache(accountCacheKey, &snap, now)
-	} else {
-		rolledOver = cache.ApplyAccountCache(accountCacheKey, &snap, now)
-	}
-	cache.ApplyExtraUsageCache(accountCacheKey, &snap, now)
-	applyTranscriptCache(&snap, now)
-	applyGitStatus(&snap, config.DocumentGitConfig(doc), now)
+	rolledOver := applyRenderCaches(&snap, accountCacheKey, now, !preview)
 	if !preview {
-		storeSessionSnapshot(&snap, now)
 		exportSession(raw, getenv, now)
-	}
-	profile := profileProvider
-	if overrides.active() {
-		overrides.applySnapshot(&snap)
-		profile = overrides.wrapProfile(profileProvider)
 	}
 
 	// External sources are read-only here (sources.json, file sources and
 	// cache envelopes); previews resolve them too so they show source values.
 	ri, _ := cache.ClaudeRefreshInterval(claudecfg.SettingsPath(getenv))
 	prov := sources.NewProvider(now, ri)
+
+	live := !preview && !overrides.active()
+	var req refreshRequest
+	var wait refreshWaitResult
+	if live {
+		req = refreshRequest{Raw: raw, Now: now, ForceUsage: rolledOver, AccountKey: accountCacheKey,
+			UsesTranscript: dsl.UsesTranscript(doc), SourceRefs: dsl.ReferencedSources(doc), Sources: prov.File,
+			RefreshInterval: ri}
+		if dsl.UsesGit(doc) {
+			req.GitCwd = snap.System.Cwd
+			req.Git = config.DocumentGitConfig(doc)
+		}
+		// <refresh wait>: wait (bounded, measured from the render's start) for
+		// the named work items, then rebuild the snapshot from the refreshed
+		// caches. Without <refresh>, or with nothing to wait for, this is a
+		// no-op and the render proceeds exactly as before.
+		if policy := dsl.DocumentRefreshPolicy(doc); policy.Waits() && !refreshWaitDisabled(getenv) {
+			wait = waitForRefresh(req, policy, start.Add(time.Duration(policy.TimeoutMS)*time.Millisecond))
+			if wait.Waited {
+				if fresh, derr := claude.New().Decode(raw); derr == nil {
+					snap = fresh
+					// The stdin windows were stored by the first pass: read only.
+					req.ForceUsage = applyRenderCaches(&snap, accountCacheKey, now, false)
+				}
+			}
+		}
+	}
+	if !preview {
+		storeSessionSnapshot(&snap, now)
+	}
+	profile := profileProvider
+	if overrides.active() {
+		overrides.applySnapshot(&snap)
+		profile = overrides.wrapProfile(profileProvider)
+	}
 
 	width := parseWidth(getenv("COLUMNS"))
 	out := render.RenderDocumentString(snap, doc, render.Options{
@@ -192,15 +215,31 @@ func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool strin
 		Profile: profile,
 		Sources: prov.Lookup,
 	})
-	if !preview && !overrides.active() {
-		maybeStartRefresh(refreshRequest{Raw: raw, Now: now, ForceUsage: rolledOver, AccountKey: accountCacheKey,
-			UsesTranscript: dsl.UsesTranscript(doc), SourceRefs: dsl.ReferencedSources(doc), Sources: prov.File,
-			RefreshInterval: ri})
+	if live && !wait.Spawned {
+		maybeStartRefresh(req)
 	}
 	if out == "" {
 		return nil, nil
 	}
 	return []string{out}, nil
+}
+
+// applyRenderCaches folds the local caches into a freshly decoded snapshot:
+// the account windows (storeStdin also writes the stdin windows to the shared
+// account cache; a preview or a second pass only reads it), the OAuth usage
+// cache, transcript analytics and the repo cache. It returns whether a
+// five-hour/seven-day window has rolled over (refreshRequest.ForceUsage).
+func applyRenderCaches(snap *schema.StatusSnapshot, accountCacheKey string, now time.Time, storeStdin bool) bool {
+	var rolledOver bool
+	if storeStdin {
+		rolledOver = cache.ApplyAccountCache(accountCacheKey, snap, now)
+	} else {
+		rolledOver = cache.FillAccountFromCache(accountCacheKey, snap, now)
+	}
+	cache.ApplyExtraUsageCache(accountCacheKey, snap, now)
+	applyTranscriptCache(snap, now)
+	applyRepoCache(snap)
+	return rolledOver
 }
 
 func applyTranscriptCache(snap *schema.StatusSnapshot, now time.Time) {
@@ -330,52 +369,25 @@ func parseWidth(s string) int {
 	return n
 }
 
-// applyGitStatus resolves snap.Repository via the repo status cache and,
-// on a cache miss/stale entry, a live gitstatus.Collect run, per plan
-// sections 3.1/12. It is a no-op when the session did not report a cwd
-// (snap.System.Cwd == ""): statusloom's contract is stdin-driven, so it
-// deliberately never falls back to os.Getwd.
+// applyRepoCache sets snap.Repository to the last git status the refresh
+// worker collected for the session's cwd, whatever its age (nil when none has
+// been collected yet). The render path never runs git: collection happens only
+// in the detached `refresh --once` worker on the per-cwd schedule
+// (RefreshSchedule.Git), which renderDocFromRaw requests through
+// maybeStartRefresh. So git info lags by at most one render, and the first
+// render in a new cwd has none unless the document waits for it
+// (<refresh wait="git">, see waitForRefresh). It is a no-op when the session did not report
+// a cwd: statusloom's contract is stdin-driven, so it never falls back to
+// os.Getwd.
 //
 // The repo cache is keyed by the session's cwd rather than by the git
-// repository root. The root is only known once git has actually resolved
-// it (via `rev-parse --show-toplevel`), so there is no way to key by root
-// before running git in the first place. Multiple cwd values that happen
-// to resolve to the same repository root simply get independent cache
-// entries with equivalent content; this is harmless (a little redundant
-// storage), not a correctness problem.
-func applyGitStatus(snap *schema.StatusSnapshot, gitCfg config.GitConfig, now time.Time) {
-	cwd := snap.System.Cwd
-	if cwd == "" {
+// repository root, which is only known once git has resolved it. Several cwd
+// values inside one repository simply get independent, equivalent entries.
+func applyRepoCache(snap *schema.StatusSnapshot) {
+	if snap.System.Cwd == "" {
 		return
 	}
-
-	ttl := time.Duration(gitCfg.CacheTTLMs) * time.Millisecond
-	timeout := time.Duration(gitCfg.TimeoutMs) * time.Millisecond
-
-	cached, fresh, _ := cache.LoadRepo(cwd, ttl, now)
-	if fresh {
-		snap.Repository = cached
-		return
-	}
-
-	result, err := gitstatus.Collect(context.Background(), cwd, gitstatus.Options{
-		Timeout:          timeout,
-		IncludeUntracked: gitCfg.IncludeUntracked,
-		CollectNumstat:   gitCfg.CollectNumstat,
-	})
-	if err != nil {
-		// git failed or timed out: fall back to whatever stale value the
-		// cache had (nil if none). The statusline must stay quiet, so the
-		// error itself is never surfaced; a debug env var is future work.
-		snap.Repository = cached
-		return
-	}
-
-	// success + nil means "not a git repository" - Repository stays nil.
-	snap.Repository = result
-	if result != nil {
-		_ = cache.StoreRepo(cwd, *result, now)
-	}
+	snap.Repository = cache.LoadRepo(snap.System.Cwd)
 }
 
 // storeSessionSnapshot best-effort persists the fully-populated snapshot

@@ -5,10 +5,23 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yacchi/statusloom/internal/testenv"
 )
+
+// testAbsPath turns a Unix-style absolute path into one filepath.IsAbs accepts
+// on the running OS: unchanged on Unix, drive-qualified ("C:\x") on Windows,
+// where a rooted path without a drive is not absolute.
+func testAbsPath(unix string) string {
+	if runtime.GOOS == "windows" {
+		return `C:` + filepath.FromSlash(unix)
+	}
+	return unix
+}
 
 func TestTTL(t *testing.T) {
 	tests := []struct {
@@ -62,10 +75,11 @@ func TestTimeout(t *testing.T) {
 }
 
 func TestExpandedPath(t *testing.T) {
-	t.Setenv("HOME", "/h")
+	home := filepath.Join(t.TempDir(), "h")
+	testenv.SetHome(t, home)
 	tests := map[string]string{
-		"~":      "/h",
-		"~/a/b":  "/h/a/b",
+		"~":      home,
+		"~/a/b":  filepath.Join(home, "a", "b"),
 		"/x":     "/x",
 		"~bob/x": "~bob/x",
 		"rel/x":  "rel/x",
@@ -145,20 +159,20 @@ func TestValidate(t *testing.T) {
 		{"file ~user is not home-relative", Definition{ID: "s", Kind: KindFile, Path: "~bob/x"}, `source "s": path "~bob/x" must be absolute (or start with ~/)`},
 		{"file ~/ path passes", Definition{ID: "s", Kind: KindFile, Path: "~/x"}, ""},
 		{"file bare ~ passes", Definition{ID: "s", Kind: KindFile, Path: "~"}, ""},
-		{"file absolute passes", Definition{ID: "s", Kind: KindFile, Path: "/x"}, ""},
+		{"file absolute passes", Definition{ID: "s", Kind: KindFile, Path: testAbsPath("/x")}, ""},
 		{"command empty argv[0]", Definition{ID: "s", Kind: KindCommand, Argv: []string{""}}, `source "s": command sources need a non-empty argv`},
 		{"http scheme", Definition{ID: "s", Kind: KindHTTP, URL: "ftp://h/x"}, `source "s": url "ftp://h/x" must be an http or https URL with a host`},
 		{"http empty host", Definition{ID: "s", Kind: KindHTTP, URL: "http:///x"}, `source "s": url "http:///x" must be an http or https URL with a host`},
 		{"http unparsable", Definition{ID: "s", Kind: KindHTTP, URL: "::"}, `source "s": url "::" must be an http or https URL with a host`},
 		{"http passes", Definition{ID: "s", Kind: KindHTTP, URL: "https://h/x"}, ""},
-		{"ttl on file", Definition{ID: "s", Kind: KindFile, Path: "/x", TTLSeconds: 60}, `source "s": ttlSeconds does not apply to file sources`},
+		{"ttl on file", Definition{ID: "s", Kind: KindFile, Path: testAbsPath("/x"), TTLSeconds: 60}, `source "s": ttlSeconds does not apply to file sources`},
 		{"allowRemote on command", Definition{ID: "s", Kind: KindCommand, Argv: []string{"a"}, AllowRemote: true}, `source "s": allowRemote does not apply to command sources`},
 		{"ttl below minimum", Definition{ID: "s", Kind: KindCommand, Argv: []string{"a"}, TTLSeconds: 4}, `source "s": ttlSeconds must be at least 5`},
 		{"negative ttl", Definition{ID: "s", Kind: KindCommand, Argv: []string{"a"}, TTLSeconds: -1}, `source "s": ttlSeconds must be at least 5`},
 		{"negative staleAfter", Definition{ID: "s", Kind: KindCommand, Argv: []string{"a"}, StaleAfterSeconds: -1}, `source "s": staleAfterSeconds must not be negative`},
 		{"staleAfter below default floor", Definition{ID: "s", Kind: KindCommand, Argv: []string{"a"}, StaleAfterSeconds: 20}, `source "s": staleAfterSeconds must be at least ttlSeconds`},
 		{"staleAfter equal to ttl passes", Definition{ID: "s", Kind: KindCommand, Argv: []string{"a"}, TTLSeconds: 10, StaleAfterSeconds: 10}, ""},
-		{"file staleAfter any positive passes", Definition{ID: "s", Kind: KindFile, Path: "/x", StaleAfterSeconds: 1}, ""},
+		{"file staleAfter any positive passes", Definition{ID: "s", Kind: KindFile, Path: testAbsPath("/x"), StaleAfterSeconds: 1}, ""},
 		{"timeout above max", Definition{ID: "s", Kind: KindCommand, Argv: []string{"a"}, TimeoutSeconds: 31}, `source "s": timeoutSeconds must be between 1 and 30`},
 		{"timeout negative", Definition{ID: "s", Kind: KindCommand, Argv: []string{"a"}, TimeoutSeconds: -1}, `source "s": timeoutSeconds must be between 1 and 30`},
 		{"timeout max passes", Definition{ID: "s", Kind: KindCommand, Argv: []string{"a"}, TimeoutSeconds: 30}, ""},

@@ -9,10 +9,11 @@
 // git-collection and context-percentage knobs.
 package config
 
-// GitConfig controls how git repository status is collected.
+// GitConfig controls how the refresh worker collects git repository status
+// (the render path only reads the collected result from the repo cache).
 type GitConfig struct {
-	CacheTTLMs       int  `json:"cacheTtlMs"`       // default 3000
-	TimeoutMs        int  `json:"timeoutMs"`        // default 200
+	CacheTTLMs       int  `json:"cacheTtlMs"`       // default 3000; minimum interval between collections for one cwd
+	TimeoutMs        int  `json:"timeoutMs"`        // default 5000 (gitstatus.DefaultTimeout); per git invocation
 	IncludeUntracked bool `json:"includeUntracked"` // default true
 	CollectNumstat   bool `json:"collectNumstat"`   // default true
 }

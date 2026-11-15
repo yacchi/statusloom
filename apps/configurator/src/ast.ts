@@ -1073,3 +1073,23 @@ export function updateGitAttrs(root: StatusloomNode, patch: AttrPatch): Statuslo
     }
     return out;
 }
+
+// Patch the optional <refresh/> element's attributes (markup.md "refresh").
+// Same lifecycle as updateGitAttrs: created when needed, removed entirely when
+// the patch leaves no attributes set.
+export function updateRefreshAttrs(root: StatusloomNode, patch: AttrPatch): StatusloomNode {
+    const cur = root.refresh ?? { id: "refresh", kind: "refresh" as const };
+    const next = applyPatch(cur, patch);
+    const hasAny = Object.keys(next).some(
+        (k) => k !== "id" && k !== "kind" && k !== "range" && k !== "dirty",
+    );
+    const out = markDirty({ ...root });
+    if (hasAny) {
+        // RefreshNode is not an addressable AstNode (no editor selects it), so
+        // stamp it directly rather than through markDirty.
+        out.refresh = { ...next, dirty: true };
+    } else {
+        delete out.refresh;
+    }
+    return out;
+}

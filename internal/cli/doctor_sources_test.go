@@ -11,6 +11,7 @@ import (
 
 	"github.com/yacchi/statusloom/internal/config"
 	"github.com/yacchi/statusloom/internal/sources"
+	"github.com/yacchi/statusloom/internal/testenv"
 )
 
 // setupDoctorSources isolates statusloom's files, HOME and CLAUDE_CONFIG_DIR in
@@ -19,7 +20,7 @@ func setupDoctorSources(t *testing.T) string {
 	t.Helper()
 	t.Setenv("STATUSLOOM_CONFIG", t.TempDir())
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	settingsPath := filepath.Join(t.TempDir(), "settings.json")
 	if err := os.WriteFile(settingsPath, []byte("{}"), 0o600); err != nil {
@@ -86,7 +87,7 @@ func TestDoctorSourcesMissingFileIsZeroDefined(t *testing.T) {
 func TestDoctorSourcesAllowRemoteWarnsOnlyForThatSource(t *testing.T) {
 	settings := setupDoctorSources(t)
 	putSources(t,
-		sources.Definition{ID: "a", Kind: sources.KindFile, Path: "/tmp/x.json"},
+		sources.Definition{ID: "a", Kind: sources.KindFile, Path: absPath("x.json")},
 		sources.Definition{ID: "b", Kind: sources.KindHTTP, URL: "http://127.0.0.1:1/x", AllowRemote: true},
 	)
 	out, code := runDoctorOut(t, settings)
@@ -117,15 +118,15 @@ func TestDoctorSourcesUndefinedReferencesListedOnceSorted(t *testing.T) {
 		t.Errorf("want exactly one %q, got %q", want, out)
 	}
 
-	putSources(t, sources.Definition{ID: "aa", Kind: sources.KindFile, Path: "/tmp/x.json"})
+	putSources(t, sources.Definition{ID: "aa", Kind: sources.KindFile, Path: absPath("x.json")})
 	out, _ = runDoctorOut(t, settings)
 	if want := "WARN sources - document references undefined source(s): zz"; !strings.Contains(out, want) {
 		t.Errorf("after defining aa, want %q: %q", want, out)
 	}
 
 	putSources(t,
-		sources.Definition{ID: "aa", Kind: sources.KindFile, Path: "/tmp/x.json"},
-		sources.Definition{ID: "zz", Kind: sources.KindFile, Path: "/tmp/z.json"},
+		sources.Definition{ID: "aa", Kind: sources.KindFile, Path: absPath("x.json")},
+		sources.Definition{ID: "zz", Kind: sources.KindFile, Path: absPath("z.json")},
 	)
 	out, _ = runDoctorOut(t, settings)
 	if strings.Contains(out, "undefined source") {

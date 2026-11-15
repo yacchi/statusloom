@@ -152,8 +152,33 @@ func (s *server) handleParseDSL(w http.ResponseWriter, r *http.Request) {
 	if doc != nil && doc.Root != nil {
 		ast, _ := buildAST(doc)
 		resp["ast"] = ast
+		resp["refreshItems"] = refreshItemsOf(doc)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// dslRefreshItems reports which background work items a document uses, so the
+// configurator's Refresh panel offers wait toggles only for those (markup.md
+// "refresh"). It reuses the render path's own predicates (dsl.UsesGit,
+// dsl.UsesTranscript, dsl.ReferencedSources); the client filters Sources to
+// command/http kinds via /api/sources. `usage` is not reported: it depends
+// only on STATUSLOOM_NO_USAGE_API, never on the document.
+type dslRefreshItems struct {
+	Git        bool     `json:"git"`
+	Transcript bool     `json:"transcript"`
+	Sources    []string `json:"sources"`
+}
+
+func refreshItemsOf(doc *dsl.Document) dslRefreshItems {
+	srcs := dsl.ReferencedSources(doc)
+	if srcs == nil {
+		srcs = []string{}
+	}
+	return dslRefreshItems{
+		Git:        dsl.UsesGit(doc),
+		Transcript: dsl.UsesTranscript(doc),
+		Sources:    srcs,
+	}
 }
 
 // dslSerializeRequest is the body of POST /api/dsl/serialize.
@@ -192,11 +217,15 @@ func (s *server) handleSerializeDSL(w http.ResponseWriter, r *http.Request) {
 	} else {
 		src = dsl.Serialize(doc)
 	}
-	_, diags := dsl.ParseAndValidate(src)
-	writeJSON(w, http.StatusOK, map[string]any{
+	parsed, diags := dsl.ParseAndValidate(src)
+	resp := map[string]any{
 		"source":      src,
 		"diagnostics": toDiagsJSON(diags),
-	})
+	}
+	if parsed != nil && parsed.Root != nil {
+		resp["refreshItems"] = refreshItemsOf(parsed)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleGetDSLDraft handles GET /api/dsl/draft?tool=: it returns the tool's

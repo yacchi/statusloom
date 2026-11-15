@@ -36,7 +36,17 @@ v0.0.8 to v0.0.7 shows the default layout until you upgrade again.
 brew install yacchi/tap/statusloom
 ```
 
-Windows users should use the GitHub Releases archives below.
+### Scoop (Windows, recommended)
+
+```powershell
+scoop bucket add yacchi https://github.com/yacchi/scoop-bucket
+scoop install statusloom
+```
+
+On Windows, Claude Code runs the status line command through Git Bash, so
+`statusloom` only needs to be on `PATH` (Scoop takes care of that). Two
+features are not available on Windows: the terminal embedded in the
+configurator, and the session state file (`sessions.json`).
 
 ### GitHub Releases (manual)
 
@@ -64,8 +74,7 @@ builds from the local working tree, the freshly built UI in
 `internal/webconfig/dist` is embedded into the binary. (This is why
 cloning works but `go install ...@latest` does not: the embedded assets
 are git-ignored and never committed — see `CLAUDE.md`.) This
-works on Windows too, though running Claude Code itself on Windows is not
-yet well supported.
+works on Windows too.
 
 To run directly from the checkout without installing, `mise run build`
 produces `./statusloom` in the repo root, and `mise run config` launches
@@ -237,6 +246,27 @@ interval is 30 seconds, and transcript parsing runs only when the document
 uses a transcript-derived value. Each external source's default ttl is
 `max(30 s, refreshInterval)`, never below 5 seconds, unless you set
 `--ttl` on that source.
+
+Git status (branch, changes, counts) is collected by the same background
+subprocess, never while the status line renders. The status line shows the
+last collected value, so it can lag by one render (up to `refreshInterval`
+while idle), and the first render in a new directory shows no Git info. The
+`<git/>` element's `cache-ttl-ms` is the minimum interval between collections
+for a directory and `timeout-ms` bounds each git command (default 5 s).
+
+To show Git info, sources or usage from the very first render, add a
+`<refresh>` element next to `<git/>`:
+
+```xml
+<refresh wait="git sources" timeout-ms="2000"/>
+```
+
+When a named item (`git`, `transcript`, `usage`, `source:<id>`, `sources`,
+`all`) has never been fetched yet - a new directory, session or account - the
+render starts the background refresh first and waits for it, up to
+`timeout-ms` (default 2000, at most 3000). It costs at most that much once per
+new item; later renders never wait. Previews never wait, and
+`STATUSLOOM_NO_WAIT=1` turns waiting off. See `markup.md` ("refresh").
 
 ### Format
 

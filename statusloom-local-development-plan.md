@@ -68,10 +68,11 @@
 1. stdinのJSONを読み取る
 2. ツールを判定する
 3. ツール固有状態を正規化する
-4. ローカルキャッシュを読む
-5. Git情報を取得する
-6. 設定に従って描画する
-7. stdoutへ出力する
+4. ローカルキャッシュを読む（Git情報もrepoキャッシュから読むだけで、描画経路ではgitを実行しない。12章）
+5. 期限の来た作業項目があれば `statusloom refresh --once` をdetachedで起動する
+6. （任意）文書の`<refresh wait>`が挙げた作業項目が冷えている（一度も試行していない）ときだけ、5のspawnを描画前に行い、`timeout-ms`（描画開始から、最大3秒）までその項目の試行完了を待ってからキャッシュを読み直す。待機中もキャッシュファイルを読むだけ（markup.md「refresh」）
+7. 設定に従って描画する
+8. stdoutへ出力する
 
 通常描画中にネットワークアクセスしない。
 
@@ -114,12 +115,14 @@ rate_limitsの取得手段はstdinのみ（Pro/Max購読者のみ、セッショ
 ```text
 statusloom render
   ├─ stdin処理
-  ├─ cache読取
-  ├─ Git取得
-  └─ 描画
+  ├─ cache読取（Git情報を含む）
+  ├─ 描画
+  └─ （期限の来た項目があれば）refresh --once をspawn ── Git収集・transcript解析・usage API・外部ソース
 ```
 
-`statusloom refresh`（短命バックグラウンドワーカー)は設計から保留する。アカウント情報の取得手段がstdin以外に存在しないため、能動的なキャッシュ更新は実装不能であり不要。将来stdin以外の公式データソースが出現した場合にのみ再検討する。
+`statusloom refresh --once`（短命バックグラウンドワーカー）は常駐しない単発サブプロセスで、描画経路が期限の来た作業項目（Git収集・transcript解析・OAuth usage API・外部ソース・セッション状態のマージ）があるときだけ機会的にspawnする。機械全体でlease 1本。描画経路自体はnetwork-free・command-free（gitも実行しない）。
+
+`<refresh wait>`による待機もこの構成のまま行う: 描画は待機対象のworkerを起動（または他プロセスが実行中ならそのworkerを見守り）、`schedule.json`の該当エントリの`LastAttempt`が進むのを`lease.json`と合わせて短い間隔でポーリングする。新しいdaemon・lease・ファイルは作らない。
 
 常駐サービス、launchd、systemd、Windows Serviceは対象外。
 
@@ -701,7 +704,8 @@ atomic rename
 ### 更新競合対策
 
 - atomic write + last-writer-winsのみ（lock/leaseは持たない。能動更新ワーカーが存在しないため不要）
-- 描画処理では待たない
+- 描画処理では待たない（例外: 文書が`<refresh wait>`を宣言した場合だけ、冷えた作業項目の試行完了を上限つきで待つ）
+- `<cache>/refresh/schedule.json`の各エントリの`LastAttempt`は待機の完了シグナルを兼ねる。workerは各項目でデータ（repoキャッシュ・envelope・transcript解析結果）を書いてからscheduleエントリを書く
 
 ---
 
@@ -725,17 +729,21 @@ git -C <repo> diff --numstat
 git -C <repo> diff --cached --numstat
 ```
 
-実行条件:
+実行場所: **gitは描画経路では一切実行しない。** 収集は `statusloom refresh --once`（常駐しない短命ワーカー。機械全体でlease 1本）だけが行う。
 
-- timeout: 既定200ms（設定可能）
+- 描画: `repos/<sha256(cwd)[:16]>.json`（cwdキー、schemaVersion 1）を読み、年齢に関係なくその値を使う（無ければ非表示）。文書がgit由来のfield/metricを使う（`dsl.UsesGit`）ときだけ、`RefreshSchedule.Git[cwd]`（`<cache>/refresh/schedule.json`の`git`キー）が期限ならworkerをspawnし、cwdと`<git/>`設定（`--git-cwd`/`--git-interval-ms`/`--git-timeout-ms`/`--git-untracked`/`--git-numstat`）を渡す
+- worker: cwdのscheduleを再確認し、期限なら`gitstatus.Collect`を実行してrepoキャッシュへ書く。間隔は`cache-ttl-ms`（既定3秒、下限1秒）。「gitリポジトリではない」も成功として記録し、古いエントリを削除したうえで最低60秒は再収集しない（非repoのcwdで毎描画spawnしない）。git失敗・timeout時は直前の値を残し、指数backoff（最大5分）
+- 受け入れたトレードオフ: git情報は最大1描画分遅れる（アイドル時は`refreshInterval`＝既定30秒）。新しいcwdでの最初の描画にはgit情報が出ない。文書に`<refresh wait="git">`を置けば、冷えたcwdの最初の描画だけ収集を待って（既定上限1秒）初回から表示できる
+
+実行条件（worker内）:
+
+- timeout: gitコマンド1回ごとに既定5秒（`timeout-ms`で設定可能）。描画を待たせないので短くする必要は無く、詰まったgitがrefresh lease（2分）を握り続けないための上限として置く
 - `GIT_OPTIONAL_LOCKS=0`
 - stdinなし
 - stdoutサイズ制限
 - hooksを発火しない
-- repo単位キャッシュ（`repos/<repo-hash>.json`、TTL既定3秒）を最初から組み込む
-- timeout・失敗時はキャッシュのstale値を表示し、なければ非表示
 
-Claude Codeは新しい更新イベントが来ると実行中のstatusLineコマンドをキャンセルするため、描画は常に高速である必要がある。
+Claude Codeは新しい更新イベントが来ると実行中のstatusLineコマンドをキャンセルするため、描画は常に高速である必要がある。gitをworkerへ移したのはこのため（Windowsではgit.exeの起動だけで1回数十ms掛かる）。
 
 ---
 
@@ -1036,8 +1044,7 @@ large repository
 ```text
 stdin-only render: p95 < 5ms
 cache read render: p95 < 8ms
-Git cache hit render: p95 < 10ms
-Git cache miss render（git status同期実行込み）: p95 < 50ms
+Git cache read render: p95 < 10ms（描画経路はgitを実行しないのでcache missでも同じ）
 runtime dependencies: 0
 network in render path: 0
 ```

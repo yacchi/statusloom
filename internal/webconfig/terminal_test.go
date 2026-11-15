@@ -69,8 +69,14 @@ func termPost(t *testing.T, hs *httptest.Server, token, path string) *http.Respo
 }
 
 // createTerminal POSTs /api/terminal/session and returns the terminal id.
+// Every test that needs a live PTY-backed terminal goes through here, so it is
+// also where such tests are skipped on platforms without PTY support
+// (Windows); TestTerminalSession_UnsupportedPlatform covers the 501 there.
 func createTerminal(t *testing.T, s *server, hs *httptest.Server) string {
 	t.Helper()
+	if !terminalSupported {
+		t.Skip("embedded terminal needs a PTY, which creack/pty does not provide on this platform (no ConPTY)")
+	}
 	resp := termPost(t, hs, s.token, "/api/terminal/session")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -121,6 +127,30 @@ func TestTerminalSession_CreatesTmpDirAndSettings(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "monitor") || !strings.Contains(string(data), "--token "+s.token) {
 		t.Errorf("settings.local.json missing monitor/token wiring: %s", data)
+	}
+}
+
+func TestTerminalSession_UnsupportedPlatform(t *testing.T) {
+	if terminalSupported {
+		t.Skip("PTY supported on this platform; the 501 path is unreachable")
+	}
+	useFakeTerminal(t, "cat")
+	s, hs := newTerminalTestServer(t)
+
+	resp := termPost(t, hs, s.token, "/api/terminal/session")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501", resp.StatusCode)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["error"] != terminalUnsupportedMessage {
+		t.Errorf("error = %q, want %q", body["error"], terminalUnsupportedMessage)
+	}
+	if s.terminalCount() != 0 {
+		t.Errorf("terminalCount = %d, want 0", s.terminalCount())
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/yacchi/statusloom/internal/atomicfile"
 	"github.com/yacchi/statusloom/internal/schema"
 )
 
@@ -176,14 +177,14 @@ func ListSnapshots(now time.Time) ([]SnapshotEntry, error) {
 
 	// Best-effort prune of expired entries.
 	for _, path := range expired {
-		_ = os.Remove(path)
+		_ = atomicfile.Remove(path)
 	}
 
 	result := make([]SnapshotEntry, 0, len(fresh))
 	for i, ne := range fresh {
 		if i >= maxSnapshots {
 			// Beyond the cap: prune the file too, best-effort.
-			_ = os.Remove(ne.path)
+			_ = atomicfile.Remove(ne.path)
 			continue
 		}
 		result = append(result, ne.entry)

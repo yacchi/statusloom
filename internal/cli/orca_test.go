@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -28,15 +29,7 @@ func stubEnviron(t *testing.T, kv []string) {
 func writeOrcaStatusLineHook(t *testing.T, capturePath string) (home string) {
 	t.Helper()
 	home = t.TempDir()
-	dir := filepath.Join(home, ".orca", "agent-hooks")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	script := "#!/bin/sh\ncat >" + capturePath + "\n"
-	path := filepath.Join(dir, "claude-statusline.sh")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	writeHookScript(t, filepath.Join(home, ".orca", "agent-hooks", "claude-statusline"+statusLineHookExt), capturePath)
 	return home
 }
 
@@ -101,7 +94,7 @@ func TestRun_Claude_OrcaHookFailureIsIgnored(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	path := filepath.Join(dir, "claude-statusline.sh")
+	path := filepath.Join(dir, "claude-statusline"+statusLineHookExt)
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -118,6 +111,9 @@ func TestRun_Claude_OrcaHookFailureIsIgnored(t *testing.T) {
 // TestRun_Claude_OrcaHookNotExecutableIsSkipped verifies that a present but
 // non-executable script is not run (and does not error).
 func TestRun_Claude_OrcaHookNotExecutableIsSkipped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no executable bit; hooks are chosen by extension")
+	}
 	setupEnv(t)
 	stubEnviron(t, []string{"ORCA_PANE_KEY=test-pane"})
 	data := fixture(t, "full.json")
@@ -128,7 +124,7 @@ func TestRun_Claude_OrcaHookNotExecutableIsSkipped(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	capture := filepath.Join(t.TempDir(), "captured.json")
-	path := filepath.Join(dir, "claude-statusline.sh")
+	path := filepath.Join(dir, "claude-statusline"+statusLineHookExt)
 	if err := os.WriteFile(path, []byte("#!/bin/sh\ncat >"+capture+"\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -237,17 +233,17 @@ func TestForwardToKnownStatusLineHooks_MultipleEntries(t *testing.T) {
 
 	home := t.TempDir()
 	orcaCapture := filepath.Join(t.TempDir(), "orca-captured.json")
-	writeHookScript(t, filepath.Join(home, ".orca", "agent-hooks", "claude-statusline.sh"), orcaCapture)
+	writeHookScript(t, filepath.Join(home, ".orca", "agent-hooks", "claude-statusline"+statusLineHookExt), orcaCapture)
 
 	fakeCapture := filepath.Join(t.TempDir(), "fake-captured.json")
-	fakePath := filepath.Join(home, ".fake-tool", "statusline.sh")
+	fakePath := filepath.Join(home, ".fake-tool", "statusline"+statusLineHookExt)
 	writeHookScript(t, fakePath, fakeCapture)
 
 	orig := knownStatusLineHooks
 	knownStatusLineHooks = append(append([]knownStatusLineHook{}, orig...), knownStatusLineHook{
 		name: "FakeTool",
 		path: func(getenv func(string) string) string {
-			return filepath.Join(getenv("HOME"), ".fake-tool", "statusline.sh")
+			return filepath.Join(getenv("HOME"), ".fake-tool", "statusline"+statusLineHookExt)
 		},
 		marker: ".fake-tool/statusline.sh",
 	})
@@ -354,15 +350,36 @@ func TestHasEnvWithPrefix(t *testing.T) {
 	}
 }
 
-// writeHookScript writes an executable shell script at path that copies its
-// stdin to capturePath, creating parent directories as needed.
+// hookCaptureArg is the argv[1] the cli test binary recognizes (see TestMain)
+// to act as a stdin-capturing hook, so Windows .cmd hooks can run it.
+const hookCaptureArg = "statusloom-test-hook-capture"
+
+// writeHookScript writes an executable hook at path that copies its stdin to
+// capturePath, creating parent directories as needed. On Windows the hook is
+// a .cmd that re-execs the test binary as the capturer (no shell tools to
+// rely on there).
 func writeHookScript(t *testing.T, path, capturePath string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	script := "#!/bin/sh\ncat >" + capturePath + "\n"
+	if runtime.GOOS == "windows" {
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatalf("Executable: %v", err)
+		}
+		script = "@\"" + exe + "\" " + hookCaptureArg + " \"" + capturePath + "\"\r\n"
+	}
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
+}
+
+// failingHookScript is a hook body that exits non-zero.
+func failingHookScript() string {
+	if runtime.GOOS == "windows" {
+		return "@exit /b 1\r\n"
+	}
+	return "#!/bin/sh\nexit 1\n"
 }

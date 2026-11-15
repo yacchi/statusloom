@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -157,25 +158,43 @@ func forwardToKnownStatusLineHooks(raw []byte, getenv func(string) string) {
 	}
 }
 
-// orcaStatusLineHookPath returns the path to Orca's own claude-statusline.sh
-// hook, or "" if HOME cannot be determined.
+// statusLineHookExt is the file extension of the hook scripts third-party
+// tools install: Orca ships claude-statusline.sh on macOS/Linux and
+// claude-statusline.cmd on Windows (where a .sh cannot be executed).
+var statusLineHookExt = func() string {
+	if runtime.GOOS == "windows" {
+		return ".cmd"
+	}
+	return ".sh"
+}()
+
+// orcaStatusLineHookPath returns the path to Orca's own claude-statusline
+// hook for this platform, or "" if the home directory cannot be determined.
 func orcaStatusLineHookPath(getenv func(string) string) string {
 	home := getenv("HOME")
+	if home == "" && runtime.GOOS == "windows" {
+		home = getenv("USERPROFILE")
+	}
 	if home == "" {
 		return ""
 	}
-	return filepath.Join(home, ".orca", "agent-hooks", "claude-statusline.sh")
+	return filepath.Join(home, ".orca", "agent-hooks", "claude-statusline"+statusLineHookExt)
 }
 
-// isExecutableFile reports whether path exists, is not a directory, and has
-// at least one executable bit set - i.e. whether it's safe to exec it as a
-// forwarding hook.
+// isExecutableFile reports whether path exists, is not a directory, and can
+// be executed as a forwarding hook: on Unix at least one executable bit is
+// set; Windows has no executable bit (Go reports 0666/0444 modes), and
+// CreateProcess decides by extension (.cmd/.bat/.exe), so any existing file
+// qualifies there.
 func isExecutableFile(path string) bool {
 	if path == "" {
 		return false
 	}
 	info, err := os.Stat(path)
-	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return runtime.GOOS == "windows" || info.Mode()&0o111 != 0
 }
 
 // orcaStatusLineHookMarker is the substring Orca's own installer embeds in

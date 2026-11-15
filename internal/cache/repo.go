@@ -3,9 +3,12 @@ package cache
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/yacchi/statusloom/internal/atomicfile"
 	"github.com/yacchi/statusloom/internal/schema"
 )
 
@@ -30,29 +33,22 @@ func repoPath(root string) (string, error) {
 	return filepath.Join(dir, "repos", name+".json"), nil
 }
 
-// LoadRepo returns the cached RepositorySnapshot for root and whether it
-// is still fresh (ObservedAt within ttl of now). A missing or corrupt
-// cache file returns (nil, false, nil).
-//
-// Caller semantics: when fresh is true, use the returned snapshot without
-// running git. When fresh is false, run git; if that run fails or times
-// out, fall back to the (possibly nil) stale snapshot returned here
-// instead of showing nothing.
-func LoadRepo(root string, ttl time.Duration, now time.Time) (*schema.RepositorySnapshot, bool, error) {
+// LoadRepo returns the last RepositorySnapshot stored for root, whatever its
+// age, or nil when there is none (missing or corrupt file). The render path
+// uses it as-is: freshness is driven by the refresh worker's per-cwd git
+// schedule (RefreshSchedule.Git), not by the entry's age, so a stale value is
+// shown rather than nothing until the next collection lands.
+func LoadRepo(root string) *schema.RepositorySnapshot {
 	path, err := repoPath(root)
 	if err != nil {
-		return nil, false, err
+		return nil
 	}
-
 	var entry repoEntry
-	ok, err := ReadJSON(path, &entry)
-	if err != nil || !ok {
-		return nil, false, nil
+	if ok, err := ReadJSON(path, &entry); err != nil || !ok {
+		return nil
 	}
-
-	fresh := now.Sub(entry.ObservedAt) < ttl
 	repo := entry.Repo
-	return &repo, fresh, nil
+	return &repo
 }
 
 // StoreRepo persists snap as the cached snapshot for root, observed at
@@ -69,4 +65,18 @@ func StoreRepo(root string, snap schema.RepositorySnapshot, now time.Time) error
 		Repo:          snap,
 	}
 	return WriteJSONAtomic(path, entry)
+}
+
+// DeleteRepo removes the stored snapshot for root (a no-op when there is none).
+// The refresh worker calls it when a collection finds that root is no longer
+// inside a git working tree, so a stale snapshot is not shown forever.
+func DeleteRepo(root string) error {
+	path, err := repoPath(root)
+	if err != nil {
+		return err
+	}
+	if err := atomicfile.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }

@@ -103,17 +103,58 @@ shared git設定は別ファイルにせず、各ツールファイルのroot直
 git情報収集の設定。rootの直下に0または1個だけ置ける。省略時は既定値を使う。
 
 ```xml
-<git cache-ttl-ms="3000" timeout-ms="200" include-untracked="true" collect-numstat="true"/>
+<git cache-ttl-ms="3000" timeout-ms="5000" include-untracked="true" collect-numstat="true"/>
 ```
 
-属性（現行shared git設定相当）:
+gitは描画中には実行しない。収集はバックグラウンドの`statusloom refresh --once`だけが行い、描画は最後に収集した値を表示する（最大1描画分遅れ、新しいcwdでの最初の描画にはgit情報が無い。`<refresh wait="git">`を置けば、冷えたcwdの最初の描画だけ収集を待って解消できる。→「refresh」）。文書がgit由来のfield/metricを使わなければ収集しない。
 
-* `cache-ttl-ms` — gitステータスキャッシュのTTL（ミリ秒）
-* `timeout-ms` — gitコマンド実行のタイムアウト（ミリ秒）
+属性:
+
+* `cache-ttl-ms` — 同じcwdのgit情報を収集し直す最小間隔（ミリ秒、既定3000、下限1000）。gitリポジトリでないcwdは最低60秒あけて再確認する
+* `timeout-ms` — refreshサブプロセス内でのgitコマンド1回ごとのタイムアウト（ミリ秒、既定5000）
 * `include-untracked` — untrackedファイルを変更数に含めるか
 * `collect-numstat` — numstat（行数増減）を収集するか
 
 `git`要素が複数ある場合、および数値・boolean属性の不正値はvalidation error。
+
+### `refresh`
+
+描画前に、名前を挙げたバックグラウンド作業項目の完了を上限時間つきで待つ設定。rootの直下に0または1個だけ置ける（`git`と同じtool-level設定）。省略時は待たない（従来どおり、描画はキャッシュを出して必要ならバックグラウンド更新を依頼するだけ）。
+
+```xml
+<refresh wait="git source:ccprofile" timeout-ms="2000"/>
+```
+
+属性:
+
+* `wait` — 待機対象の作業項目トークンの空白区切りリスト（既定: 空＝待たない）
+* `timeout-ms` — 1回の描画が待機に使う上限（ミリ秒、既定2000、範囲1〜3000）。描画開始から測る
+* `wait-on` — `cold`（既定）| `due`。待機を始める条件
+
+トークン:
+
+| トークン | 作業項目 | 対象になる条件 |
+|---|---|---|
+| `git` | session cwdのgit status収集 | 文書がgit由来のfield/metricを使い、cwdがある |
+| `transcript` | セッションのtranscript解析 | 文書がtranscript由来のfield/metricを使い、session id・transcript_pathがある |
+| `usage` | OAuth usage APIのpoll（アカウント単位） | `STATUSLOOM_NO_USAGE_API`が未設定 |
+| `source:<id>` | 外部ソース1つの取得 | 文書が参照し、`sources.json`でkindが`command`/`http` |
+| `sources` | 参照中の全`command`/`http`ソース | 同上 |
+| `all` | 上の全て | 文書が使っている項目のみ（新しい作業項目の種類が増えても自動で含む） |
+
+`file`ソースは描画中に直接読むので待つものが無い。文書が使っていない項目を挙げても診断は出さず無視する（`statusloom doctor`が警告する）。
+
+待機の意味:
+
+* 描画はgit・ネットワーク・コマンドを実行しない。待機中もキャッシュ（`<cache>/refresh/schedule.json`・`lease.json`）を読むだけで、取得はすべて`statusloom refresh --once`サブプロセスが行う。新しいファイル・lease・常駐プロセスは作らない
+* `wait-on="cold"`（既定）: 一度も試行していない項目（新しいcwd・新しいセッション・新しいアカウント・定義を変えたソース）だけを待つ。2回目以降の描画は待たない。失敗・「gitリポジトリではない」も試行済みになるので、失敗し続ける項目で毎描画待つことは無い
+* `wait-on="due"`: 期限の来た項目を毎回待つ（失敗によるbackoff中の項目は除く）。gitの既定間隔3秒ではほぼ毎描画がサブプロセス起動＋git分遅くなるので、コストを理解して使うこと
+* 完了＝その項目の試行が1回終わったこと（成功は保証しない。失敗なら手持ちのキャッシュ、無ければ空で描画する）。上限に達したらその時点のキャッシュで描画し、起動済みのworkerは走り続けて次の描画が結果を拾う
+* 他のプロセスのworkerが実行中ならそれを待ち（2重に起動しない）、そのworkerが対象を処理せずに終わったら1回だけ自分で起動し直す（1描画あたり起動は最大2回）
+* プレビュー（`--draft`・`--set`・設定UIのプレビュー）と`claude-subagent`は待たない。`statusloom monitor`は実セッションの描画なので待つ
+* 環境変数`STATUSLOOM_NO_WAIT`を設定すると`<refresh>`を無視して待たない
+
+`refresh`要素が複数ある場合、未知のトークン、`source:`の後ろが不正なソースid、`timeout-ms`が整数でない・1未満・3000超（clampしない）、`wait-on`が`cold`/`due`以外はvalidation error。重複トークンは1つにまとめる。`wait`が空・省略は「待たない」で診断も出さない。
 
 ### `layout`
 
@@ -1127,6 +1168,7 @@ type StatusloomNode struct {
     Tool     string
     Settings ToolSettings
     Git      *GitSettings // nil = 既定値
+    Refresh  *RefreshSettings // nil = 待たない
     Layouts  []*LayoutNode
 }
 
@@ -1143,6 +1185,13 @@ type GitSettings struct {
     TimeoutMs        int
     IncludeUntracked bool
     CollectNumstat   bool
+}
+
+type RefreshSettings struct {
+    Meta      NodeMeta
+    Wait      string // 空白区切りトークン（生テキスト）
+    TimeoutMS *int   // nil = 既定2000
+    WaitOn    string // "" | cold | due
 }
 
 type LayoutNode struct {
@@ -1362,8 +1411,9 @@ XMLコメントをサポートする。
 
 * XMLとしてwell-formedであること
 * ルート要素が`statusloom`であること
-* rootの子が`git`（0または1個）と`layout`のみであること（`line`直下禁止）
-* `git`要素が2個以上ないこと
+* rootの子が`git`（0または1個）・`refresh`（0または1個）・`layout`のみであること（`line`直下禁止）
+* `git`要素・`refresh`要素がそれぞれ2個以上ないこと
+* `refresh`要素の属性が正しいこと（未知の属性、未知の`wait`トークン、`source:<id>`の不正なid、`timeout-ms`が1〜3000の整数でない、`wait-on`が`cold`/`due`以外）
 * `git`要素の属性が正しいこと（未知の属性、数値・boolean属性の不正値）
 * activeなlayoutがちょうど1つであること（重複・欠如はエラー。単一layout時のみ`active`省略可）
 * 未知の要素
@@ -1518,6 +1568,7 @@ DSL parser内でANSI文字列を直接生成しない。
 * 単一layout時のactive省略
 * git要素の重複エラー
 * git要素の不正な数値・boolean属性値エラー
+* refresh要素の重複・未知トークン・不正なsource id・`timeout-ms`範囲外（0・3001）・不正な`wait-on`のエラー、未使用項目は診断なし
 
 ### Serialization
 
@@ -1528,6 +1579,18 @@ DSL parser内でANSI文字列を直接生成しない。
 * self-closingタグ・属性順の維持
 * コメント維持
 * canonical formatter（when式ワード形式正規化を含む）
+* `refresh`要素の往復（canonical・minimal-diffとも）
+
+### Refresh wait（internal/cli）
+
+* 冷えたgit: 描画前にworkerを起動し、完了後のキャッシュで最初の描画からgit情報が出る
+* timeout: 上限で抜け、leaseはworkerに残る
+* 失敗・非repoでも試行が終われば即座に抜ける
+* 他プロセスがleaseを保持: 起動せずそのworkerを待つ。対象を処理せず終わったら（保持者のプロセスが死んだ場合を含む）1回だけ起動し直す（最大2回）
+* 旧workerが`git`キーを落としても完了と誤判定しない
+* 温かい項目では待たず、`<refresh>`無し文書と出力・spawn引数が一致
+* `wait-on="due"`（backoff中は待たない）、プレビュー・`claude-subagent`・`STATUSLOOM_NO_WAIT`・未使用項目は待たない
+* worker各stepはデータを書いてからscheduleを書く
 
 ### Rendering
 

@@ -204,6 +204,9 @@ func statusloomClean(n *StatusloomNode, src string) bool {
 	if n.Git != nil && !metaReusable(n.Git.Meta, src) {
 		return false
 	}
+	if n.Refresh != nil && !metaReusable(n.Refresh.Meta, src) {
+		return false
+	}
 	for _, l := range n.Layouts {
 		if !layoutClean(l, src) {
 			return false
@@ -242,6 +245,16 @@ func serializeMinimalStatusloom(b *strings.Builder, n *StatusloomNode, src strin
 				reuseSlice(b, 1, src, g.Meta.SourceRange)
 			} else {
 				serializeGit(b, 1, g)
+			}
+		}})
+	}
+	if n.Refresh != nil {
+		r := n.Refresh
+		items = append(items, serItem{sortKey(r.Meta, src), func() {
+			if metaReusable(r.Meta, src) {
+				reuseSlice(b, 1, src, r.Meta.SourceRange)
+			} else {
+				serializeRefresh(b, 1, r)
 			}
 		}})
 	}

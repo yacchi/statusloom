@@ -34,7 +34,7 @@ func TestSaveLoadRoundTripFillsID(t *testing.T) {
 	isolateConfig(t)
 	in := File{Sources: map[string]Definition{
 		"mycmd":  {Kind: KindCommand, Argv: []string{"ccprofile", "sessions", "--json"}, TimeoutSeconds: 3},
-		"ccfile": {Kind: KindFile, Path: "/tmp/sessions.json"},
+		"ccfile": {Kind: KindFile, Path: testAbsPath("/tmp/sessions.json")},
 	}}
 	if err := Save(in); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -61,8 +61,8 @@ func TestSaveLoadRoundTripFillsID(t *testing.T) {
 func TestSaveWritesIndentedSortedFileWithoutIDKey(t *testing.T) {
 	dir := isolateConfig(t)
 	f := File{Sources: map[string]Definition{
-		"b": {Kind: KindFile, Path: "/b"},
-		"a": {Kind: KindFile, Path: "/a"},
+		"b": {Kind: KindFile, Path: testAbsPath("/b")},
+		"a": {Kind: KindFile, Path: testAbsPath("/a")},
 	}}
 	if err := Save(f); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -118,13 +118,13 @@ func TestLoadInvalidJSONIsError(t *testing.T) {
 
 func TestPutValidatesAndReplaces(t *testing.T) {
 	var f File
-	if err := f.Put(Definition{ID: "a", Kind: KindFile, Path: "/p"}); err != nil {
+	if err := f.Put(Definition{ID: "a", Kind: KindFile, Path: testAbsPath("/p")}); err != nil {
 		t.Fatalf("Put on zero File: %v", err)
 	}
-	if err := f.Put(Definition{ID: "a", Kind: KindFile, Path: "/q"}); err != nil {
+	if err := f.Put(Definition{ID: "a", Kind: KindFile, Path: testAbsPath("/q")}); err != nil {
 		t.Fatalf("replacing Put: %v", err)
 	}
-	if d, _ := f.Get("a"); d.Path != "/q" {
+	if d, _ := f.Get("a"); d.Path != testAbsPath("/q") {
 		t.Errorf("Path = %q, want /q after replace", d.Path)
 	}
 

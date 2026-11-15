@@ -34,7 +34,17 @@ Statusloom は開発初期です。v0.1 は Claude Code を対象にしていま
 brew install yacchi/tap/statusloom
 ```
 
-Windows では下記の GitHub Releases のアーカイブを使ってください。
+### Scoop（Windows、推奨）
+
+```powershell
+scoop bucket add yacchi https://github.com/yacchi/scoop-bucket
+scoop install statusloom
+```
+
+Windows では Claude Code が Git Bash 経由でステータスラインのコマンドを実行する
+ため、`statusloom` が `PATH` 上にあれば動きます（Scoop が設定します）。設定 UI
+に埋め込んだ端末と、セッション状態ファイル（`sessions.json`）の書き出しは
+Windows では使えません。
 
 ### GitHub Releases（手動）
 
@@ -61,8 +71,7 @@ mise run install   # Go/Node/pnpm の導入・UI のビルド・statusloom の�
 作業ツリーからビルドするため、`internal/webconfig/dist` にビルドされた UI が
 バイナリに埋め込まれます。（クローンなら動くのに `go install ...@latest` では
 動かない理由がこれです: 埋め込みアセットは git 管理外でコミットされません —
-`CLAUDE.md` 参照。）Windows でも動作しますが、Claude Code 自体の Windows
-サポートはまだ十分ではありません。
+`CLAUDE.md` 参照。）Windows でも動作します。
 
 インストールせずチェックアウトから直接動かす場合、`mise run build` が
 リポジトリルートに `./statusloom` を生成し、`mise run config` が設定 UI を
@@ -210,6 +219,27 @@ Claude Code はアイドル中は新しいステータスラインイベント�
 次のイベントまで止まります。そうしたウィジェットを設定する場合はこのフラグを
 使ってください。カウントダウン系ウィジェットが設定されているのに
 `refreshInterval` が未設定なら `statusloom doctor` が警告します。
+
+Git 情報（ブランチ・変更数など）は同じバックグラウンドのサブプロセスが集め、
+ステータスラインの描画中には git を実行しません。表示は最後に集めた値なので
+最大 1 描画分（アイドル中は `refreshInterval` まで）遅れ、新しいディレクトリでの
+最初の描画には Git 情報が出ません。`<git/>` 要素の `cache-ttl-ms` は同じ
+ディレクトリを集め直す最小間隔、`timeout-ms` は git コマンド 1 回ごとの上限
+（既定 5 秒）です。
+
+最初の描画から Git 情報・外部ソース・usage を出したい場合は、`<git/>` の隣に
+`<refresh>` 要素を置きます。
+
+```xml
+<refresh wait="git sources" timeout-ms="2000"/>
+```
+
+挙げた項目（`git`・`transcript`・`usage`・`source:<id>`・`sources`・`all`）が
+まだ一度も取得されていない（新しいディレクトリ・セッション・アカウント）ときだけ、
+描画はバックグラウンド更新を先に起動し、`timeout-ms`（既定 2000、最大 3000）まで
+待ってから描画します。遅くなるのは新しい項目ごとに 1 回だけ最大 `timeout-ms` で、
+2 回目以降の描画は待ちません。プレビューは待たず、`STATUSLOOM_NO_WAIT=1` で
+待機を無効にできます。詳細は `markup.md`（「refresh」）を参照してください。
 
 ### フォーマット
 

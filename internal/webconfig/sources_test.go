@@ -36,6 +36,18 @@ func swapSourceProbe(t *testing.T, fake sources.ProbeFunc) {
 	t.Cleanup(func() { sourceProbe = old })
 }
 
+// fileSourceBody returns a PUT body for a file source whose path is absolute
+// on the current platform (a Unix path like "/tmp/x.json" is not absolute on
+// Windows and would be rejected by validation). The file need not exist.
+func fileSourceBody(t *testing.T) []byte {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"kind": "file", "path": filepath.Join(t.TempDir(), "x.json")})
+	if err != nil {
+		t.Fatalf("marshal file source body: %v", err)
+	}
+	return body
+}
+
 // sourcesJSON issues an authenticated request and decodes the JSON object
 // body. It returns the status code and the decoded map.
 func sourcesJSON(t *testing.T, ts *testServer, method, path string, body []byte) (int, map[string]any) {
@@ -153,7 +165,7 @@ func TestListAndDeleteSources(t *testing.T) {
 
 	sourcesJSON(t, ts, http.MethodPut, "/api/sources/myhttp",
 		[]byte(`{"kind":"http","url":"http://127.0.0.1:47921/s.json","allowRemote":true,"ttlSeconds":6}`))
-	sourcesJSON(t, ts, http.MethodPut, "/api/sources/aaa", []byte(`{"kind":"file","path":"/tmp/x.json"}`))
+	sourcesJSON(t, ts, http.MethodPut, "/api/sources/aaa", fileSourceBody(t))
 
 	_, out = sourcesJSON(t, ts, http.MethodGet, "/api/sources", nil)
 	list, _ := out["sources"].([]any)
@@ -188,7 +200,7 @@ func TestTestSourceUnknownIDAndUnknownSample(t *testing.T) {
 		t.Errorf("unknown id: status %d body %v, want 404", code, out)
 	}
 
-	sourcesJSON(t, ts, http.MethodPut, "/api/sources/aaa", []byte(`{"kind":"file","path":"/tmp/x.json"}`))
+	sourcesJSON(t, ts, http.MethodPut, "/api/sources/aaa", fileSourceBody(t))
 	code, out = sourcesJSON(t, ts, http.MethodPost, "/api/sources/aaa/test",
 		[]byte(`{"select":"","sample":"no-such-sample"}`))
 	if code != http.StatusBadRequest || out["error"] != "unknown sample" {

@@ -9,10 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"sort"
 
+	"github.com/yacchi/statusloom/internal/atomicfile"
 	"github.com/yacchi/statusloom/internal/store"
 )
 
@@ -39,7 +39,10 @@ func Load() (File, error) {
 	if err != nil {
 		return File{}, err
 	}
-	data, err := os.ReadFile(p)
+	// Read on every render while `source add` or the configurator may replace
+	// it (atomicfile.Write), so use the read that rides out that replace on
+	// Windows.
+	data, err := atomicfile.ReadFile(p)
 	if errors.Is(err, fs.ErrNotExist) {
 		return File{SchemaVersion: SchemaVersion, Sources: map[string]Definition{}}, nil
 	}

@@ -158,7 +158,7 @@ full spec (it is shipped here for you to read).
     <statusloom version="1" tool="claude-code" color-level="ansi16" output-style="standard"
                 compact-threshold="60" context-percentage-mode="usable">
       <!-- optional shared git settings -->
-      <git cache-ttl-ms="3000" timeout-ms="200"
+      <git cache-ttl-ms="3000" timeout-ms="5000"
            include-untracked="true" collect-numstat="true"/>
       <layout name="Default" active="true">
         <line>

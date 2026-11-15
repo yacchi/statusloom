@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"testing"
 
@@ -28,7 +29,20 @@ import (
 // fails immediately; tests that exercise the fetch path override these vars
 // locally and restore them.
 func TestMain(m *testing.M) {
-	startRefreshProcess = func(args ...string) error { return nil }
+	// Hook-capture mode: Windows hook scripts are .cmd files that re-exec this
+	// binary to copy stdin into a file (see writeHookScript in orca_test.go).
+	if len(os.Args) == 3 && os.Args[1] == hookCaptureArg {
+		f, err := os.Create(os.Args[2])
+		if err == nil {
+			_, err = io.Copy(f, os.Stdin)
+			f.Close()
+		}
+		if err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	startRefreshProcess = func(args ...string) (int, error) { return 0, nil }
 	acquireUsageToken = func(getenv func(string) string) (string, error) {
 		return "", usage.ErrNoToken
 	}

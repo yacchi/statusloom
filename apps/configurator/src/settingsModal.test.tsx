@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "./App.tsx";
-import { defaultTestDoc, installFakeDslServer } from "./test/fakeDsl.ts";
+import { defaultTestDoc, doc, fld, installFakeDslServer, lay, ln } from "./test/fakeDsl.ts";
 import { LANG_STORAGE_KEY } from "./i18n.ts";
 
 const TOKEN = "a".repeat(32);
@@ -75,5 +75,32 @@ describe("settings modal", () => {
             ).toBe("ja"),
         );
         expect(window.localStorage.getItem(LANG_STORAGE_KEY)).toBe("ja");
+    });
+
+    it("edits <refresh> through the AST path and keeps tokens it does not show", async () => {
+        const server = installFakeDslServer(
+            doc([lay("Default", [ln([fld("git-branch")])], true)], {
+                refresh: { id: "refresh", kind: "refresh", wait: "transcript source:x", "timeout-ms": 1200 },
+            }),
+        );
+        await renderApp();
+        await waitFor(() => expect(screen.getByTestId("setting-output-style")).toBeTruthy());
+        fireEvent.click(screen.getByTestId("settings-button"));
+
+        // git is used (git-branch); the unshown tokens are listed as kept.
+        const kept = await screen.findByTestId("setting-refresh-kept");
+        expect(kept.textContent).toContain("transcript source:x");
+        expect(screen.queryByTestId("refresh-chip-transcript")).toBeNull();
+
+        fireEvent.click(screen.getByTestId("refresh-chip-git"));
+        await waitFor(() =>
+            expect(screen.getByTestId("refresh-chip-git").getAttribute("aria-pressed")).toBe("true"),
+        );
+        const serialized = server.fetchMock.mock.calls
+            .filter(([url]) => String(url).endsWith("/api/dsl/serialize"))
+            .map(([, init]) => JSON.parse(String((init as RequestInit).body)).ast.refresh);
+        expect(serialized.at(-1)).toEqual(
+            expect.objectContaining({ wait: "transcript source:x git", "timeout-ms": 1200 }),
+        );
     });
 });

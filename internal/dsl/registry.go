@@ -63,6 +63,10 @@ type FieldDef struct {
 	// (schema.SessionAnalytics), which only the background refresh worker computes.
 	// The render path schedules transcript refreshes only for documents that use one.
 	Transcript bool
+	// Git marks a field whose value comes from the git status of the session cwd
+	// (schema.RepositorySnapshot), which only the background refresh worker collects.
+	// The render path schedules git collection only for documents that use one.
+	Git bool
 	// PathStyles lists the values the `path` attribute accepts on this field
 	// (markup.md "path"). Empty means the field takes no path attribute at all.
 	PathStyles []string
@@ -99,6 +103,8 @@ type MetricDef struct {
 	Param string
 	// Transcript marks a metric derived from schema.SessionAnalytics (see FieldDef.Transcript).
 	Transcript bool
+	// Git marks a metric derived from schema.RepositorySnapshot (see FieldDef.Git).
+	Git bool
 }
 
 // Path styles accepted by the `path` attribute on a directory field (markup.md
@@ -155,13 +161,13 @@ var claudeCodeFields = []FieldDef{
 	{Name: "session-id", Category: "claude", DisplayName: "Session ID", Descriptions: Descriptions{EN: "The current session identifier.", JA: "現在のセッションIDです。"}},
 	{Name: "thinking-enabled", Category: "claude", DisplayName: "Thinking Enabled", SelfMetric: "thinking-enabled", Formats: []string{"enum"}, Descriptions: Descriptions{EN: "Whether extended thinking is enabled.", JA: "拡張思考が有効かどうかです。"}},
 	{Name: "project-directory", Category: "common", DisplayName: "Project Directory", PathStyles: pathStylesDirectory, PathDefault: PathFull, Descriptions: Descriptions{EN: "The absolute project directory path.", JA: "プロジェクトディレクトリの絶対パスです。"}},
-	{Name: "git-root", Category: "common", DisplayName: "Git Root", PathStyles: pathStylesDirectory, PathDefault: PathFull, Descriptions: Descriptions{EN: "The git repository root path.", JA: "gitリポジトリのルートパスです。"}},
+	{Name: "git-root", Git: true, Category: "common", DisplayName: "Git Root", PathStyles: pathStylesDirectory, PathDefault: PathFull, Descriptions: Descriptions{EN: "The git repository root path.", JA: "gitリポジトリのルートパスです。"}},
 	{
-		Name: "git-branch", Category: "common", DisplayName: "Git Branch",
+		Name: "git-branch", Git: true, Category: "common", DisplayName: "Git Branch",
 		Descriptions: Descriptions{EN: "The current git branch name.", JA: "現在のgitブランチ名です。"},
 	},
 	{
-		Name: "git-changes", Category: "common", DisplayName: "Git Changes",
+		Name: "git-changes", Git: true, Category: "common", DisplayName: "Git Changes",
 		Descriptions: Descriptions{EN: "Added/deleted line counts from git status.", JA: "gitでの追加・削除行数を表示します。"},
 	},
 	{
@@ -258,12 +264,12 @@ var claudeCodeFields = []FieldDef{
 	},
 	{Name: "lines-added", Category: "claude", DisplayName: "Lines Added", SelfMetric: "lines-added", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Lines added during this session.", JA: "今セッションで追加された行数です。"}},
 	{Name: "lines-removed", Category: "claude", DisplayName: "Lines Removed", SelfMetric: "lines-removed", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Lines removed during this session.", JA: "今セッションで削除された行数です。"}},
-	{Name: "git-staged", Category: "common", DisplayName: "Git Staged", SelfMetric: "git-staged", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of staged files.", JA: "ステージ済みファイル数です。"}},
-	{Name: "git-unstaged", Category: "common", DisplayName: "Git Unstaged", SelfMetric: "git-unstaged", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of unstaged files.", JA: "未ステージファイル数です。"}},
-	{Name: "git-untracked", Category: "common", DisplayName: "Git Untracked", SelfMetric: "git-untracked", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of untracked files.", JA: "未追跡ファイル数です。"}},
-	{Name: "git-ahead", Category: "common", DisplayName: "Git Ahead", SelfMetric: "git-ahead", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Commits ahead of the upstream branch.", JA: "upstreamブランチより先行しているコミット数です。"}},
-	{Name: "git-behind", Category: "common", DisplayName: "Git Behind", SelfMetric: "git-behind", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Commits behind the upstream branch.", JA: "upstreamブランチより遅れているコミット数です。"}},
-	{Name: "git-clean", Category: "common", DisplayName: "Git Clean", SelfMetric: "git-clean", Formats: []string{"enum"}, Descriptions: Descriptions{EN: "Whether the working tree is clean.", JA: "作業ツリーがクリーンかどうかです。"}},
+	{Name: "git-staged", Git: true, Category: "common", DisplayName: "Git Staged", SelfMetric: "git-staged", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of staged files.", JA: "ステージ済みファイル数です。"}},
+	{Name: "git-unstaged", Git: true, Category: "common", DisplayName: "Git Unstaged", SelfMetric: "git-unstaged", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of unstaged files.", JA: "未ステージファイル数です。"}},
+	{Name: "git-untracked", Git: true, Category: "common", DisplayName: "Git Untracked", SelfMetric: "git-untracked", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Number of untracked files.", JA: "未追跡ファイル数です。"}},
+	{Name: "git-ahead", Git: true, Category: "common", DisplayName: "Git Ahead", SelfMetric: "git-ahead", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Commits ahead of the upstream branch.", JA: "upstreamブランチより先行しているコミット数です。"}},
+	{Name: "git-behind", Git: true, Category: "common", DisplayName: "Git Behind", SelfMetric: "git-behind", Formats: []string{"number", "compact-number"}, Descriptions: Descriptions{EN: "Commits behind the upstream branch.", JA: "upstreamブランチより遅れているコミット数です。"}},
+	{Name: "git-clean", Git: true, Category: "common", DisplayName: "Git Clean", SelfMetric: "git-clean", Formats: []string{"enum"}, Descriptions: Descriptions{EN: "Whether the working tree is clean.", JA: "作業ツリーがクリーンかどうかです。"}},
 	{Name: "exceeds-200k", Category: "claude", DisplayName: "Exceeds 200K", SelfMetric: "exceeds-200k", Formats: []string{"enum"}, Descriptions: Descriptions{EN: "Whether context usage exceeds 200,000 tokens.", JA: "コンテキスト使用量が20万トークンを超えているかどうかです。"}},
 	{
 		Name: "cache-hit-rate", Category: "claude", DisplayName: "Cache Hit Rate", SelfMetric: "cache-hit-percent", Formats: []string{"percent"},
@@ -409,7 +415,7 @@ var claudeCodeMetrics = []MetricDef{
 	{Name: "total-token-speed", Transcript: true, DisplayName: "Total Token Speed", Descriptions: Descriptions{EN: "Average total tokens per second.", JA: "セッション平均総トークン毎秒です。"}},
 	{Name: "thinking-enabled", DisplayName: "Thinking Enabled", Descriptions: Descriptions{EN: "Whether extended thinking is enabled.", JA: "拡張思考が有効かどうかです。"}},
 	{Name: "exceeds-200k", DisplayName: "Exceeds 200K", Descriptions: Descriptions{EN: "Whether context usage exceeds 200,000 tokens.", JA: "コンテキスト使用量が20万トークンを超えているかどうかです。"}},
-	{Name: "git-clean", DisplayName: "Git Clean", Descriptions: Descriptions{EN: "Whether the working tree is clean.", JA: "作業ツリーがクリーンかどうかです。"}},
+	{Name: "git-clean", Git: true, DisplayName: "Git Clean", Descriptions: Descriptions{EN: "Whether the working tree is clean.", JA: "作業ツリーがクリーンかどうかです。"}},
 	{Name: "context-window-tokens", DisplayName: "Context Window Tokens", Descriptions: Descriptions{EN: "The context window size in tokens.", JA: "コンテキストウィンドウのトークン数です。"}},
 	{Name: "context-remaining-percent", DisplayName: "Context Remaining (%)", Descriptions: Descriptions{EN: "Percentage of context remaining.", JA: "コンテキストの残り割合です。"}, Percent: true},
 	{Name: "context-output-tokens", DisplayName: "Context Output Tokens", Descriptions: Descriptions{EN: "Total output tokens in context.", JA: "コンテキストの出力トークン総数です。"}},
@@ -417,11 +423,11 @@ var claudeCodeMetrics = []MetricDef{
 	{Name: "current-output-tokens", DisplayName: "Current Output Tokens", Descriptions: Descriptions{EN: "Output tokens in the latest API call.", JA: "直近API呼び出しの出力トークン数です。"}},
 	{Name: "cache-creation-tokens", DisplayName: "Cache Creation Tokens", Descriptions: Descriptions{EN: "Cache creation tokens in the latest API call.", JA: "直近API呼び出しのキャッシュ作成トークン数です。"}},
 	{Name: "cache-read-tokens", DisplayName: "Cache Read Tokens", Descriptions: Descriptions{EN: "Cache read tokens in the latest API call.", JA: "直近API呼び出しのキャッシュ読み取りトークン数です。"}},
-	{Name: "git-staged", DisplayName: "Git Staged", Descriptions: Descriptions{EN: "Number of staged files.", JA: "ステージ済みファイル数です。"}},
-	{Name: "git-unstaged", DisplayName: "Git Unstaged", Descriptions: Descriptions{EN: "Number of unstaged files.", JA: "未ステージファイル数です。"}},
-	{Name: "git-untracked", DisplayName: "Git Untracked", Descriptions: Descriptions{EN: "Number of untracked files.", JA: "未追跡ファイル数です。"}},
-	{Name: "git-ahead", DisplayName: "Git Ahead", Descriptions: Descriptions{EN: "Commits ahead of upstream.", JA: "upstreamより先行しているコミット数です。"}},
-	{Name: "git-behind", DisplayName: "Git Behind", Descriptions: Descriptions{EN: "Commits behind upstream.", JA: "upstreamより遅れているコミット数です。"}},
+	{Name: "git-staged", Git: true, DisplayName: "Git Staged", Descriptions: Descriptions{EN: "Number of staged files.", JA: "ステージ済みファイル数です。"}},
+	{Name: "git-unstaged", Git: true, DisplayName: "Git Unstaged", Descriptions: Descriptions{EN: "Number of unstaged files.", JA: "未ステージファイル数です。"}},
+	{Name: "git-untracked", Git: true, DisplayName: "Git Untracked", Descriptions: Descriptions{EN: "Number of untracked files.", JA: "未追跡ファイル数です。"}},
+	{Name: "git-ahead", Git: true, DisplayName: "Git Ahead", Descriptions: Descriptions{EN: "Commits ahead of upstream.", JA: "upstreamより先行しているコミット数です。"}},
+	{Name: "git-behind", Git: true, DisplayName: "Git Behind", Descriptions: Descriptions{EN: "Commits behind upstream.", JA: "upstreamより遅れているコミット数です。"}},
 	{
 		Name: "api-duration-minutes", DisplayName: "API Duration (min)",
 		Descriptions: Descriptions{EN: "Minutes spent waiting for API responses this session.", JA: "今セッションでAPI応答待ちに費やした分数です。"},
@@ -490,7 +496,7 @@ var claudeCodeMetrics = []MetricDef{
 		Descriptions: Descriptions{EN: "Minutes until the 5-hour rate limit window resets.", JA: "5時間のレート制限がリセットされるまでの分数です。"},
 	},
 	{
-		Name: "git-dirty", DisplayName: "Git Dirty",
+		Name: "git-dirty", Git: true, DisplayName: "Git Dirty",
 		Descriptions: Descriptions{EN: "Whether the working tree has uncommitted changes.", JA: "作業ツリーに未コミットの変更があるかどうかです。"},
 	},
 	{

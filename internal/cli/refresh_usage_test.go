@@ -243,9 +243,9 @@ func refreshUsageCaptureSpawns(t *testing.T, ret error) *[][]string {
 	t.Helper()
 	var calls [][]string
 	prev := startRefreshProcess
-	startRefreshProcess = func(args ...string) error {
+	startRefreshProcess = func(args ...string) (int, error) {
 		calls = append(calls, append([]string(nil), args...))
-		return ret
+		return 0, ret
 	}
 	t.Cleanup(func() { startRefreshProcess = prev })
 	return &calls

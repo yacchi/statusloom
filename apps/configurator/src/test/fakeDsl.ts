@@ -23,6 +23,7 @@ import type {
     LineNode,
     PreviewLine,
     PreviewSegment,
+    RefreshItems,
     ResponsiveNode,
     SpanNode,
     StatusloomNode,
@@ -238,6 +239,7 @@ function collectDiagnostics(root: StatusloomNode): Diagnostic[] {
 
 export function fakeParse(source: string): {
     ast?: StatusloomNode;
+    refreshItems?: RefreshItems;
     diagnostics: Diagnostic[];
     version: string;
 } {
@@ -270,7 +272,35 @@ export function fakeParse(source: string): {
         };
     }
     const ast = assignIds(parsed as StatusloomNode);
-    return { ast, diagnostics: collectDiagnostics(ast), version };
+    return { ast, refreshItems: fakeRefreshItems(ast), diagnostics: collectDiagnostics(ast), version };
+}
+
+// A stand-in for the backend's dsl.UsesGit / UsesTranscript /
+// ReferencedSources, good enough for tests: git-* fields, fields named
+// transcript-* (no real field), and source="" attributes of source fields.
+function fakeRefreshItems(ast: StatusloomNode): RefreshItems {
+    const items: RefreshItems = { git: false, transcript: false, sources: [] };
+    const visit = (v: unknown): void => {
+        if (Array.isArray(v)) {
+            v.forEach(visit);
+            return;
+        }
+        if (!v || typeof v !== "object") {
+            return;
+        }
+        const n = v as Record<string, unknown>;
+        if (n.kind === "field" && typeof n.name === "string") {
+            if (n.name.startsWith("git-")) items.git = true;
+            if (n.name.startsWith("transcript-")) items.transcript = true;
+            if (n.name === "source" && typeof n.source === "string" && !items.sources.includes(n.source)) {
+                items.sources.push(n.source);
+            }
+        }
+        Object.values(n).forEach(visit);
+    };
+    visit(ast.layouts);
+    items.sources.sort();
+    return items;
 }
 
 // ---- preview rendering ----
@@ -716,7 +746,12 @@ export function installFakeDslServer(initial: StatusloomNode): FakeServer {
                     return jsonResponse({ error: "root must be statusloom" }, 400);
                 }
                 const source = srcOf(ast);
-                return jsonResponse({ source, diagnostics: fakeParse(source).diagnostics });
+                const res = fakeParse(source);
+                return jsonResponse({
+                    source,
+                    refreshItems: res.refreshItems,
+                    diagnostics: res.diagnostics,
+                });
             }
             if (url.endsWith("/api/dsl/preview")) {
                 return jsonResponse(

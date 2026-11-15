@@ -2,6 +2,7 @@ package sources
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,13 +10,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/yacchi/statusloom/internal/testenv"
 )
 
 // fetchTestJSON returns a JSON string literal of exactly n bytes.
@@ -165,17 +168,19 @@ func TestFetch_NonLoopbackHostRejectedBeforeDial(t *testing.T) {
 }
 
 func TestFetch_DialerRejectsNonLoopback(t *testing.T) {
-	srv, hits := fetchTestCounting(t)
-	resp, err := newFetchClient(false).Get("http://0.0.0.0:" + fetchTestPort(t, srv) + "/")
+	// 192.0.2.1 (TEST-NET-1, RFC 5737) is a non-loopback literal that passes
+	// the dialer unchanged on every OS; Control rejects it before connect, so
+	// nothing is sent. A wildcard literal ("0.0.0.0") would not exercise the
+	// guard everywhere: on Windows/FreeBSD/OpenBSD/AIX the net package rewrites
+	// a wildcard dial target to 127.0.0.1 before Control runs (the connection
+	// really goes to loopback), so Control rightly sees a loopback address.
+	resp, err := newFetchClient(false).Get("http://192.0.2.1:9/")
 	if err == nil {
 		resp.Body.Close()
 		t.Fatal("expected dial error")
 	}
 	if !strings.Contains(err.Error(), "is not loopback") {
 		t.Fatalf("err = %v", err)
-	}
-	if n := hits.Load(); n != 0 {
-		t.Fatalf("server hit %d times", n)
 	}
 }
 
@@ -310,13 +315,22 @@ func TestFetch_HTTPErrors(t *testing.T) {
 }
 
 func TestFetch_CommandNoShell(t *testing.T) {
-	fetchTestNeed(t, "printf")
-	res, err := Fetch(context.Background(), fetchTestCmd("printf", `{"x":"%s","y":"%s"}`, "a b", "$HOME"), "")
+	// Re-exec this test binary as the command (see fetchTestHelperEnv): it
+	// echoes its argv as JSON, so the test sees exactly what the command
+	// received. Every argument carries shell metacharacters of sh and cmd.exe;
+	// any shell in between would split, expand or interpret at least one.
+	t.Setenv(fetchTestHelperEnv, "1")
+	args := []string{"a b", "$HOME", "%PATH%", "`id`", "$(id)", "x;y|z&w", `"q"`, "*", "<in >out"}
+	res, err := Fetch(context.Background(), fetchTestCmd(append([]string{os.Args[0]}, args...)...), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(res.Body) != `{"x":"a b","y":"$HOME"}` {
-		t.Fatalf("body = %s", res.Body)
+	var got []string
+	if err := json.Unmarshal(res.Body, &got); err != nil {
+		t.Fatalf("body = %s: %v", res.Body, err)
+	}
+	if !reflect.DeepEqual(got, args) {
+		t.Fatalf("argv = %q, want %q", got, args)
 	}
 }
 
@@ -396,11 +410,8 @@ func TestFetch_CommandDescendantHoldsStdout(t *testing.T) {
 }
 
 func TestFetch_File(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("~/ expansion test uses HOME")
-	}
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 	if err := os.WriteFile(filepath.Join(home, "s.json"), []byte(`{"a":1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}

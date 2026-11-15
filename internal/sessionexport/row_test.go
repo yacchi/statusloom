@@ -5,8 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"testing"
+
+	"github.com/yacchi/statusloom/internal/testenv"
 )
 
 // rowSetState points XDG_STATE_HOME at a fresh temp dir and returns the expected detail path
@@ -200,11 +201,8 @@ func TestRowFromPayloadRejects(t *testing.T) {
 }
 
 func TestRowFromPayloadDetailPathError(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("HOME and XDG_STATE_HOME resolution differs on windows")
-	}
 	t.Setenv("XDG_STATE_HOME", "")
-	t.Setenv("HOME", "")
+	testenv.SetHome(t, "") // empty HOME and USERPROFILE: os.UserHomeDir fails on every OS
 	got, err := RowFromPayload([]byte(`{}`), 12345, 1793672985, "")
 	if err == nil {
 		t.Error("RowFromPayload error = nil, want DetailPath error")

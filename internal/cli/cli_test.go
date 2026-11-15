@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -18,6 +17,7 @@ import (
 	"github.com/yacchi/statusloom/internal/cache"
 	"github.com/yacchi/statusloom/internal/dsl"
 	"github.com/yacchi/statusloom/internal/store"
+	"github.com/yacchi/statusloom/internal/testenv"
 )
 
 // writeDocument installs src as tool's committed current revision through the
@@ -85,7 +85,7 @@ func setupEnv(t *testing.T) {
 	// and a real .claude.json's organizationUuid would otherwise key these
 	// tests' cache reads/writes away from cache.AccountCacheKey, which the
 	// tests assert against directly.
-	t.Setenv("HOME", t.TempDir())
+	testenv.SetHome(t, t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 }
 
@@ -319,61 +319,6 @@ func TestRun_NoArgs(t *testing.T) {
 	}
 	if stderr == "" {
 		t.Errorf("expected usage text on stderr")
-	}
-}
-
-func requireGit(t *testing.T) {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not found in PATH")
-	}
-}
-
-// rewriteCwd decodes a fixture, overwrites its cwd (and workspace.current_dir,
-// if present) to dir, and re-encodes it. The fixtures otherwise hard-code
-// paths like /Users/dev/myapp that don't exist on the test machine.
-func rewriteCwd(t *testing.T, raw []byte, dir string) []byte {
-	t.Helper()
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("unmarshal fixture: %v", err)
-	}
-	doc["cwd"] = dir
-	if ws, ok := doc["workspace"].(map[string]any); ok {
-		ws["current_dir"] = dir
-	}
-	out, err := json.Marshal(doc)
-	if err != nil {
-		t.Fatalf("marshal rewritten fixture: %v", err)
-	}
-	return out
-}
-
-func TestRun_GitStatus_NonRepoCwd(t *testing.T) {
-	requireGit(t)
-	setupEnv(t)
-
-	nonRepoDir := t.TempDir()
-	rewritten := rewriteCwd(t, fixture(t, "full.json"), nonRepoDir)
-
-	stdout, stderr, code := runCLI(t, []string{"claude"}, rewritten, nil)
-	if code != 0 {
-		t.Fatalf("first run exit = %d, want 0 (stderr: %s)", code, stderr)
-	}
-	if strings.Contains(stdout, "(+") {
-		t.Errorf("expected no git-changes widget for a non-repo cwd, got: %q", stdout)
-	}
-
-	// A second render within the repo cache TTL must not crash - this
-	// exercises the cache-read path (cache.LoadRepo), even though there is
-	// no on-disk entry to hit since Collect never stored one for a non-repo
-	// directory.
-	stdout2, stderr2, code2 := runCLI(t, []string{"claude"}, rewritten, nil)
-	if code2 != 0 {
-		t.Fatalf("second run exit = %d, want 0 (stderr: %s)", code2, stderr2)
-	}
-	if strings.Contains(stdout2, "(+") {
-		t.Errorf("expected no git-changes widget for a non-repo cwd on second run, got: %q", stdout2)
 	}
 }
 

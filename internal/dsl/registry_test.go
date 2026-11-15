@@ -555,3 +555,27 @@ func TestTranscriptFlags(t *testing.T) {
 		t.Errorf("Transcript field/metric counts = %d/%d, want %d/%d", fieldHits, metricHits, len(want), len(want))
 	}
 }
+
+// TestGitFlags pins the Git catalog flag to exactly the git-derived fields and
+// metrics, so the render path schedules background git collection only for
+// documents that actually use one.
+func TestGitFlags(t *testing.T) {
+	wantFields := map[string]bool{
+		"git-root": true, "git-branch": true, "git-changes": true, "git-staged": true,
+		"git-unstaged": true, "git-untracked": true, "git-ahead": true, "git-behind": true, "git-clean": true,
+	}
+	wantMetrics := map[string]bool{
+		"git-dirty": true, "git-clean": true, "git-staged": true, "git-unstaged": true,
+		"git-untracked": true, "git-ahead": true, "git-behind": true,
+	}
+	for _, f := range Fields("claude-code") {
+		if f.Git != wantFields[f.Name] {
+			t.Errorf("field %q Git = %v, want %v", f.Name, f.Git, wantFields[f.Name])
+		}
+	}
+	for _, m := range Metrics("claude-code") {
+		if m.Git != wantMetrics[m.Name] {
+			t.Errorf("metric %q Git = %v, want %v", m.Name, m.Git, wantMetrics[m.Name])
+		}
+	}
+}

@@ -285,7 +285,7 @@ func TestDocumentGitConfig(t *testing.T) {
 	// Missing <git> -> defaults.
 	doc, _ := dsl.Parse(`<statusloom version="1" tool="claude-code"><layout name="d" active="true"><line><field name="model"/></line></layout></statusloom>`)
 	gc := DocumentGitConfig(doc)
-	if gc.CacheTTLMs != 3000 || gc.TimeoutMs != 200 || !gc.IncludeUntracked || !gc.CollectNumstat {
+	if gc.CacheTTLMs != 3000 || gc.TimeoutMs != 5000 || !gc.IncludeUntracked || !gc.CollectNumstat {
 		t.Errorf("defaults wrong: %+v", gc)
 	}
 

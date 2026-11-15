@@ -84,6 +84,9 @@ func (v *validator) validateRoot(root *StatusloomNode) {
 	if m := root.Settings.ContextPercentageMode; m != "" && !validContextModes[m] {
 		v.errf(r, "invalid context-percentage-mode %q: expected raw, usable, or both", m)
 	}
+	if root.Refresh != nil {
+		v.validateRefresh(root.Refresh)
+	}
 	v.validateLayouts(root.Layouts)
 }
 

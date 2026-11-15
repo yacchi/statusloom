@@ -14,13 +14,19 @@ import (
 	"github.com/yacchi/statusloom/internal/schema"
 )
 
-// defaultTimeout is used when Options.Timeout is zero.
-const defaultTimeout = 200 * time.Millisecond
+// DefaultTimeout bounds each git invocation when Options.Timeout is zero, and is
+// the <git timeout-ms> default (config.DocumentGitConfig). Collection runs only in
+// the detached refresh worker, never on the render path, so the bound is there to
+// stop a wedged git from holding the machine-wide refresh lease (2 minutes) rather
+// than to keep a render fast: 5s per call is ample for `git status` on a large
+// working tree or a cold Windows file cache, and Collect's at most four calls stay
+// well inside the lease.
+const DefaultTimeout = 5 * time.Second
 
 // Options configures a single Collect invocation.
 type Options struct {
 	// Timeout bounds every git invocation made during Collect. Zero
-	// means defaultTimeout (200ms).
+	// means DefaultTimeout (5s).
 	Timeout time.Duration
 
 	// IncludeUntracked requests untracked file information from
@@ -45,7 +51,7 @@ type Options struct {
 func Collect(ctx context.Context, dir string, opts Options) (*schema.RepositorySnapshot, error) {
 	timeout := opts.Timeout
 	if timeout <= 0 {
-		timeout = defaultTimeout
+		timeout = DefaultTimeout
 	}
 
 	root, err := repoRoot(ctx, dir, timeout)

@@ -36,10 +36,10 @@ func assertEmptyV2(t *testing.T, s RefreshSchedule) {
 	if s.SchemaVersion != 2 {
 		t.Fatalf("SchemaVersion = %d, want 2", s.SchemaVersion)
 	}
-	if s.Transcripts == nil || s.Usage == nil || s.Sources == nil {
+	if s.Transcripts == nil || s.Usage == nil || s.Sources == nil || s.Git == nil {
 		t.Fatalf("maps must be non-nil: %+v", s)
 	}
-	if len(s.Transcripts) != 0 || len(s.Usage) != 0 || len(s.Sources) != 0 {
+	if len(s.Transcripts) != 0 || len(s.Usage) != 0 || len(s.Sources) != 0 || len(s.Git) != 0 {
 		t.Fatalf("expected empty schedule, got %+v", s)
 	}
 }
@@ -70,7 +70,7 @@ func TestLoadRefreshScheduleNormalizesNullAndOmittedMaps(t *testing.T) {
 		`"transcripts":null}`)
 
 	s := LoadRefreshSchedule()
-	if s.Transcripts == nil || s.Sources == nil {
+	if s.Transcripts == nil || s.Sources == nil || s.Git == nil {
 		t.Fatalf("null/omitted maps must be replaced with empty maps: %+v", s)
 	}
 	if got := s.Usage["default"].Failures; got != 1 {
@@ -263,4 +263,83 @@ func TestPruneDropsOnlyOldTranscripts(t *testing.T) {
 func TestPruneNilMapIsSafe(t *testing.T) {
 	var s RefreshSchedule
 	s.Prune(schedNow)
+}
+
+func TestPruneDropsOnlyOldGitEntries(t *testing.T) {
+	s := RefreshSchedule{Git: map[string]WorkSchedule{
+		"recent": {LastAttempt: schedNow.Add(-time.Hour)},
+		"old":    {LastAttempt: schedNow.Add(-GitRetention - time.Second)},
+		"never":  {},
+	}}
+	s.Prune(schedNow)
+	if _, ok := s.Git["old"]; ok {
+		t.Fatal("Prune kept a git entry idle longer than GitRetention")
+	}
+	for _, k := range []string{"recent", "never"} {
+		if _, ok := s.Git[k]; !ok {
+			t.Fatalf("Prune dropped git entry %q, want kept", k)
+		}
+	}
+}
+
+func TestRecordGit(t *testing.T) {
+	interval := 3 * time.Second
+	ok := WorkSchedule{}.RecordGit(schedNow, true, true, interval)
+	if !ok.NextDueAt.Equal(schedNow.Add(interval)) || ok.Failures != 0 {
+		t.Fatalf("repo success = %+v, want due after %v", ok, interval)
+	}
+	notRepo := WorkSchedule{}.RecordGit(schedNow, true, false, interval)
+	if !notRepo.NextDueAt.Equal(schedNow.Add(GitNotRepoInterval)) {
+		t.Fatalf("not-a-repo = %+v, want due after %v", notRepo, GitNotRepoInterval)
+	}
+	floored := WorkSchedule{}.RecordGit(schedNow, true, true, 0)
+	if !floored.NextDueAt.Equal(schedNow.Add(MinGitInterval)) {
+		t.Fatalf("zero interval = %+v, want floored to %v", floored, MinGitInterval)
+	}
+	w := WorkSchedule{}
+	for range 20 {
+		w = w.RecordGit(schedNow, false, false, interval)
+	}
+	if w.Failures != 20 || !w.NextDueAt.Equal(schedNow.Add(GitBackoffMax)) {
+		t.Fatalf("repeated failures = %+v, want backoff capped at %v", w, GitBackoffMax)
+	}
+}
+
+func TestRefreshScheduleEntryAndCold(t *testing.T) {
+	now := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	attempted := WorkSchedule{NextDueAt: now.Add(time.Minute), LastAttempt: now}
+	s := newRefreshSchedule()
+	s.Git["/repo"] = attempted
+	s.Transcripts["s1"] = attempted
+	s.Usage["org"] = attempted
+	s.Sources["a"] = WorkSchedule{NextDueAt: now.Add(time.Minute), LastAttempt: now, DefHash: "h1"}
+	s.Usage["never"] = WorkSchedule{NextDueAt: now} // scheduled but never attempted
+
+	for _, it := range []WorkItem{
+		{Kind: WorkGit, Key: "/repo"},
+		{Kind: WorkTranscript, Key: "s1"},
+		{Kind: WorkUsage, Key: "org"},
+		{Kind: WorkSource, Key: "a", DefHash: "h1"},
+	} {
+		w, ok := s.Entry(it)
+		if !ok || !w.LastAttempt.Equal(now) {
+			t.Errorf("Entry(%+v) = %+v, %v; want the stored entry", it, w, ok)
+		}
+		if s.Cold(it) {
+			t.Errorf("Cold(%+v) = true, want false (attempted)", it)
+		}
+	}
+	for _, it := range []WorkItem{
+		{Kind: WorkGit, Key: "/other"},
+		{Kind: WorkUsage, Key: "never"},
+		{Kind: WorkSource, Key: "a", DefHash: "h2"}, // definition changed
+		{Kind: WorkSource, Key: "b", DefHash: "h1"},
+	} {
+		if !s.Cold(it) {
+			t.Errorf("Cold(%+v) = false, want true", it)
+		}
+	}
+	if _, ok := s.Entry(WorkItem{Kind: "unknown", Key: "/repo"}); ok {
+		t.Error("Entry of an unknown kind found an entry")
+	}
 }

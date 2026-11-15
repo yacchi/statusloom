@@ -50,10 +50,12 @@ type StatusloomNode struct {
 	Settings ToolSettings
 	// Git is the optional <git/> element (nil = omitted, use defaults).
 	Git *GitSettings
+	// Refresh is the optional <refresh/> element (nil = omitted, never wait).
+	Refresh *RefreshSettings
 	// Layouts are the <layout> children in document order.
 	Layouts []*LayoutNode
 	// Comments are the XML comments that appear directly under the root
-	// (between <git>/<layout> children). The listed AST has no Children
+	// (between <git>/<refresh>/<layout> children). The listed AST has no Children
 	// list at the root, so they are collected here to preserve them for
 	// round-tripping (markup.md "コメント": comments must not be dropped).
 	Comments []*CommentNode
@@ -79,6 +81,17 @@ type GitSettings struct {
 	TimeoutMS        *int
 	IncludeUntracked *bool
 	CollectNumstat   *bool
+}
+
+// RefreshSettings is the parsed <refresh/> element (markup.md "refresh"): the
+// background work items a render waits for, bounded by a timeout. Wait and
+// WaitOn keep the raw attribute text ("" = absent); TimeoutMS is nil when
+// omitted. RefreshPolicy interprets them.
+type RefreshSettings struct {
+	Meta      NodeMeta
+	Wait      string
+	TimeoutMS *int
+	WaitOn    string
 }
 
 // LayoutNode is one named <layout> (markup.md "layout").

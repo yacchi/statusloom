@@ -81,8 +81,9 @@ per responsive in the response's `selectedVariants` map — see
 
 | kind | attributes | container fields |
 |------|-----------|------------------|
-| `statusloom` | `version`, `tool`, `color-level`, `compact-threshold`, `context-percentage-mode`, `context-reserve-tokens` | `git?`, `layouts[]`, `comments[]?` |
+| `statusloom` | `version`, `tool`, `color-level`, `compact-threshold`, `context-percentage-mode`, `context-reserve-tokens` | `git?`, `refresh?`, `layouts[]`, `comments[]?` |
 | `git` | `cache-ttl-ms`, `timeout-ms`, `include-untracked`, `collect-numstat` | — |
+| `refresh` | `wait` (space-separated tokens, raw text), `timeout-ms`, `wait-on` | — (no editor panel yet; the configurator carries it through edits untouched) |
 | `layout` | `name`, `active` | `children[]` (ordered `line` \| `responsive`), `subagent?`, `comments[]?` |
 | `responsive` | — | `variants[]`, `comments[]?` |
 | `variant` | `when?` | `lines[]`, `subagent?`, `comments[]?` |
@@ -129,6 +130,7 @@ component, stable across parses of the same source, and identical to the IDs a
 ```
 root                 the <statusloom> root
 git                  the optional <git/> element
+refresh              the optional <refresh/> element
 root.c{k}            k-th XML comment directly under the root
 L{i}                 i-th <layout>
 L{i}.c{k}            k-th comment directly under layout i
@@ -185,13 +187,25 @@ are returned (a save identical to the current tip is a no-op: no new
 revision, `current` unchanged).
 
 ### `POST /api/dsl/parse` `{ "source" }`
-→ `200 { "ast"?: node, "diagnostics": [...], "version": string }`
+→ `200 { "ast"?: node, "refreshItems"?: RefreshItems, "diagnostics": [...], "version": string }`
 
 Never writes. `ast` is present only when a root element was parsed (absent for a
 fatal XML well-formedness error). Use this for the DSL Editor's live analysis.
 
+`refreshItems` (present whenever `ast` is) = `{ "git": bool, "transcript": bool,
+"sources": string[] }`: the background work items the document uses, computed
+with the render path's own predicates (`dsl.UsesGit`, `dsl.UsesTranscript`,
+`dsl.ReferencedSources` — fields, source fallbacks, `optional=` gates and
+`when`/`color-rule` metrics). `sources` lists every referenced source id
+(sorted, never null); the client filters to `command`/`http` kinds via
+`/api/sources`. The configurator's Refresh panel offers `<refresh wait>` toggles
+only for these (plus `usage`, which does not depend on the document).
+
 ### `POST /api/dsl/serialize` `{ "ast": node, "baseSource"?: string }`
-→ `200 { "source": string, "diagnostics": [...] }`
+→ `200 { "source": string, "refreshItems"?: RefreshItems, "diagnostics": [...] }`
+
+`refreshItems` is computed from re-parsing the produced source (same shape as
+`parse`; absent when that re-parse yields no root).
 
 Turns an AST (the visual editor's working tree) back into DSL source via the
 self-serializer, then reports diagnostics from re-parsing it. The AST must have

@@ -167,11 +167,18 @@ func (p *parser) parseStatusloom(se xml.StartElement, start int) *StatusloomNode
 				} else {
 					n.Git = g
 				}
+			case "refresh":
+				r := p.parseRefresh(t, tstart)
+				if n.Refresh != nil {
+					p.errf(r.Meta.SourceRange, "at most one <refresh> element is allowed")
+				} else {
+					n.Refresh = r
+				}
 			case "layout":
 				n.Layouts = append(n.Layouts, p.parseLayout(t, tstart))
 			default:
 				p.skipElement()
-				p.errf(SourceRange{Start: tstart, End: p.prevOffset}, "unknown element <%s> inside <statusloom>; expected <git> or <layout>", t.Name.Local)
+				p.errf(SourceRange{Start: tstart, End: p.prevOffset}, "unknown element <%s> inside <statusloom>; expected <git>, <refresh>, or <layout>", t.Name.Local)
 			}
 		case xml.Comment:
 			n.Comments = append(n.Comments, &CommentNode{
@@ -209,6 +216,26 @@ func (p *parser) parseGit(se xml.StartElement, start int) *GitSettings {
 	}
 	p.consumeLeaf(&g.Meta, start, "git")
 	return g
+}
+
+func (p *parser) parseRefresh(se xml.StartElement, start int) *RefreshSettings {
+	openEnd := p.prevOffset
+	tagRange := SourceRange{Start: start, End: openEnd}
+	r := &RefreshSettings{}
+	for _, a := range se.Attr {
+		switch a.Name.Local {
+		case "wait":
+			r.Wait = a.Value
+		case "timeout-ms":
+			r.TimeoutMS = p.parseIntAttr("timeout-ms", a.Value, tagRange)
+		case "wait-on":
+			r.WaitOn = a.Value
+		default:
+			p.errf(tagRange, "unknown attribute %q on <refresh>", a.Name.Local)
+		}
+	}
+	p.consumeLeaf(&r.Meta, start, "refresh")
+	return r
 }
 
 func (p *parser) parseLayout(se xml.StartElement, start int) *LayoutNode {

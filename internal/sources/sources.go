@@ -93,14 +93,21 @@ func (d Definition) Timeout() time.Duration {
 
 // ExpandedPath expands a leading "~/" (or a bare "~") to the user's home directory.
 // Other forms, including "~user/x", are returned unchanged. The home directory is
-// looked up only when a "~" form is present.
+// looked up only when a "~" form is present: $HOME first, then os.UserHomeDir
+// (the same order as internal/claudecfg; on Unix os.UserHomeDir is $HOME anyway,
+// on Windows it reads %USERPROFILE%, so a $HOME set by Git Bash/MSYS wins there
+// just as it does for the Claude Code config paths).
 func (d Definition) ExpandedPath() (string, error) {
 	if d.Path != "~" && !strings.HasPrefix(d.Path, "~/") {
 		return d.Path, nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("expand ~: %w", err)
+	home := os.Getenv("HOME")
+	if home == "" {
+		h, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("expand ~: %w", err)
+		}
+		home = h
 	}
 	if d.Path == "~" {
 		return home, nil

@@ -197,6 +197,10 @@ func serializeStatusloom(b *strings.Builder, n *StatusloomNode) {
 		g := n.Git
 		items = append(items, serItem{g.Meta.SourceRange.Start, func() { serializeGit(b, 1, g) }})
 	}
+	if n.Refresh != nil {
+		r := n.Refresh
+		items = append(items, serItem{r.Meta.SourceRange.Start, func() { serializeRefresh(b, 1, r) }})
+	}
 	for _, l := range n.Layouts {
 		l := l
 		items = append(items, serItem{l.Meta.SourceRange.Start, func() { serializeLayout(b, 1, l) }})
@@ -217,6 +221,19 @@ func serializeGit(b *strings.Builder, depth int, g *GitSettings) {
 	writeIntAttr(b, "timeout-ms", g.TimeoutMS)
 	writeBoolAttr(b, "include-untracked", g.IncludeUntracked)
 	writeBoolAttr(b, "collect-numstat", g.CollectNumstat)
+	b.WriteString("/>\n")
+}
+
+func serializeRefresh(b *strings.Builder, depth int, r *RefreshSettings) {
+	b.WriteString(indentStr(depth))
+	b.WriteString("<refresh")
+	if r.Wait != "" {
+		writeAttr(b, "wait", r.Wait)
+	}
+	writeIntAttr(b, "timeout-ms", r.TimeoutMS)
+	if r.WaitOn != "" {
+		writeAttr(b, "wait-on", r.WaitOn)
+	}
 	b.WriteString("/>\n")
 }
 

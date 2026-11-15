@@ -3,6 +3,44 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "./App.tsx";
 import { defaultTestDoc, installFakeDslServer, type FakeServer } from "./test/fakeDsl.ts";
 
+// Holds the app's 250ms draft-autosave debounce instead of arming it, so a
+// test can assert "the edit never reached the server" without racing the
+// real clock (under load 250ms can elapse between two awaits). The callback
+// runs only when fireHeld() is called, standing in for "the deadline has
+// passed"; clearTimeout on a held handle drops it like a cancelled timer.
+// Every other timer (waitFor, fake server delays) stays real. Undone by
+// vi.restoreAllMocks() / vi.restoreAllMocks in the caller's afterEach.
+function holdDraftDebounce(): { fireHeld: () => void; realSetTimeout: typeof window.setTimeout } {
+    const held = new Map<number, () => void>();
+    let nextHeld = -1;
+    const realSetTimeout = window.setTimeout.bind(window);
+    const realClearTimeout = window.clearTimeout.bind(window);
+    vi.spyOn(window, "setTimeout").mockImplementation(((
+        cb: TimerHandler,
+        ms?: number,
+        ...args: unknown[]
+    ) => {
+        if (ms === 250 && typeof cb === "function") {
+            const id = nextHeld--;
+            held.set(id, () => cb(...args));
+            return id;
+        }
+        return realSetTimeout(cb, ms, ...args);
+    }) as typeof window.setTimeout);
+    vi.spyOn(window, "clearTimeout").mockImplementation(((id?: number) => {
+        if (id !== undefined && held.delete(id)) return;
+        realClearTimeout(id);
+    }) as typeof window.clearTimeout);
+    return {
+        fireHeld: () => {
+            const cbs = [...held.values()];
+            held.clear();
+            cbs.forEach((cb) => cb());
+        },
+        realSetTimeout,
+    };
+}
+
 describe("App", () => {
     it("renders the full-page error when the URL has no token", () => {
         // jsdom's default location has an empty hash, so no token is present.
@@ -100,6 +138,7 @@ describe("App history restore vs draft autosave", () => {
     });
 
     afterEach(() => {
+        vi.restoreAllMocks();
         vi.unstubAllGlobals();
         window.location.hash = "";
         window.localStorage.clear();
@@ -128,6 +167,10 @@ describe("App history restore vs draft autosave", () => {
         fireEvent.click(screen.getByTestId("history-restore-rev-1"));
         await waitFor(() => expect(screen.getByTestId("history-confirm-restore")).toBeTruthy());
 
+        // From here on the 250ms draft-autosave debounce is held, so machine
+        // load cannot let its deadline pass between the palette click and
+        // the restore confirmation.
+        const { fireHeld, realSetTimeout } = holdDraftDebounce();
         // Start the 250ms draft-autosave debounce. The canvas chip
         // ("seg-0-1") appears the instant applyAstEdit's *optimistic* setAst
         // runs, well before its serialize/parse round-trip resolves and
@@ -150,9 +193,12 @@ describe("App history restore vs draft autosave", () => {
         await waitFor(() => expect(screen.getByText(/Restored revision/i)).toBeTruthy(), {
             timeout: 3000,
         });
-        // The original 250ms deadline is long past by now; give it a further
-        // margin before asserting no debounced write ever landed.
-        await new Promise((r) => setTimeout(r, 300));
+        // The 250ms deadline has now "passed": run whatever debounce is
+        // still pending. A debounce that settleDraftBeforeRestore failed to
+        // cancel is still held here and would PUT a draft now.
+        fireHeld();
+        // Let any resulting (wrongly issued) request settle before asserting.
+        await new Promise((r) => realSetTimeout(r, 50));
         expect(server.putDraftBodies.length).toBe(0);
     });
 });
@@ -252,7 +298,9 @@ describe("App discard-close", () => {
 
         // Start the 250ms draft-autosave debounce, then discard immediately
         // — well before it would have fired — proving doDiscardClose settles
-        // the pending write instead of racing it.
+        // the pending write instead of racing it. The debounce is held (see
+        // holdDraftDebounce) so load cannot let it expire in between.
+        const { fireHeld, realSetTimeout } = holdDraftDebounce();
         fireEvent.click(screen.getByTestId("palette-field:model"));
         await waitFor(() =>
             expect((screen.getByTitle(/Undo/i) as HTMLButtonElement).disabled).toBe(false),
@@ -262,9 +310,10 @@ describe("App discard-close", () => {
         fireEvent.click(screen.getByTestId("discard-close-button"));
 
         await waitFor(() => expect(server.shutdownCalls).toBe(1));
-        // The debounce's original 250ms deadline is long past by now; the
-        // discarded edit must never have reached the server as a draft PUT.
-        await new Promise((r) => setTimeout(r, 300));
+        // The debounce's 250ms deadline "passes" now; the discarded edit
+        // must never have reached the server as a draft PUT.
+        fireHeld();
+        await new Promise((r) => realSetTimeout(r, 50));
         expect(server.putDraftBodies.length).toBe(0);
     });
 });
@@ -328,11 +377,19 @@ describe("App beforeunload warning", () => {
         fireEvent.click(screen.getByTestId("palette-field:model"));
         await waitFor(() =>
             expect((screen.getByTitle(/Undo/i) as HTMLButtonElement).disabled).toBe(false),
+            { timeout: 3000 },
         );
         fireEvent.click(screen.getByTestId("discard-close-button"));
-        await waitFor(() => expect(screen.getByText(/Changes discarded/i)).toBeTruthy());
+        await waitFor(() => expect(screen.getByText(/Changes discarded/i)).toBeTruthy(), {
+            timeout: 3000,
+        });
 
-        const event = dispatchBeforeUnload();
-        expect(event.defaultPrevented).toBe(false);
+        // The "Changes discarded" screen renders before React flushes the
+        // passive effect that removes the beforeunload handler, so poll the
+        // observable condition itself rather than asserting right after the
+        // DOM text appears.
+        await waitFor(() => expect(dispatchBeforeUnload().defaultPrevented).toBe(false), {
+            timeout: 3000,
+        });
     });
 });

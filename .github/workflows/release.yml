@@ -18,8 +18,9 @@ jobs:
 
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
 
-      # Mint a GitHub App installation token scoped to both this repo (for
-      # the release) and homebrew-tap (for the cross-repo formula push).
+      # Mint a GitHub App installation token scoped to this repo (for the
+      # release), homebrew-tap (formula push) and scoop-bucket (Scoop
+      # manifest push).
       # GoReleaser reads it as GITHUB_TOKEN; no PAT is involved.
       - name: Generate GitHub App token
         id: app-token
@@ -27,7 +28,7 @@ jobs:
         with:
           app-id: ${{ vars.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          repositories: statusloom,homebrew-tap
+          repositories: statusloom,homebrew-tap,scoop-bucket
 
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:

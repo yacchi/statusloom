@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+// collectTestTimeout bounds each git call in tests that check what Collect
+// returns, not how fast. A short timeout leaves little headroom
+// for git.exe start-up on Windows (~40ms per call when idle, measured) once
+// the machine is busy, e.g. under a parallel `go test ./...`; a missed
+// deadline there is a load artefact, not the behaviour under test.
+// TestCollect_Timeout covers the deadline itself.
+const collectTestTimeout = 10 * time.Second
+
 func requireGit(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -36,7 +44,7 @@ func TestCollect_NotARepo(t *testing.T) {
 
 	dir := t.TempDir()
 
-	snap, err := Collect(context.Background(), dir, Options{})
+	snap, err := Collect(context.Background(), dir, Options{Timeout: collectTestTimeout})
 	if err != nil {
 		t.Fatalf("Collect returned error for non-repo dir: %v", err)
 	}
@@ -87,6 +95,7 @@ func TestCollect_Integration(t *testing.T) {
 	snap, err := Collect(context.Background(), dir, Options{
 		IncludeUntracked: true,
 		CollectNumstat:   true,
+		Timeout:          collectTestTimeout,
 	})
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
@@ -146,7 +155,7 @@ func TestCollect_WithoutUntracked(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	snap, err := Collect(context.Background(), dir, Options{IncludeUntracked: false})
+	snap, err := Collect(context.Background(), dir, Options{IncludeUntracked: false, Timeout: collectTestTimeout})
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
 	}

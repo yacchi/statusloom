@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yacchi/statusloom/internal/atomicfile"
 	"github.com/yacchi/statusloom/internal/cache"
 	"github.com/yacchi/statusloom/internal/procinfo"
 )
@@ -38,7 +39,7 @@ func merge(now time.Time, lookup func(int) (procinfo.Info, error)) error {
 		return err
 	}
 	// Removed first: a detail written during this merge re-creates the marker.
-	_ = os.Remove(pp)
+	_ = atomicfile.Remove(pp)
 
 	dir, err := DetailDir()
 	if err != nil {
@@ -62,14 +63,14 @@ func merge(now time.Time, lookup func(int) (procinfo.Info, error)) error {
 		if ok {
 			info, err := lookup(pid)
 			if errors.Is(err, procinfo.ErrNotFound) {
-				_ = os.Remove(path)
+				_ = atomicfile.Remove(path)
 				continue
 			}
 			if err != nil {
 				continue
 			}
 			if d := info.StartedAt - startedAt; d > 1 || d < -1 {
-				_ = os.Remove(path)
+				_ = atomicfile.Remove(path)
 				continue
 			}
 			var det Detail
@@ -81,10 +82,10 @@ func merge(now time.Time, lookup func(int) (procinfo.Info, error)) error {
 			c := mergeCandidate{row: det.Row, path: path, mtime: fi.ModTime()}
 			if prev, dup := best[pid]; dup {
 				if mergeWins(c, prev) {
-					_ = os.Remove(prev.path)
+					_ = atomicfile.Remove(prev.path)
 					best[pid] = c
 				} else {
-					_ = os.Remove(path)
+					_ = atomicfile.Remove(path)
 				}
 			} else {
 				best[pid] = c

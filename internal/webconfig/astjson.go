@@ -169,6 +169,9 @@ func (b *astBuilder) statusloom(n *dsl.StatusloomNode) map[string]any {
 	if n.Git != nil {
 		m["git"] = b.git(n.Git)
 	}
+	if n.Refresh != nil {
+		m["refresh"] = b.refresh(n.Refresh)
+	}
 	layouts := make([]any, 0, len(n.Layouts))
 	for i, l := range n.Layouts {
 		layouts = append(layouts, b.layout(l, i))
@@ -197,6 +200,20 @@ func (b *astBuilder) git(g *dsl.GitSettings) map[string]any {
 	}
 	if g.CollectNumstat != nil {
 		m["collect-numstat"] = *g.CollectNumstat
+	}
+	return m
+}
+
+func (b *astBuilder) refresh(r *dsl.RefreshSettings) map[string]any {
+	m := map[string]any{"id": "refresh", "kind": "refresh", "range": rangeJSON(r.Meta.SourceRange)}
+	if r.Wait != "" {
+		m["wait"] = r.Wait
+	}
+	if r.TimeoutMS != nil {
+		m["timeout-ms"] = *r.TimeoutMS
+	}
+	if r.WaitOn != "" {
+		m["wait-on"] = r.WaitOn
 	}
 	return m
 }
@@ -495,6 +512,7 @@ type astNodeJSON struct {
 	ContextPercentageMode string        `json:"context-percentage-mode"`
 	ContextReserveTokens  *int          `json:"context-reserve-tokens"`
 	Git                   *astNodeJSON  `json:"git"`
+	Refresh               *astNodeJSON  `json:"refresh"`
 	Layouts               []astNodeJSON `json:"layouts"`
 	Comments              []astNodeJSON `json:"comments"`
 
@@ -503,6 +521,10 @@ type astNodeJSON struct {
 	TimeoutMs        *int  `json:"timeout-ms"`
 	IncludeUntracked *bool `json:"include-untracked"`
 	CollectNumstat   *bool `json:"collect-numstat"`
+
+	// refresh (timeout-ms shares TimeoutMs above)
+	Wait   string `json:"wait"`
+	WaitOn string `json:"wait-on"`
 
 	// layout / responsive / variant
 	Name     string        `json:"name"` // also field name
@@ -595,6 +617,15 @@ func jsonToDocument(root astNodeJSON) (*dsl.Document, error) {
 			TimeoutMS:        g.TimeoutMs,
 			IncludeUntracked: g.IncludeUntracked,
 			CollectNumstat:   g.CollectNumstat,
+		}
+	}
+	if root.Refresh != nil {
+		r := root.Refresh
+		sn.Refresh = &dsl.RefreshSettings{
+			Meta:      metaJSON(*r),
+			Wait:      r.Wait,
+			TimeoutMS: r.TimeoutMs,
+			WaitOn:    r.WaitOn,
 		}
 	}
 	for _, lj := range root.Layouts {

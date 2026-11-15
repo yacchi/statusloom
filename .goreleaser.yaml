@@ -76,6 +76,20 @@ brews:
     test: |
       system "#{bin}/statusloom", "version"
 
+# Scoop distribution for Windows, the counterpart of the Homebrew tap above.
+# The manifest lands in yacchi/scoop-bucket under bucket/ (Scoop's
+# conventional layout), pushed with the same GitHub App token, which is
+# also scoped to scoop-bucket (see release.yml).
+scoops:
+  - name: statusloom
+    repository:
+      owner: yacchi
+      name: scoop-bucket
+    directory: bucket
+    homepage: "https://github.com/yacchi/statusloom"
+    description: "Statusline tool for Claude Code and other coding agents"
+    license: Apache-2.0
+
 release:
   github:
     owner: yacchi

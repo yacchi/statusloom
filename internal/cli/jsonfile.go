@@ -4,16 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sync/atomic"
 	"time"
+
+	"github.com/yacchi/statusloom/internal/atomicfile"
 )
 
 // timeNow is a package-level indirection over time.Now so tests can pin the
 // timestamp used for backup-file names (backupFile below, and setup's backup).
 var timeNow = time.Now
-
-var jsonTempSequence uint64
 
 func marshalDocument(v any) ([]byte, error) {
 	b, err := json.MarshalIndent(v, "", "  ")
@@ -30,28 +28,7 @@ func writeJSONAtomic(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp := fmt.Sprintf("%s.tmp.%d.%d", path, os.Getpid(), atomic.AddUint64(&jsonTempSequence, 1))
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp)
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicfile.Write(path, b, true)
 }
 
 func backupFile(path string) (string, error) {

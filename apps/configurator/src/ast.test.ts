@@ -34,6 +34,7 @@ import {
     transformNode,
     updateAttrs,
     updateGitAttrs,
+    updateRefreshAttrs,
     updateRootAttrs,
 } from "./ast.ts";
 import { makeDefaultSubagentLine } from "./presets.ts";
@@ -646,6 +647,45 @@ describe("updateGitAttrs", () => {
         expect(withGit.git?.["cache-ttl-ms"]).toBe(5000);
         const cleared = updateGitAttrs(withGit, { "cache-ttl-ms": undefined });
         expect(cleared.git).toBeUndefined();
+    });
+});
+
+describe("updateRefreshAttrs", () => {
+    it("creates the refresh element on first set, stamps it dirty, and drops it when cleared", () => {
+        const root = fixture();
+        const withRefresh = updateRefreshAttrs(root, { wait: "git" });
+        expect(withRefresh.refresh).toEqual(
+            expect.objectContaining({ id: "refresh", kind: "refresh", wait: "git", dirty: true }),
+        );
+        expect(withRefresh.dirty).toBe(true);
+        const both = updateRefreshAttrs(withRefresh, { "timeout-ms": 1500 });
+        expect(both.refresh?.wait).toBe("git");
+        expect(both.refresh?.["timeout-ms"]).toBe(1500);
+        const partial = updateRefreshAttrs(both, { wait: undefined });
+        expect(partial.refresh?.["timeout-ms"]).toBe(1500);
+        const cleared = updateRefreshAttrs(partial, { "timeout-ms": undefined });
+        expect(cleared.refresh).toBeUndefined();
+        expect(cleared.dirty).toBe(true);
+        expect(cleared.git).toEqual(root.git);
+    });
+});
+
+// Edits other than the Refresh panel's must carry <refresh/> through
+// untouched so saving from the visual editor never drops it.
+describe("<refresh> passthrough", () => {
+    const refresh = { id: "refresh", kind: "refresh" as const, wait: "git source:a", "timeout-ms": 1500 };
+    it("survives root, git, layout and line edits", () => {
+        const root = { ...fixture(), refresh };
+        const edits = [
+            updateRootAttrs(root, { "color-level": "ansi16" }),
+            updateGitAttrs(root, { "cache-ttl-ms": 5000 }),
+            addLayout(root, "second"),
+            addLine(root, "L0"),
+            updateAttrs(root, "L0.0.0", { color: "red" }),
+        ];
+        for (const next of edits) {
+            expect(next.refresh).toEqual(refresh);
+        }
     });
 });
 

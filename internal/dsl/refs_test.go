@@ -199,3 +199,30 @@ func TestUsesTranscriptNilDocument(t *testing.T) {
 		t.Fatal("doc without root reported transcript use")
 	}
 }
+
+func TestUsesGit(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"git field", refsLayout(`<line><field name="git-branch"/></line>`), true},
+		{"git-root path field", refsLayout(`<line><field name="git-root" path="base"/></line>`), true},
+		{"source fallback to a git field", refsLayout(`<line><field name="source" source="s" fallback="git-branch"/></line>`), true},
+		{"optional naming a git field", refsLayout(`<line><span optional="git-changes"><field name="model"/></span></line>`), true},
+		{"when naming the git-dirty metric", refsLayout(`<line when="git-dirty"><field name="model"/></line>`), true},
+		{"color-rule naming a git metric", refsLayout(`<line><text>x<color-rule when="git-ahead gt 0" color="red"/></text></line>`), true},
+		{"no git reference", refsLayout(`<line><field name="model"/><field name="current-directory"/></line>`), false},
+		{"transcript field is not git", refsLayout(`<line><field name="compaction-count"/></line>`), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := UsesGit(refsDoc(t, c.src)); got != c.want {
+				t.Fatalf("UsesGit = %v, want %v", got, c.want)
+			}
+		})
+	}
+	if UsesGit(nil) || UsesGit(&Document{}) {
+		t.Fatal("nil document / root reported git use")
+	}
+}

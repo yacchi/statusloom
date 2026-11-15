@@ -1,8 +1,9 @@
 // Package procinfo reads a process's parent pid, kernel start time and
-// executable name without running any command (no ps). It uses the Go
-// standard library only. Platform readers register themselves through
-// platformLookup from init(); a platform without a reader gets
-// ErrUnsupported from Lookup.
+// executable name (Lookup), and probes whether a pid is still running (Alive),
+// without running any command (no ps). It uses the Go standard library only.
+// Platform readers register themselves through platformLookup from init(); a
+// platform without a reader gets ErrUnsupported from Lookup. Alive has its own
+// per-platform probe (alive_*.go) and works on Windows too.
 package procinfo
 
 import "errors"

@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"testing"
+
+	"github.com/yacchi/statusloom/internal/testenv"
 )
 
 // storeIsolateState points XDG_STATE_HOME at a temp dir and returns it. Every test that resolves
@@ -65,11 +66,8 @@ func TestStoreHelperPaths(t *testing.T) {
 }
 
 func TestStoreBaseDirRelativeXDGFallsBackToHome(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("HOME fallback rule is unix-specific in this test")
-	}
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 	t.Setenv("XDG_STATE_HOME", "state")
 
 	got, err := BaseDir()
@@ -84,11 +82,8 @@ func TestStoreBaseDirRelativeXDGFallsBackToHome(t *testing.T) {
 }
 
 func TestStoreBaseDirEmptyXDGUsesHome(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("HOME fallback rule is unix-specific in this test")
-	}
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	testenv.SetHome(t, home)
 	t.Setenv("XDG_STATE_HOME", "")
 
 	got, err := BaseDir()
@@ -101,10 +96,7 @@ func TestStoreBaseDirEmptyXDGUsesHome(t *testing.T) {
 }
 
 func TestStoreNoHomeReturnsError(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("UserHomeDir without HOME is unix-specific in this test")
-	}
-	t.Setenv("HOME", "")
+	testenv.SetHome(t, "") // empty HOME and USERPROFILE: os.UserHomeDir fails on every OS
 	t.Setenv("XDG_STATE_HOME", "")
 
 	if got, err := BaseDir(); err == nil || got != "" {

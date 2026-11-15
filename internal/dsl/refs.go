@@ -162,40 +162,49 @@ func ReferencedSources(doc *Document) []string {
 // whose MetricDef has Transcript. Fields and metrics are looked up in the
 // catalog of doc.Root.Tool. A nil document or nil Root yields false.
 func UsesTranscript(doc *Document) bool {
+	return usesCatalogFlag(doc, func(f FieldDef) bool { return f.Transcript }, func(m MetricDef) bool { return m.Transcript })
+}
+
+// UsesGit reports whether the document references any git-derived value
+// (FieldDef.Git / MetricDef.Git), by the same rules as UsesTranscript. The
+// render path schedules background git collection only when it is true.
+func UsesGit(doc *Document) bool {
+	return usesCatalogFlag(doc, func(f FieldDef) bool { return f.Git }, func(m MetricDef) bool { return m.Git })
+}
+
+// usesCatalogFlag is the shared walk behind UsesTranscript and UsesGit: it
+// reports whether any field (including a source field's Fallback and an
+// optional= gate) satisfies fieldFlag, or any when / color-rule metric
+// satisfies metricFlag, in the catalog of doc.Root.Tool.
+func usesCatalogFlag(doc *Document, fieldFlag func(FieldDef) bool, metricFlag func(MetricDef) bool) bool {
 	if doc == nil || doc.Root == nil {
 		return false
 	}
 	tool := doc.Root.Tool
+	field := func(name string) bool {
+		f, ok := FieldByName(tool, name)
+		return ok && fieldFlag(f)
+	}
 	found := false
 	walkRefs(doc, refWalker{
 		onField: func(f *FieldNode) {
-			if fieldIsTranscript(tool, f.Name) {
+			if field(f.Name) {
 				found = true
 			}
-			if f.Name == "source" && f.Fallback != "" && fieldIsTranscript(tool, f.Fallback) {
+			if f.Name == "source" && f.Fallback != "" && field(f.Fallback) {
 				found = true
 			}
 		},
 		onOptional: func(raw string) {
-			if field, _ := ParseOptional(raw); fieldIsTranscript(tool, field) {
+			if name, _ := ParseOptional(raw); field(name) {
 				found = true
 			}
 		},
 		onMetric: func(name, _ string) {
-			if metricIsTranscript(tool, name) {
+			if m, ok := MetricByName(tool, name); ok && metricFlag(m) {
 				found = true
 			}
 		},
 	})
 	return found
-}
-
-func fieldIsTranscript(tool, name string) bool {
-	f, ok := FieldByName(tool, name)
-	return ok && f.Transcript
-}
-
-func metricIsTranscript(tool, name string) bool {
-	m, ok := MetricByName(tool, name)
-	return ok && m.Transcript
 }

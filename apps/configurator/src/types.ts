@@ -205,6 +205,16 @@ export interface GitNode extends AstBase {
     "collect-numstat"?: boolean;
 }
 
+// The optional <refresh/> element (markup.md "refresh"), edited by the Refresh
+// panel (components/RefreshSettings.tsx via ast.updateRefreshAttrs). Every other
+// edit carries it through untouched (root spreads keep it).
+export interface RefreshNode extends AstBase {
+    kind: "refresh";
+    wait?: string;
+    "timeout-ms"?: number;
+    "wait-on"?: "cold" | "due";
+}
+
 export interface StatusloomNode extends AstBase {
     kind: "statusloom";
     version?: string;
@@ -215,6 +225,7 @@ export interface StatusloomNode extends AstBase {
     "context-percentage-mode"?: string;
     "context-reserve-tokens"?: number;
     git?: GitNode;
+    refresh?: RefreshNode;
     layouts: LayoutNode[];
     comments?: CommentNode[];
 }
@@ -255,8 +266,20 @@ export interface ParseResponse {
     // Present only when a root element was parsed (absent for a fatal XML
     // well-formedness error). May coexist with error diagnostics.
     ast?: StatusloomNode;
+    // The background work items the document uses (present whenever `ast`
+    // is); drives which wait toggles the Refresh panel offers.
+    refreshItems?: RefreshItems;
     diagnostics: Diagnostic[];
     version: string;
+}
+
+// Work items a document uses, computed server-side with the render path's own
+// predicates (DSL_API.md "POST /api/dsl/parse"). `sources` lists every
+// referenced source id, of any kind; the client filters to command/http.
+export interface RefreshItems {
+    git: boolean;
+    transcript: boolean;
+    sources: string[];
 }
 
 // POST /api/dsl/serialize request. `baseSource` (the client's last valid
@@ -270,6 +293,7 @@ export interface SerializeRequest {
 // POST /api/dsl/serialize response.
 export interface SerializeResponse {
     source: string;
+    refreshItems?: RefreshItems;
     diagnostics: Diagnostic[];
 }
 

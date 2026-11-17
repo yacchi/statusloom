@@ -221,14 +221,14 @@ Claude Code が `statusloom claude`（`statusLine`）を実行するよう設定
 表示します。
 
 マーケットプレイスと mod の反映: settings を書いたあと（すでに設定済みの場合も）、setup は
-`claude plugin install statusloom@statusloom` も自分で実行します（`--dry-run` では
+`claude plugin install statusloom --marketplace yacchi/statusloom` も自分で実行します（`--dry-run` では
 実行しません。マーケットプレイスの clone にネットワークが必要です）。結果は 1 行で表示します。
 インストール先は setup が `settings.json` を書いたプロファイルです。既定のパスなら子プロセスは
 環境変数をそのまま引き継ぎ、`--settings PATH` で別の場所を指したときだけ
 `CLAUDE_CONFIG_DIR` をそのファイルのディレクトリにして実行します。起動済みのセッションは
 `/reload-plugins` で読み込めます。`claude` が無い・120 秒でタイムアウト・失敗した場合も setup は
 成功のままで、従来どおり「Claude Code が**次回のセッション開始後**にバックグラウンドでインストール
-する」か、`claude plugin install statusloom@statusloom` を自分で実行する案内を表示します。
+する」か、`claude plugin install statusloom --marketplace yacchi/statusloom` を自分で実行する案内を表示します。
 mod はユーザーと同じ権限で動きます。mod に対応した Claude Code のバージョンが必要です
 （2.1.326 で確認）。
 

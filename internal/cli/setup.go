@@ -35,12 +35,15 @@ const modMarketplaceRepo = "yacchi/statusloom"
 // "statusloom" from the marketplace named modMarketplaceName.
 const modPluginID = "statusloom@statusloom"
 
+// modPluginName is the plugin's name inside the statusloom marketplace.
+const modPluginName = "statusloom"
+
 // modInstallFallback is printed when setup could not run `claude plugin
 // install` itself (claude missing, timeout, non-zero exit). It states the
 // install truth: Claude Code installs the mod itself, after the next session
 // start, and a running session needs /reload-plugins to load it.
 const modInstallFallback = "The statusloom mod (%[1]s) is enabled. Claude Code clones the %[2]s marketplace and installs the mod in the background after the next session start (network needed).\n" +
-	"To install right away: claude plugin install %[1]s; a session that is already running then loads it with /reload-plugins.\n"
+	"To install right away: claude plugin install %[3]s --marketplace %[2]s; a session that is already running then loads it with /reload-plugins.\n"
 
 // modInstallSuccess is printed when setup ran `claude plugin install`
 // successfully.
@@ -49,19 +52,23 @@ const modInstallSuccess = "Installed the statusloom mod (%[1]s) with `claude plu
 // modRequirementNotice is always printed after the install line.
 const modRequirementNotice = "The mod runs with your permissions and needs a Claude Code version with mods (verified on 2.1.326).\n"
 
-// modInstallTimeout bounds `claude plugin install`, which clones the
-// marketplace over the network.
+// modInstallTimeout bounds the marketplace add and `claude plugin install`
+// together; the add clones the marketplace over the network.
 const modInstallTimeout = 120 * time.Second
 
-// runModInstall runs `claude plugin install` in the given environment and
-// returns the combined output (for the one-line summary only). It is a var so
+// runModInstall runs `claude plugin install statusloom --marketplace
+// yacchi/statusloom` in the given environment and returns the combined output
+// (for the one-line summary only). `--marketplace` adds the marketplace first:
+// the CLI does not fetch one that is only declared in extraKnownMarketplaces
+// (an interactive session clones it in the background at start). Re-running it
+// is harmless ("already added" / "already installed", exit 0). It is a var so
 // tests do not spawn the real claude.
 var runModInstall = func(ctx context.Context, env []string) (string, error) {
 	claude, err := exec.LookPath("claude")
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, claude, "plugin", "install", modPluginID)
+	cmd := exec.CommandContext(ctx, claude, "plugin", "install", modPluginName, "--marketplace", modMarketplaceRepo)
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	return string(out), err
@@ -89,7 +96,7 @@ func installMod(stdout io.Writer, settings string, getenv func(string) string) {
 	defer cancel()
 	if _, err := runModInstall(ctx, modInstallEnv(settings, getenv, os.Environ())); err != nil {
 		fmt.Fprintf(stdout, "Could not run `claude plugin install` (%s).\n", summarizeInstallError(ctx, err))
-		fmt.Fprintf(stdout, modInstallFallback, modPluginID, modMarketplaceRepo)
+		fmt.Fprintf(stdout, modInstallFallback, modPluginID, modMarketplaceRepo, modPluginName)
 	} else {
 		fmt.Fprintf(stdout, modInstallSuccess, modPluginID)
 	}

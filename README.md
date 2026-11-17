@@ -273,7 +273,7 @@ different status-line command, a different `statusloom` marketplace entry,
 or `statusloom@statusloom` set to `false`.
 
 After writing the settings (or finding them already configured), setup also runs
-`claude plugin install statusloom@statusloom` itself (not with `--dry-run`),
+`claude plugin install statusloom --marketplace yacchi/statusloom` itself (not with `--dry-run`),
 which clones the marketplace over the network, and prints one summary line.
 It installs into the profile whose `settings.json` setup just wrote: for the
 default path the child inherits your environment unchanged, and for
@@ -282,7 +282,7 @@ file's directory. A session that is already running loads the mod with
 `/reload-plugins`. If `claude` is missing, the install times out (120 s) or
 fails, setup still succeeds and prints the fallback: Claude Code installs the
 mod in the background after the next session start, or you run
-`claude plugin install statusloom@statusloom` yourself. The mod runs with your
+`claude plugin install statusloom --marketplace yacchi/statusloom` yourself. The mod runs with your
 user permissions.
 
 Setup also writes Claude Code's `refreshInterval` to `statusLine`, so the

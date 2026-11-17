@@ -98,7 +98,7 @@ func TestSetupModInstallFailureKeepsSetupSuccessful(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("settings not written: %v", err)
 	}
-	for _, want := range []string{"Could not run `claude plugin install`", "after the next session start", "claude plugin install statusloom@statusloom", "/reload-plugins"} {
+	for _, want := range []string{"Could not run `claude plugin install`", "after the next session start", "claude plugin install statusloom --marketplace yacchi/statusloom", "/reload-plugins"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("out missing %q: %q", want, out)
 		}

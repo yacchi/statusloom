@@ -19,13 +19,12 @@ var modFieldNames = []string{
 	"subagents-running", "subagents-tokens", "subagents-by-type", "subagents-cost",
 	"teammates-running", "teammates-idle", "last-turn-duration", "last-turn-reason",
 	"autocompact-remaining", "context-breakdown", "permission-mode", "model-switches", "model-fallback",
-	"background-tasks", "session-crons",
 }
 
 var modNumericMetricNames = []string{
 	"subagents-running", "subagents-cost-usd", "subagents-tokens", "teammates-running",
 	"teammates-idle", "last-turn-seconds", "model-switches",
-	"autocompact-remaining-tokens", "background-tasks", "session-crons",
+	"autocompact-remaining-tokens",
 }
 
 var modTypedMetricNames = []string{"model-fallback", "last-turn-reason", "permission-mode"}
@@ -79,7 +78,7 @@ func TestModFields_RecordedZeroIsReal(t *testing.T) {
 		t.Errorf("modMetricValue(model-switches) = %v,%v, want 0,true", v, ok)
 	}
 	// Sub-structs that were never recorded stay unresolved, not zero.
-	for _, f := range []string{"subagents-running", "background-tasks", "model-fallback", "last-turn-duration"} {
+	for _, f := range []string{"subagents-running", "model-fallback", "last-turn-duration"} {
 		if got := modRender(f, "", snap, false); got != "" {
 			t.Errorf("renderContent(%s) on empty Mod = %q, want empty", f, got)
 		}

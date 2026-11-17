@@ -101,9 +101,6 @@ func TestSnapshot_FullSampleHasMod(t *testing.T) {
 	if mod.SessionModel == "" || mod.TurnModel == "" || mod.SessionModel == mod.TurnModel {
 		t.Errorf("Snapshot(Full).Mod models = %q, %q, want two different models (a fallback)", mod.SessionModel, mod.TurnModel)
 	}
-	if mod.Background == nil {
-		t.Error("Snapshot(Full).Mod.Background is nil")
-	}
 }
 
 // TestSubagentTasks_KnownNames verifies both subagent sample names resolve

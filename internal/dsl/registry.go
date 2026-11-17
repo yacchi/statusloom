@@ -668,7 +668,7 @@ var claudeCodeModFields = []FieldDef{
 	},
 	{
 		Name: "permission-mode", Category: "mod", DisplayName: "Permission Mode", SelfMetric: "permission-mode", Formats: []string{"enum"},
-		Descriptions: Descriptions{EN: "The current permission mode (default/acceptEdits/plan/auto/dontAsk/bypassPermissions). Needs the statusloom Claude Code mod and Claude Code's classic hook events, so it can stay empty when another plugin intercepts them.", JA: "現在の権限モードです（default/acceptEdits/plan/auto/dontAsk/bypassPermissions）。statusloom の Claude Code mod と Claude Code の classic フックイベントが必要です。他のプラグインがイベントを横取りすると空のままになることがあります。"},
+		Descriptions: Descriptions{EN: "The permission mode of the session (default/acceptEdits/plan/auto/dontAsk/bypassPermissions). Needs the statusloom Claude Code mod; it is known once the session has started its first subagent (taken from that spawn) and is empty until then.", JA: "セッションの権限モードです（default/acceptEdits/plan/auto/dontAsk/bypassPermissions）。statusloom の Claude Code mod が必要です。セッションが最初のサブエージェントを起動した時点でその起動から分かり、それまでは空です。"},
 	},
 	{
 		Name: "autocompact-remaining", Category: "mod", DisplayName: "Tokens Until Auto-compact", SelfMetric: "autocompact-remaining-tokens", Formats: []string{"number", "compact-number"},
@@ -685,14 +685,6 @@ var claudeCodeModFields = []FieldDef{
 	{
 		Name: "model-fallback", Category: "mod", DisplayName: "Model Fallback", SelfMetric: "model-fallback",
 		Descriptions: Descriptions{EN: "Session model → the model that answered the latest turn, shown only when they differ, e.g. Opus 4.7→Sonnet 4.6. Needs the statusloom Claude Code mod.", JA: "直近のターンに応答したモデルがセッションのモデルと違うときだけ、「セッションのモデル→応答したモデル」を表示します（例: Opus 4.7→Sonnet 4.6）。statusloom の Claude Code mod が必要です。"},
-	},
-	{
-		Name: "background-tasks", Category: "mod", DisplayName: "Background Tasks", SelfMetric: "background-tasks", Formats: []string{"number"},
-		Descriptions: Descriptions{EN: "Number of background tasks at the end of the last turn. Needs the statusloom Claude Code mod and Claude Code's classic hook events, so it can stay empty when another plugin intercepts them.", JA: "直近のターン終了時のバックグラウンドタスク数です。statusloom の Claude Code mod と Claude Code の classic フックイベントが必要です。他のプラグインがイベントを横取りすると空のままになることがあります。"},
-	},
-	{
-		Name: "session-crons", Category: "mod", DisplayName: "Session Crons", SelfMetric: "session-crons", Formats: []string{"number"},
-		Descriptions: Descriptions{EN: "Number of scheduled session crons at the end of the last turn. Needs the statusloom Claude Code mod and Claude Code's classic hook events, so it can stay empty when another plugin intercepts them.", JA: "直近のターン終了時に登録されていたセッションcron数です。statusloom の Claude Code mod と Claude Code の classic フックイベントが必要です。他のプラグインがイベントを横取りすると空のままになることがあります。"},
 	},
 }
 
@@ -737,7 +729,7 @@ var claudeCodeModMetrics = []MetricDef{
 	{
 		Name: "permission-mode", DisplayName: "Permission Mode", Text: true,
 		Values:       []string{"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"},
-		Descriptions: Descriptions{EN: "The current permission mode (default/acceptEdits/plan/auto/dontAsk/bypassPermissions). Needs the statusloom Claude Code mod and Claude Code's classic hook events, so it can stay empty when another plugin intercepts them.", JA: "現在の権限モードです（default/acceptEdits/plan/auto/dontAsk/bypassPermissions）。statusloom の Claude Code mod と Claude Code の classic フックイベントが必要です。他のプラグインがイベントを横取りすると空のままになることがあります。"},
+		Descriptions: Descriptions{EN: "The permission mode of the session (default/acceptEdits/plan/auto/dontAsk/bypassPermissions). Needs the statusloom Claude Code mod; it is known once the session has started its first subagent (taken from that spawn) and is empty until then.", JA: "セッションの権限モードです（default/acceptEdits/plan/auto/dontAsk/bypassPermissions）。statusloom の Claude Code mod が必要です。セッションが最初のサブエージェントを起動した時点でその起動から分かり、それまでは空です。"},
 	},
 	{
 		Name: "model-fallback", DisplayName: "Model Fallback",
@@ -746,14 +738,6 @@ var claudeCodeModMetrics = []MetricDef{
 	{
 		Name: "autocompact-remaining-tokens", DisplayName: "Tokens Until Auto-compact",
 		Descriptions: Descriptions{EN: "Tokens left before auto-compact triggers. Needs the statusloom Claude Code mod.", JA: "自動compactが始まるまでの残りトークン数です。statusloom の Claude Code mod が必要です。"},
-	},
-	{
-		Name: "background-tasks", DisplayName: "Background Tasks",
-		Descriptions: Descriptions{EN: "Number of background tasks at the end of the last turn. Needs the statusloom Claude Code mod and Claude Code's classic hook events, so it can stay empty when another plugin intercepts them.", JA: "直近のターン終了時のバックグラウンドタスク数です。statusloom の Claude Code mod と Claude Code の classic フックイベントが必要です。他のプラグインがイベントを横取りすると空のままになることがあります。"},
-	},
-	{
-		Name: "session-crons", DisplayName: "Session Crons",
-		Descriptions: Descriptions{EN: "Number of scheduled session crons at the end of the last turn. Needs the statusloom Claude Code mod and Claude Code's classic hook events, so it can stay empty when another plugin intercepts them.", JA: "直近のターン終了時に登録されていたセッションcron数です。statusloom の Claude Code mod と Claude Code の classic フックイベントが必要です。他のプラグインがイベントを横取りすると空のままになることがあります。"},
 	},
 }
 

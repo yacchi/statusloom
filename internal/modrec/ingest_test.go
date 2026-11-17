@@ -150,9 +150,8 @@ func TestIngestSubagentDoesNotSetPermissionMode(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 
 	ingestBatch(t, "b1",
-		recEvent(1, "classic.Stop", map[string]any{"permission_mode": "plan"}),
-		recEvent(2, "classic.Stop", map[string]any{"agent_id": "a1", "permission_mode": "acceptEdits"}),
-		recEvent(3, "agent.spawn", map[string]any{"parentAgentId": "a1", "permissionMode": "dontAsk"}),
+		recEvent(1, "agent.spawn", map[string]any{"permissionMode": "plan"}),
+		recEvent(2, "agent.spawn", map[string]any{"parentAgentId": "a1", "permissionMode": "dontAsk"}),
 	)
 
 	rec := loadRecord(t, "s1")
@@ -181,40 +180,19 @@ func TestIngestSubagentTurnDoesNotSetLastTurn(t *testing.T) {
 func TestIngestUnknownEventOnlyCountsEvents(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 
-	ingestBatch(t, "b1", recEvent(1, "classic.PermissionRequest", map[string]any{
+	ingestBatch(t, "b1", recEvent(1, "custom.event", map[string]any{
 		"tool_name": "Bash", "reason": "x",
 	}))
 
 	rec := loadRecord(t, "s1")
-	if rec.Events["classic.PermissionRequest"].Count != 1 {
-		t.Errorf("Events count = %d, want 1", rec.Events["classic.PermissionRequest"].Count)
+	if rec.Events["custom.event"].Count != 1 {
+		t.Errorf("Events count = %d, want 1", rec.Events["custom.event"].Count)
 	}
 	snap := rec.Snapshot
 	if snap.PermissionMode != "" || snap.LastTurn != nil {
 		t.Errorf("snapshot changed by an unknown event: %+v", snap)
 	}
 }
-func TestIngestStopKeepsBackgroundWhenArrayOmitted(t *testing.T) {
-	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
-
-	ingestBatch(t, "b1", recEvent(1, "classic.Stop", map[string]any{
-		"background_tasks": []any{map[string]any{}, map[string]any{}},
-		"session_crons":    []any{},
-	}))
-	ingestBatch(t, "b1", recEvent(2, "classic.Stop", map[string]any{
-		"_omitted":      []any{"background_tasks"},
-		"session_crons": []any{},
-	}))
-
-	rec := loadRecord(t, "s1")
-	if rec.Snapshot.Background == nil {
-		t.Fatalf("Background = nil, want {2 0}")
-	}
-	if rec.Snapshot.Background.Tasks != 2 || rec.Snapshot.Background.Crons != 0 {
-		t.Errorf("Background = %+v, want {2 0} kept", *rec.Snapshot.Background)
-	}
-}
-
 func TestIngestAgentSpawnSetsMainPermissionMode(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 

@@ -245,7 +245,6 @@ func modSample(now time.Time) *schema.ModSnapshot {
 		ModelSwitches: 1,
 		SessionModel:  "Opus 4.8",
 		TurnModel:     "Sonnet 4.6",
-		Background:    &schema.ModBackground{Tasks: 1, Crons: 1},
 	}
 }
 

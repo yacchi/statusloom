@@ -63,15 +63,14 @@ type SubagentSnapshot struct {
 // (nil on StatusSnapshot.Mod when none). "Main loop" means an event without
 // agentId / agent_id; "running" means status pending|running|waiting.
 type ModSnapshot struct {
-	UpdatedAt      time.Time      `json:"updatedAt"`                // last successful mod-ingest
-	Agents         *ModAgents     `json:"agents,omitempty"`         // nil until the first agents query
-	LastTurn       *ModTurn       `json:"lastTurn,omitempty"`       // nil until a main-loop turn.complete
-	PermissionMode string         `json:"permissionMode,omitempty"` // latest main-loop permission mode (classic events, agent.spawn)
-	Context        *ModContext    `json:"context,omitempty"`        // nil until a usage query carried a breakdown
-	ModelSwitches  int            `json:"modelSwitches"`            // changes of the session model seen between main-loop turns
-	SessionModel   string         `json:"sessionModel,omitempty"`   // claude.PrettyModelName of the session model at the latest turn
-	TurnModel      string         `json:"turnModel,omitempty"`      // claude.PrettyModelName of the model that answered the latest turn; empty when unreported
-	Background     *ModBackground `json:"background,omitempty"`     // nil until a main-loop classic.Stop carried both arrays
+	UpdatedAt      time.Time   `json:"updatedAt"`                // last successful mod-ingest
+	Agents         *ModAgents  `json:"agents,omitempty"`         // nil until the first agents query
+	LastTurn       *ModTurn    `json:"lastTurn,omitempty"`       // nil until a main-loop turn.complete
+	PermissionMode string      `json:"permissionMode,omitempty"` // latest main-loop permission mode (agent.spawn)
+	Context        *ModContext `json:"context,omitempty"`        // nil until a usage query carried a breakdown
+	ModelSwitches  int         `json:"modelSwitches"`            // changes of the session model seen between main-loop turns
+	SessionModel   string      `json:"sessionModel,omitempty"`   // claude.PrettyModelName of the session model at the latest turn
+	TurnModel      string      `json:"turnModel,omitempty"`      // claude.PrettyModelName of the model that answered the latest turn; empty when unreported
 }
 
 // ModAgents is the agent summary from the mod's agents query.
@@ -110,12 +109,6 @@ type ModContextCategory struct {
 	Name   string `json:"name"`
 	Tokens int    `json:"tokens"`
 	Kind   string `json:"kind"` // used|free|buffer|deferred
-}
-
-// ModBackground counts the background work reported at the latest main-loop Stop.
-type ModBackground struct {
-	Tasks int `json:"tasks"` // len(Stop.background_tasks)
-	Crons int `json:"crons"` // len(Stop.session_crons)
 }
 
 // ToolSnapshot describes the tool that produced the snapshot.

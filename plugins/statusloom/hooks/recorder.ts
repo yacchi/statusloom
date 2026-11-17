@@ -182,20 +182,8 @@ export function registerRecorder(on: On): void {
         return next(e)
     })
     on('agent.spawn', ($, e, next) => {
-        // The parent's permission mode, which a classic event may never report.
+        // The parent's permission mode: the only source of the permission-mode field.
         record(state, $, 'agent.spawn', { permissionMode: e.permissionMode, parentAgentId: e.parentAgentId })
-        return next(e)
-    })
-    on('classic.Stop', ($, e, next) => {
-        record(state, $, 'classic.Stop', e)
-        return next(e)
-    })
-    on('classic.SubagentStart', ($, e, next) => {
-        record(state, $, 'classic.SubagentStart', e)
-        return next(e)
-    })
-    on('classic.SubagentStop', ($, e, next) => {
-        record(state, $, 'classic.SubagentStop', e)
         return next(e)
     })
 }

@@ -18,9 +18,6 @@ const OK: RunResult = { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: 
 const RECORDED = [
     'turn.complete',
     'agent.spawn',
-    'classic.Stop',
-    'classic.SubagentStart',
-    'classic.SubagentStop',
 ]
 
 function setup() {
@@ -95,11 +92,11 @@ describe('registerRecorder', () => {
 
     test('events pass through at once and ride one debounced send', async () => {
         const s = setup()
-        const e1 = Object.freeze({ session_id: 's', tool_name: 'Bash' })
-        const e2 = Object.freeze({ session_id: 's', stop_hook_active: false })
+        const e1 = Object.freeze({ permissionMode: 'plan', parentAgentId: undefined })
+        const e2 = Object.freeze({ permissionMode: 'acceptEdits', parentAgentId: 'a1' })
         const e3 = Object.freeze({ durationMs: 12, reason: 'done' })
-        expect(s.call('classic.SubagentStart', e1)).toBe('NEXT')
-        expect(s.call('classic.Stop', e2)).toBe('NEXT')
+        expect(s.call('agent.spawn', e1)).toBe('NEXT')
+        expect(s.call('agent.spawn', e2)).toBe('NEXT')
         expect(await s.call('turn.complete', e3)).toBe('NEXT')
         expect(s.seen[0]).toBe(e1)
         expect(s.seen[1]).toBe(e2)
@@ -114,12 +111,12 @@ describe('registerRecorder', () => {
         const body = s.sent(0)
         expect(body).toMatchObject({ v: 1, sessionId: 'sess-1', boot: expect.any(String) })
         expect(body.events.map(ev => [ev.seq, ev.name])).toEqual([
-            [1, 'classic.SubagentStart'],
-            [2, 'classic.Stop'],
+            [1, 'agent.spawn'],
+            [2, 'agent.spawn'],
             [3, 'turn.complete'],
         ])
-        expect(body.events[0]?.payload).toEqual(e1)
-        expect(body.events[1]?.payload).toEqual(e2)
+        expect(body.events[0]?.payload).toEqual({ permissionMode: 'plan' })
+        expect(body.events[1]?.payload).toEqual({ permissionMode: 'acceptEdits', parentAgentId: 'a1' })
         expect(body.events[2]?.payload).toEqual({ ...e3, sessionModel: 'claude-opus-4-8' })
         expect(typeof body.events[0]?.at).toBe('number')
         expect(s.timers.length).toBe(0)
@@ -127,29 +124,27 @@ describe('registerRecorder', () => {
 
     test('a value over 4096 JSON characters is left out and named', async () => {
         const s = setup()
-        s.call('classic.SubagentStart', Object.freeze({
-            session_id: 's',
+        await s.call('turn.complete', Object.freeze({
             small: 'x'.repeat(4094),
             big: 'x'.repeat(4095),
             tool_response: { lines: Array(1000).fill('line') },
             gone: undefined,
         }))
-        const small = Object.freeze({ session_id: 's', tool_name: 'Read', tool_input: { file_path: '/a' } })
-        s.call('classic.SubagentStart', small)
+        await s.call('turn.complete', Object.freeze({ durationMs: 3, reason: 'answer' }))
         await s.fire()
         expect(s.sent(0).events[0]?.payload).toEqual({
-            session_id: 's',
             small: 'x'.repeat(4094),
+            sessionModel: 'claude-opus-4-8',
             _omitted: ['big', 'tool_response'],
         })
-        expect(s.sent(0).events[1]?.payload).toEqual(small)
+        expect(s.sent(0).events[1]?.payload).toEqual({ durationMs: 3, reason: 'answer', sessionModel: 'claude-opus-4-8' })
         expect(s.sent(0).events[1]?.payload).not.toHaveProperty('_omitted')
     })
 
     test('the outbox drops the oldest beyond 500 and sends 200 at a time', async () => {
         const s = setup()
         for (let i = 0; i < 501; i += 1) {
-            s.call('classic.SubagentStart', Object.freeze({ i }))
+            s.call('agent.spawn', Object.freeze({ permissionMode: 'plan' }))
         }
         expect(s.timers.length).toBe(1)
         await s.fire()
@@ -178,7 +173,7 @@ describe('registerRecorder', () => {
         expect(s.usageArgs).toEqual([{ breakdown: 'summary' }])
 
         s.state.now = T0 + 4999
-        s.call('classic.Stop', Object.freeze({ session_id: 's' }))
+        s.call('agent.spawn', Object.freeze({ session_id: 's' }))
         await s.fire()
         expect(s.sent(1).queries).toEqual({})
         expect(s.sent(1).events.length).toBe(1)
@@ -200,7 +195,7 @@ describe('registerRecorder', () => {
         s.state.agents = async () => {
             throw new Error('no agents')
         }
-        s.call('classic.Stop', Object.freeze({ session_id: 's' }))
+        s.call('agent.spawn', Object.freeze({ session_id: 's' }))
         await s.fire()
         expect(Object.keys(s.sent(0).queries)).toEqual(['usage'])
         expect(s.seqs(0)).toEqual([1])
@@ -209,26 +204,26 @@ describe('registerRecorder', () => {
     test('a failed send keeps its events, arms no retry, and seq never repeats', async () => {
         const s = setup()
         s.state.answer = async () => ({ ...OK, exitCode: 1 })
-        s.call('classic.Stop', Object.freeze({ n: 1 }))
+        s.call('agent.spawn', Object.freeze({ n: 1 }))
         await s.fire()
         expect(s.timers.length).toBe(0)
 
         s.state.answer = async () => {
             throw new Error('$.process.run(statusloom) timed out')
         }
-        s.call('classic.Stop', Object.freeze({ n: 2 }))
+        s.call('agent.spawn', Object.freeze({ n: 2 }))
         await s.fire()
         expect(s.timers.length).toBe(0)
 
         s.state.answer = async () => OK
-        s.call('classic.Stop', Object.freeze({ n: 3 }))
+        s.call('agent.spawn', Object.freeze({ n: 3 }))
         await s.fire()
-        s.call('classic.Stop', Object.freeze({ n: 4 }))
+        s.call('agent.spawn', Object.freeze({ n: 4 }))
         await s.fire()
         expect([0, 1, 2, 3].map(i => s.seqs(i))).toEqual([[1], [1, 2], [1, 2, 3], [4]])
 
         const other = setup()
-        other.call('classic.Stop', Object.freeze({ n: 1 }))
+        other.call('agent.spawn', Object.freeze({ n: 1 }))
         await other.fire()
         expect(other.seqs(0)).toEqual([1])
         expect(other.sent(0).boot).not.toBe(s.sent(0).boot)
@@ -237,11 +232,11 @@ describe('registerRecorder', () => {
     test('a hook never waits on a send in flight', async () => {
         const s = setup()
         s.state.answer = () => new Promise<RunResult>(() => {})
-        s.call('classic.Stop', Object.freeze({ n: 1 }))
+        s.call('agent.spawn', Object.freeze({ n: 1 }))
         await s.fire()
         expect(s.runs.length).toBe(1)
         const e = Object.freeze({ n: 2 })
-        expect(s.call('classic.SubagentStart', e)).toBe('NEXT')
+        expect(s.call('agent.spawn', e)).toBe('NEXT')
         expect(s.seen.at(-1)).toBe(e)
     })
 
@@ -251,10 +246,10 @@ describe('registerRecorder', () => {
         s.state.answer = () => new Promise<RunResult>(r => {
             resolve = r
         })
-        s.call('classic.Stop', Object.freeze({ n: 1 }))
+        s.call('agent.spawn', Object.freeze({ n: 1 }))
         await s.fire()
         expect(s.runs.length).toBe(1)
-        s.call('classic.Stop', Object.freeze({ n: 2 }))
+        s.call('agent.spawn', Object.freeze({ n: 2 }))
         expect(s.timers.length).toBe(0)
         await s.settle()
         expect(s.runs.length).toBe(1)
@@ -269,7 +264,7 @@ describe('registerRecorder', () => {
 
     test('no timer after a send that emptied the outbox', async () => {
         const s = setup()
-        s.call('classic.Stop', Object.freeze({ n: 1 }))
+        s.call('agent.spawn', Object.freeze({ n: 1 }))
         await s.fire()
         expect(s.runs.length).toBe(1)
         expect(s.timers.length).toBe(0)

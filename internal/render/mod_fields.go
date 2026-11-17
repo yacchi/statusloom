@@ -92,13 +92,6 @@ func modFieldText(spec config.WidgetSpec, snap schema.StatusSnapshot, compact bo
 			return ""
 		}
 		return snap.Mod.SessionModel + "→" + snap.Mod.TurnModel
-
-	case "background-tasks", "session-crons":
-		n, ok := modBackgroundInt(spec.Type, snap)
-		if !ok {
-			return ""
-		}
-		return renderInteger(n, raw, compact)
 	}
 	return ""
 }
@@ -126,9 +119,6 @@ func modMetricValue(name string, snap schema.StatusSnapshot) (float64, bool) {
 		return float64(n), ok
 	case "autocompact-remaining-tokens":
 		n, ok := modAutocompactRemaining(snap)
-		return float64(n), ok
-	case "background-tasks", "session-crons":
-		n, ok := modBackgroundInt(name, snap)
 		return float64(n), ok
 	}
 	return 0, false
@@ -233,21 +223,6 @@ func modText(name string, snap schema.StatusSnapshot) (string, bool) {
 func modFallback(snap schema.StatusSnapshot) bool {
 	m := snap.Mod
 	return m != nil && m.SessionModel != "" && m.TurnModel != "" && m.SessionModel != m.TurnModel
-}
-
-// modBackgroundInt returns the background work count behind a background-tasks
-// or session-crons field or metric. ok is false when no Stop carried it.
-func modBackgroundInt(name string, snap schema.StatusSnapshot) (int, bool) {
-	if snap.Mod == nil || snap.Mod.Background == nil {
-		return 0, false
-	}
-	switch name {
-	case "background-tasks":
-		return snap.Mod.Background.Tasks, true
-	case "session-crons":
-		return snap.Mod.Background.Crons, true
-	}
-	return 0, false
 }
 
 // modAutocompactRemaining returns the tokens left before auto-compact fires,

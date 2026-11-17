@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/yacchi/statusloom/internal/adapters/claude"
@@ -133,12 +132,6 @@ func fold(rec *cache.ModRecord, req *request) {
 func foldEvent(rec *cache.ModRecord, name string, p payload) {
 	s := &rec.Snapshot
 
-	if strings.HasPrefix(name, "classic.") && !has(p, "agent_id") {
-		if mode, ok := str(p, "permission_mode"); ok {
-			s.PermissionMode = mode
-		}
-	}
-
 	switch name {
 	case "turn.complete":
 		if has(p, "agentId") {
@@ -156,16 +149,6 @@ func foldEvent(rec *cache.ModRecord, name string, p payload) {
 		}
 		if mode, ok := str(p, "permissionMode"); ok {
 			s.PermissionMode = mode
-		}
-
-	case "classic.Stop":
-		if has(p, "agent_id") {
-			return
-		}
-		tasks, okTasks := arrLen(p, "background_tasks")
-		crons, okCrons := arrLen(p, "session_crons")
-		if okTasks && okCrons {
-			s.Background = &schema.ModBackground{Tasks: tasks, Crons: crons}
 		}
 	}
 }
@@ -225,18 +208,4 @@ func num(p payload, key string) (float64, bool) {
 func has(p payload, key string) bool {
 	raw := bytes.TrimSpace(p[key])
 	return len(raw) > 0 && string(raw) != "null"
-}
-
-// arrLen returns the element count of key when its value is a JSON array. A
-// missing key, null and any non-array value all report false.
-func arrLen(p payload, key string) (int, bool) {
-	raw := bytes.TrimSpace(p[key])
-	if len(raw) == 0 || raw[0] != '[' {
-		return 0, false
-	}
-	var elems []json.RawMessage
-	if err := json.Unmarshal(raw, &elems); err != nil {
-		return 0, false
-	}
-	return len(elems), true
 }

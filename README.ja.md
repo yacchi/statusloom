@@ -391,7 +391,7 @@ Statusloom は Claude Code 向けに、モデル・コンテキスト使用量�
 
 statusloom mod はセッションのイベントを記録し、`statusloom mod-ingest` がそれをセッションごとのキャッシュに書きます。描画はそのキャッシュを読むだけなので、描画中にネットワークやプロセス起動は発生しません。以下のフィールドはメイン行でのみ働き（`<subagent>` の中では使えません）、mod がなければ空のまま自身を隠します。
 
-別のプラグイン（組織のセキュリティプラグインなど）が入っている環境では、値の取得元が影響します。モデルの切り替えとフォールバックはターン終了ごとに mod が観測するセッションのモデルから取るため、そうした環境でも動きます。一方 `permission-mode`・`background-tasks`・`session-crons` は Claude Code の classic フックイベントに頼っており、別のプラグインが mod より先にそのイベントを横取りすることがあります。その場合、これらのフィールドはイベントが届くまで（0 ではなく）空のままです。
+別のプラグイン（組織のセキュリティプラグインなど）が入っている環境では、値の取得元が影響します。モデルの切り替えとフォールバックはターン終了ごとに mod が観測するセッションのモデルから取るため、そうした環境でも動きます。mod は Claude Code の `classic.*` フックイベントを一切購読しません。セキュリティプラグインが先に動くと classic フックはスキップされ、そのたびに Claude Code が毎セッション通知を表示してしまうためです。そのため `permission-mode` は、セッションが最初のサブエージェントを起動したときの値だけから取ります。
 
 | フィールド | 内容 |
 |---|---|
@@ -403,15 +403,13 @@ statusloom mod はセッションのイベントを記録し、`statusloom mod-i
 | `teammates-idle` | 待機中のチームメイト数 |
 | `last-turn-duration` | 直近ターンの所要時間 |
 | `last-turn-reason` | 直近ターンの結果（`answer`・`aborted`・`refusal`・`error`） |
-| `permission-mode` | 権限モード（`default`・`acceptEdits`・`plan`・`auto`・`dontAsk`・`bypassPermissions`） |
+| `permission-mode` | 権限モード（`default`・`acceptEdits`・`plan`・`auto`・`dontAsk`・`bypassPermissions`）。最初のサブエージェントの起動時にその起動から分かり、それまでは空 |
 | `autocompact-remaining` | 自動 compact までの残りトークン数 |
 | `context-breakdown` | コンテキストの内訳（多い順、` · ` 区切り） |
 | `model-switches` | ターンの間にセッションのモデルが変わった回数 |
 | `model-fallback` | 直近のターンに応答したモデルがセッションのモデルと違うときの `<セッションのモデル>→<応答したモデル>` |
-| `background-tasks` | バックグラウンドタスク数 |
-| `session-crons` | セッションの定期実行（cron）数 |
 
-`when` と `<color-rule>` で使えるメトリクスは次の 13 個です: `subagents-running`、`subagents-cost-usd`、`subagents-tokens`、`teammates-running`、`teammates-idle`、`last-turn-seconds`、`last-turn-reason`、`model-switches`、`permission-mode`、`model-fallback`、`autocompact-remaining-tokens`、`background-tasks`、`session-crons`。`last-turn-reason`、`permission-mode` は文字列のメトリクスで `eq`/`ne` で比較し、`model-fallback` は真偽値です。
+`when` と `<color-rule>` で使えるメトリクスは次の 11 個です: `subagents-running`、`subagents-cost-usd`、`subagents-tokens`、`teammates-running`、`teammates-idle`、`last-turn-seconds`、`last-turn-reason`、`model-switches`、`permission-mode`、`model-fallback`、`autocompact-remaining-tokens`。`last-turn-reason`、`permission-mode` は文字列のメトリクスで `eq`/`ne` で比較し、`model-fallback` は真偽値です。
 
 圧縮（compaction）の回数は従来どおりトランスクリプトから得る `compaction-count`・`compaction-auto`・`compaction-manual` で、mod のフィールドではありません。保留中の権限確認を示すフィールドはありません（Claude Code は権限確認の表示中ステータスラインを隠します）。
 

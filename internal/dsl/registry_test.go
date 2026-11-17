@@ -34,11 +34,11 @@ func TestFieldByName_UnknownTool(t *testing.T) {
 }
 
 func TestFields_Count(t *testing.T) {
-	// 84 base claude-code fields (67 + 7 account-* + env + 8 cache-* + source) + 15 statusloom
+	// 84 base claude-code fields (67 + 7 account-* + env + 8 cache-* + source) + 13 statusloom
 	// mod fields + 17 merged subagent task-* fields (9 original + 8 AgentRow-rendered fields).
 	fields := Fields("claude-code")
-	if len(fields) != 116 {
-		t.Errorf("Fields count = %d, want 116", len(fields))
+	if len(fields) != 114 {
+		t.Errorf("Fields count = %d, want 114", len(fields))
 	}
 }
 
@@ -124,8 +124,6 @@ func TestFields_SelfMetrics(t *testing.T) {
 		"autocompact-remaining": "autocompact-remaining-tokens",
 		"model-switches":        "model-switches",
 		"model-fallback":        "model-fallback",
-		"background-tasks":      "background-tasks",
-		"session-crons":         "session-crons",
 		// Merged subagent task-* fields with self metrics.
 		"task-tokens":                "task-token-count",
 		"task-context-size":          "task-context-window-tokens",
@@ -220,8 +218,8 @@ func TestFields_ClaudeCodeModCatalog(t *testing.T) {
 			t.Errorf("mod field %q missing localized descriptions", f.Name)
 		}
 	}
-	if modFields != 15 {
-		t.Errorf("mod field count = %d, want 15", modFields)
+	if modFields != 13 {
+		t.Errorf("mod field count = %d, want 13", modFields)
 	}
 
 	modMetricNames := make(map[string]bool, len(claudeCodeModMetrics))
@@ -231,8 +229,8 @@ func TestFields_ClaudeCodeModCatalog(t *testing.T) {
 			t.Errorf("mod metric %q missing localized descriptions", m.Name)
 		}
 	}
-	if len(modMetricNames) != 13 {
-		t.Errorf("mod metric count = %d, want 13", len(modMetricNames))
+	if len(modMetricNames) != 11 {
+		t.Errorf("mod metric count = %d, want 11", len(modMetricNames))
 	}
 
 	for _, name := range []string{"last-turn-reason", "permission-mode"} {
@@ -268,12 +266,12 @@ func TestMetricByName_Unknown(t *testing.T) {
 
 func TestMetrics_Count(t *testing.T) {
 	// 69 base claude-code metrics (51 original + 4 *-projected-percent + 6
-	// account-* identity metrics + 7 cache-* + source-stale) + 13 statusloom mod metrics
+	// account-* identity metrics + 7 cache-* + source-stale) + 11 statusloom mod metrics
 	// + 12 merged subagent task-* metrics (4 original + 8 AgentRow-rendered metrics; the
 	// shared widthMetric is deduplicated across the catalogs).
 	m := Metrics("claude-code")
-	if len(m) != 94 {
-		t.Errorf("Metrics count = %d, want 94", len(m))
+	if len(m) != 92 {
+		t.Errorf("Metrics count = %d, want 92", len(m))
 	}
 }
 

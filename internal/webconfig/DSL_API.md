@@ -384,10 +384,9 @@ AgentRow mod metrics (numeric `task-cost-usd`, `task-depth`,
 `task-cache-creation-tokens`, unresolved when the mod did not report them; text
 `task-agent-type` and `task-name`, unresolved when empty), the statusloom mod metrics (unresolved without a mod record for the session;
 text `last-turn-reason` and `permission-mode`; bool
-`model-fallback`; the rest numeric; `permission-mode`, `background-tasks` and
-`session-crons` rely on Claude Code's classic hook events and stay unresolved
-when another plugin intercepts them, while model
-switching comes from the observed session model), and the tool-agnostic `width` metric (terminal width in columns), which backs
+`model-fallback`; the rest numeric; `permission-mode` comes only from the
+main loop's `agent.spawn`, so it stays unresolved until the session starts its
+first subagent, and model switching comes from the observed session model), and the tool-agnostic `width` metric (terminal width in columns), which backs
 width breakpoints such as `when="width ge 80"`; an unknown width counts as
 unbounded so a width condition never hides content. `percent` (boolean,
 optional, omitted when `false`) marks a 0..100-scale percentage metric (e.g.

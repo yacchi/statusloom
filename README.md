@@ -500,7 +500,7 @@ hand-written `subagentStatusLine`.
 
 ### Session activity from the statusloom mod
 
-The mod records session events: subagent starts and stops, model switches, turn ends, and background work. It
+The mod records session events: turn ends (with the session model) and subagent spawns, plus the agent list and context usage. It
 runs `statusloom mod-ingest`, which keeps a per-session record in the
 cache. The status line only reads that record, so values appear after the
 mod's next send (about a second later). Every field below is empty without
@@ -509,10 +509,10 @@ the mod. These are main-line fields, not allowed inside `<subagent>`.
 Where the values come from matters when another plugin (for example an
 organisation security plugin) is installed. Model switches
 and fallbacks come from the session model the mod observes at each turn end, so
-they work even then. `permission-mode`, `background-tasks`, and
-`session-crons` rely on Claude Code's classic hook events, which another
-plugin can intercept before the mod sees them; those fields stay empty
-(not zero) until such an event arrives.
+they work even then. The mod subscribes to none of Claude Code's `classic.*`
+hook events: a security plugin that runs first skips them, and Claude Code
+then prints a notice about each skipped hook in every session. The
+permission mode therefore comes from the session's first subagent spawn only.
 
 - `subagents-running` — running subagents (metric `subagents-running`)
 - `subagents-by-type` — running subagents by type, like `Explore×2
@@ -527,7 +527,9 @@ plugin can intercept before the mod sees them; those fields stay empty
 - `last-turn-reason` — how it ended: `answer`, `aborted`, `refusal`, or
   `error` (metric `last-turn-reason`)
 - `permission-mode` — `default`, `acceptEdits`, `plan`, `auto`, `dontAsk`,
-  or `bypassPermissions` (metric `permission-mode`)
+  or `bypassPermissions` (metric `permission-mode`). It is known once the
+  session starts its first subagent (taken from that spawn) and is empty
+  until then.
 - `autocompact-remaining` — tokens left until auto-compact (metric
   `autocompact-remaining-tokens`)
 - `context-breakdown` — what fills the context window, largest first, each
@@ -537,8 +539,6 @@ plugin can intercept before the mod sees them; those fields stay empty
 - `model-fallback` — `<session model>→<answering model>`, shown only
   while the model that answered the latest turn differs from the session
   model (bool metric `model-fallback`)
-- `background-tasks` / `session-crons` — background tasks and session cron
-  jobs (metrics of the same names)
 
 Compaction counts stay the transcript-derived `compaction-count`,
 `compaction-auto`, and `compaction-manual`. They are not mod fields. No

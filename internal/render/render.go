@@ -456,9 +456,39 @@ func metricValue(name string, snap schema.StatusSnapshot, cfg config.ToolConfig,
 			return 0, false
 		}
 		return opts.Now.Sub(snap.Subagent.StartedAt).Seconds(), true
+	// AgentRow mod metrics: a nil pointer is unresolved (absent), while a
+	// reported zero is a real value.
+	case "task-cost-usd":
+		if snap.Subagent == nil || snap.Subagent.CostUSD == nil {
+			return 0, false
+		}
+		return *snap.Subagent.CostUSD, true
+	case "task-depth":
+		return taskIntMetric(snap, func(s *schema.SubagentSnapshot) *int { return s.Depth })
+	case "task-input-tokens":
+		return taskIntMetric(snap, func(s *schema.SubagentSnapshot) *int { return s.InputTokens })
+	case "task-output-tokens":
+		return taskIntMetric(snap, func(s *schema.SubagentSnapshot) *int { return s.OutputTokens })
+	case "task-cache-read-tokens":
+		return taskIntMetric(snap, func(s *schema.SubagentSnapshot) *int { return s.CacheReadTokens })
+	case "task-cache-creation-tokens":
+		return taskIntMetric(snap, func(s *schema.SubagentSnapshot) *int { return s.CacheCreationTokens })
 	default:
+		return modMetricValue(name, snap)
+	}
+}
+
+// taskIntMetric resolves an optional integer task metric: unresolved when
+// there is no subagent task or the mod did not report the value.
+func taskIntMetric(snap schema.StatusSnapshot, pick func(*schema.SubagentSnapshot) *int) (float64, bool) {
+	if snap.Subagent == nil {
 		return 0, false
 	}
+	v := pick(snap.Subagent)
+	if v == nil {
+		return 0, false
+	}
+	return float64(*v), true
 }
 
 // resetMinutes returns the whole-minute count remaining until a rate window's

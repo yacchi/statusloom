@@ -92,11 +92,12 @@ session's status line re-renders against them (it runs
 falls back to the saved document. The user saves them from the web UI.
 
 The same applies to the **agent panel row** shown for running sub-agent
-tasks: this session's ` + "`subagentStatusLine`" + ` runs
-` + "`statusloom claude-subagent --draft`" + `, so editing the same
-` + "`claude-code`" + ` document's ` + "`<subagent>`" + ` region (markup.md
-"subagent") in the web UI updates that row live here too — it is not a
-separate document from the main status line.
+tasks. Those rows come from the statusloom mod, which runs
+` + "`statusloom claude-agent-row`" + `. This workspace sets
+` + "`STATUSLOOM_AGENT_ROW_DRAFT=1`" + ` in ` + "`.claude/settings.local.json`" + `
+so the rows render the draft, and editing the ` + "`<subagent>`" + ` region
+(markup.md "subagent") of the same ` + "`claude-code`" + ` document updates them
+live here too — it is not a separate document from the main status line.
 
 ## Preview a render
 
@@ -119,13 +120,13 @@ The agent panel row has the same kind of preview, but built-in: no JSON file
 is needed since ` + "`--preview`" + ` renders a bundled representative
 tasks[] payload:
 
-    statusloom claude-subagent --preview
+    statusloom claude-agent-row --preview
 
 Add ` + "`--draft`" + ` to preview that same built-in payload against the
 ` + "`<subagent>`" + ` region of the draft working node you're editing here,
 instead of the saved document:
 
-    statusloom claude-subagent --preview --draft
+    statusloom claude-agent-row --preview --draft
 
 ## Migrating from an existing status line tool
 

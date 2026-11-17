@@ -31,3 +31,10 @@ Schema notes (verified against real capture, not just the public docs):
   - The docs list a `name` field, but it did not appear for `local_agent` tasks (only `description`/`label`).
 - Output protocol (not exercised by these input fixtures): one JSON line per row, `{"id":"<task-id>","content":"<row-body>"}`. Tasks not returned keep default rendering; an empty `content` hides the row. `content` supports ANSI colors and OSC 8 hyperlinks.
 - Update triggers match `statusLine` (post-assistant-message, `/compact`, permission/vim mode change, `refreshInterval`); the command is invoked once per refresh with **all** visible subagent rows in `tasks`, not once per row.
+
+## claude-agent-row Fixture
+
+`agent-row.json` is a `statusloom claude-agent-row` request: what the statusloom mod's AgentRow hook sends on stdin
+(`{"v": 1, "sessionId", "row", "agents"}`). `row` is the AgentRow `e.props` verbatim (AgentInfo plus `rowIds`, `columns`, optional
+`body`, `isHidden`); `agents` lists `{id, parentId}` from `$.agent.list()` so the row's depth can be walked. This is not a Claude Code
+stdin fixture: the mod builds it. The answer is at most one `{"v": 1, "body"?, "isHidden"?}` object on stdout.

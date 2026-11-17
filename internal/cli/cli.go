@@ -31,9 +31,21 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, version strin
 		return runClaude(args[1:], stdin, stdout, stderr, getenv)
 
 	case "claude-subagent":
-		// Claude Code's subagentStatusLine: a distinct stdin shape (a
-		// tasks[] array, no session-level fields) rendered per task.
+		// A subagentStatusLine written by hand (official stdin keys only): a
+		// distinct stdin shape (a tasks[] array, no session-level fields)
+		// rendered per task. The statusloom mod draws agent rows through
+		// claude-agent-row instead.
 		return runSubagentRender(args[1:], stdin, stdout, stderr)
+
+	case "claude-agent-row":
+		// One AgentRow of the statusloom Claude Code mod: a JSON request on
+		// stdin, one JSON answer on stdout.
+		return runAgentRow(args[1:], stdin, stdout, stderr, getenv)
+
+	case "mod-ingest":
+		// Records the statusloom mod's session events into the per-session
+		// cache record; run by the mod, never by hand.
+		return runModIngest(args[1:], stdin, stdout, stderr)
 
 	case "monitor":
 		// Like `claude`, but also forwards the raw payload to a running
@@ -140,7 +152,9 @@ func printUsage(w io.Writer) {
 
 Usage:
   statusloom claude [--draft] [--set METRIC=VALUE]...   render the status line for Claude Code; --draft renders the web-configurator's draft instead of the saved document; --set overrides a metric for this render only (preview)
-  statusloom claude-subagent [--draft] [--preview]   render Claude Code's subagentStatusLine (one JSON line per task); --preview uses a built-in payload instead of stdin
+  statusloom claude-subagent [--draft] [--preview]   render a subagentStatusLine written by hand (one JSON line per task); --preview uses a built-in payload instead of stdin
+  statusloom claude-agent-row [--draft] [--preview]   render one agent row for the statusloom Claude Code mod (JSON request on stdin, JSON answer on stdout); --preview uses a built-in request instead of stdin
+  statusloom mod-ingest   record the statusloom mod's session events (run by the mod)
   statusloom monitor --emit-url URL --token TOK   render like claude, forwarding the payload to a config server for live preview
   statusloom refresh --once --session-id ID --transcript PATH   refresh transcript-derived cache data
   statusloom render [--tool ID] [--draft] [--set METRIC=VALUE]...   render the status line, detecting the tool from stdin if --tool is omitted; --draft renders the web-configurator's draft instead of the saved document

@@ -89,8 +89,10 @@ statusloom setup claude-code
 ```
 
 This writes `statusLine.command` into `~/.claude/settings.json` for
-you (see [Usage](#usage) below for the equivalent manual JSON). If you
-use profiles via `CLAUDE_CONFIG_DIR`, statusloom follows it and writes
+you (see [Usage](#usage) below for the equivalent manual JSON). It also
+enables the statusloom Claude Code mod (marketplace and plugin, see
+[Setup](#setup)). If you use profiles via `CLAUDE_CONFIG_DIR`, statusloom
+follows it and writes
 `$CLAUDE_CONFIG_DIR/settings.json` instead; `--settings <path>` always
 overrides both.
 
@@ -115,9 +117,47 @@ stdout.
 
 ### Subagent status line
 
-Claude Code's `subagentStatusLine` setting renders one line per running
-subagent in the agent panel. Statusloom implements it with a separate
-command:
+Agent rows (one row per running subagent in the agent panel) are drawn by
+the **statusloom mod**. Its AgentRow hook runs `statusloom
+claude-agent-row`, which renders the `<subagent>` element of the SAME
+`claude-code` document (not a separate document — see
+[Configuration](#configuration)) and hands the text back. The mod runs
+`statusloom` from your `PATH`, and it needs a Claude Code version with
+mods (verified on 2.1.326).
+
+`statusloom setup claude-code` enables the mod (see [Setup](#setup)). To
+install it by hand, run this in Claude Code:
+
+```
+/plugin install statusloom --marketplace yacchi/statusloom
+```
+
+or this in your shell:
+
+```sh
+claude plugin install statusloom --marketplace yacchi/statusloom
+```
+
+Subagent rows are configured as a `<subagent>` element, scoped to its own
+field catalog: `task-description`, `task-model`, `task-model-id`,
+`task-tokens`, `task-context-size`, `task-context-percent`, `task-status`,
+and `task-duration`, plus the mod-only fields `task-effort`,
+`task-agent-type`, `task-name`, `task-cost`, `task-depth`,
+`task-input-tokens`, `task-output-tokens`, `task-cache-read-tokens`, and
+`task-cache-creation-tokens` (see [Fields](#fields)). Row width is the
+panel width minus two columns per nesting level, so a `<responsive>`
+inside `<subagent>` picks its variant per row.
+
+`statusloom claude-agent-row --preview` renders a built-in sample row
+without stdin. Add `--draft` to render the shared draft instead of the
+saved document. The monitor workspace sets `STATUSLOOM_AGENT_ROW_DRAFT=1`
+in its `.claude/settings.local.json`, so its agent rows show the draft.
+
+**A configured `subagentStatusLine` wins.** When one is set, Claude Code
+passes its output to the row, and `claude-agent-row` leaves the row alone.
+
+**Without mods:** `statusloom claude-subagent` stays as the renderer for a
+`subagentStatusLine` you write by hand in Claude Code without mods:
 
 ```json
 {
@@ -130,25 +170,13 @@ command:
 
 Claude Code pipes a JSON array of subagent tasks to stdin; `statusloom
 claude-subagent` writes one `{"id", "content"}` JSON line per task to
-stdout. Subagent rows are configured as a `<subagent>` element inside the
-SAME `claude-code` document (not a separate document — see
-[Configuration](#configuration)), scoped to its own field catalog — `task-description`,
-`task-model`, `task-model-id`, `task-tokens`, `task-context-size`,
-`task-context-percent`, `task-status`, and `task-duration` (see
-[Fields](#fields)). Pass `--draft` to render the shared draft document
-instead of the saved one, mirroring `statusloom claude`'s `--draft`
-handling; monitor workspaces use this to preview unsaved subagent-row
-edits. Pass `--preview` to render a built-in representative payload
-(a few sample tasks) instead of reading stdin, so you can see the row
-without hand-crafting a `tasks[]` JSON; it composes with `--draft`.
+stdout. It reads only the official `subagentStatusLine` stdin keys, so the
+mod-only fields stay empty and the row omits them rather than showing a
+fabricated value. `--draft` and `--preview` work as before.
 
-**Protocol limitation:** the `subagentStatusLine` stdin payload carries
-no per-subagent reasoning effort or agent type name (e.g.
-`general-purpose`), so statusloom's rows can't reproduce the agent type
-label Claude Code's own default row leads with — only model, tokens,
-context, duration, and status are available. A `task-effort` field
-exists in the catalog for forward compatibility but is currently always
-unavailable.
+`statusloom setup claude-code` removes such a line again, because it counts
+as statusloom's own. Use it only where setup is not run, or re-add it after
+running setup.
 
 ### Configurator
 
@@ -220,14 +248,39 @@ statusloom setup claude-code
 statusloom setup claude-code --refresh-interval 60
 ```
 
-Configures Claude Code to run `statusloom claude` (`statusLine`) and
-`statusloom claude-subagent` (`subagentStatusLine`). Existing settings
-are backed up, and replacing a different status-line command requires
-confirmation.
+Setup points `statusLine` at `statusloom claude` and enables the statusloom
+mod by merging into Claude Code's user settings. Other entries of both
+objects are left untouched. The merged entries look like this:
 
-Setup also writes Claude Code's `refreshInterval` to both `statusLine` and
-`subagentStatusLine`, so the status line re-renders every 30 seconds while
-the session is idle. One render costs roughly 5–10 ms, so this is cheap.
+```json
+{
+  "extraKnownMarketplaces": {
+    "statusloom": {"source": {"source": "github", "repo": "yacchi/statusloom"}}
+  },
+  "enabledPlugins": {"statusloom@statusloom": true}
+}
+```
+
+Setup never writes `subagentStatusLine`. Every run removes a
+`subagentStatusLine` that runs `statusloom claude-subagent` (a line from
+earlier versions) without asking, and leaves another tool's
+`subagentStatusLine` untouched, and prints a note that this other line
+keeps drawing the agent rows instead of the mod.
+
+Existing settings are backed up, and the change is shown as a diff.
+Confirmation is asked only when an existing value would be replaced: a
+different status-line command, a different `statusloom` marketplace entry,
+or `statusloom@statusloom` set to `false`.
+
+The mod takes effect in two steps. Claude Code clones the marketplace in
+the background after the next session start and installs the plugin, which
+needs network access. A session that is already running loads it with
+`/reload-plugins`. To install right away, run
+`claude plugin install statusloom@statusloom`. The mod runs with your user
+permissions.
+
+Setup also writes Claude Code's `refreshInterval` to `statusLine`, so the
+status line re-renders every 30 seconds while the session is idle. One render costs roughly 5–10 ms, so this is cheap.
 Claude Code doesn't emit new statusline events while idle, so countdown
 widgets like `five-hour-reset` and `weekly-reset` would otherwise freeze
 until the next event.
@@ -290,7 +343,10 @@ the cache, Git, and Claude Code setup — including whether
 `refreshInterval` is configured when countdown fields (`five-hour-reset`,
 `weekly-reset`) are in use. It also lists source references in the
 document that point at undefined ids, and warns about any source defined
-with `allowRemote`.
+with `allowRemote`. It also checks the mod: it warns while statusloom's own
+`subagentStatusLine` is still set (run `statusloom setup claude-code` to
+migrate), and warns when `statusloom@statusloom` is not enabled, since
+agent rows and mod fields stay empty until it is.
 
 ### Sources from the CLI
 
@@ -429,10 +485,59 @@ The `<subagent>` region (see [Subagent status
 line](#subagent-status-line)) only accepts fields scoped to a single
 subagent task: `task-description`, `task-model`, `task-model-id`,
 `task-tokens`, `task-context-size`, `task-context-percent`,
-`task-status`, and `task-duration`. `task-effort` is also registered
-but currently always unavailable, since Claude Code's
-`subagentStatusLine` protocol doesn't expose per-subagent reasoning
-effort.
+`task-status`, and `task-duration`, plus the mod-only fields `task-effort`,
+`task-agent-type`, `task-name`, `task-cost`, `task-depth`,
+`task-input-tokens`, `task-output-tokens`, `task-cache-read-tokens`, and
+`task-cache-creation-tokens`. The mod-only fields are filled only by the
+statusloom mod (`statusloom claude-agent-row`) and stay empty under a
+hand-written `subagentStatusLine`.
+
+### Session activity from the statusloom mod
+
+The mod records session events: subagent starts and stops, model switches, turn ends, and background work. It
+runs `statusloom mod-ingest`, which keeps a per-session record in the
+cache. The status line only reads that record, so values appear after the
+mod's next send (about a second later). Every field below is empty without
+the mod. These are main-line fields, not allowed inside `<subagent>`.
+
+Where the values come from matters when another plugin (for example an
+organisation security plugin) is installed. Model switches
+and fallbacks come from the session model the mod observes at each turn end, so
+they work even then. `permission-mode`, `background-tasks`, and
+`session-crons` rely on Claude Code's classic hook events, which another
+plugin can intercept before the mod sees them; those fields stay empty
+(not zero) until such an event arrives.
+
+- `subagents-running` — running subagents (metric `subagents-running`)
+- `subagents-by-type` — running subagents by type, like `Explore×2
+  general-purpose`. A count appears only when it is above 1, and the
+  types are joined by spaces.
+- `subagents-cost` — subagents' cost in USD (metric `subagents-cost-usd`)
+- `subagents-tokens` — subagents' tokens (metric `subagents-tokens`)
+- `teammates-running` / `teammates-idle` — agent-team teammates (metrics
+  of the same names)
+- `last-turn-duration` — duration of the last main turn (metric
+  `last-turn-seconds`)
+- `last-turn-reason` — how it ended: `answer`, `aborted`, `refusal`, or
+  `error` (metric `last-turn-reason`)
+- `permission-mode` — `default`, `acceptEdits`, `plan`, `auto`, `dontAsk`,
+  or `bypassPermissions` (metric `permission-mode`)
+- `autocompact-remaining` — tokens left until auto-compact (metric
+  `autocompact-remaining-tokens`)
+- `context-breakdown` — what fills the context window, largest first, each
+  as `<category> <tokens>` joined by ` · `
+- `model-switches` — how many times the session model changed between
+  turns (metric `model-switches`)
+- `model-fallback` — `<session model>→<answering model>`, shown only
+  while the model that answered the latest turn differs from the session
+  model (bool metric `model-fallback`)
+- `background-tasks` / `session-crons` — background tasks and session cron
+  jobs (metrics of the same names)
+
+Compaction counts stay the transcript-derived `compaction-count`,
+`compaction-auto`, and `compaction-manual`. They are not mod fields. No
+field reports a pending permission prompt, because Claude Code hides the
+status line while one is shown.
 
 ### Grouping with `<span>`
 
@@ -817,8 +922,8 @@ transcript, and config dir without guessing.
   `statusloom render` without `--draft` or `--set`, and `statusloom monitor`
   (with or without `--draft`, because it is a live Claude Code session).
 - Nothing is written for previews (`--draft` / `--set`), for
-  `statusloom claude-subagent` (its stdin is a different payload), or when
-  stdin is a regular file.
+  `statusloom claude-subagent` or `statusloom claude-agent-row` (their stdin
+  is a different payload), or when stdin is a regular file.
 - The Claude Code process is identified from the `CLAUDE_PID` variable that
   Claude Code sets for the commands it runs. That pid is accepted only when
   it is the status line command's parent, or when it is reached from the

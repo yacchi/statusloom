@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { Palette } from "./Palette.tsx";
 import type { FieldCatalogEntry } from "../types.ts";
 
@@ -20,19 +20,44 @@ const OAUTH_FIELD: FieldCatalogEntry = {
     preview: { text: "12%", ansi: "12%" },
 };
 
-// task-effort's capability ("subagent-effort") currently has no environment
-// that satisfies it (no probe exists for it, unlike oauth-usage), so it must
-// never appear in the palette regardless of `oauthUsageAvailable`.
-const SUBAGENT_EFFORT_FIELD: FieldCatalogEntry = {
-    name: "task-effort",
-    displayName: "Task Effort",
-    descriptions: { en: "Task effort", ja: "タスクの努力レベル" },
+const MOD_FIELD: FieldCatalogEntry = {
+    name: "subagents-running",
+    displayName: "Running Subagents",
+    descriptions: { en: "Subagents running now", ja: "実行中のサブエージェント数" },
+    category: "mod",
+    preview: { text: "3", ansi: "3" },
+};
+
+const SUBAGENT_FIELD: FieldCatalogEntry = {
+    name: "task-name",
+    displayName: "Task Name",
+    descriptions: { en: "Name of the subagent task", ja: "サブエージェントのタスク名" },
     category: "subagent",
-    capability: "subagent-effort",
-    preview: { text: "", ansi: "" },
+    preview: { text: "review", ansi: "review" },
 };
 
 describe("Palette", () => {
+    it("groups mod fields under their own heading, between Claude Code and Subagent", () => {
+        render(
+            <Palette
+                fields={[SUBAGENT_FIELD, MOD_FIELD, OAUTH_FIELD]}
+                onAdd={vi.fn()}
+                oauthUsageAvailable={true}
+            />,
+        );
+
+        const modHeading = screen.getByRole("heading", { name: "Claude Code mod" });
+        const modGroup = modHeading.closest(".palette-group") as HTMLElement;
+        expect(
+            within(modGroup).getByTestId("palette-field:subagents-running"),
+        ).toBeTruthy();
+
+        const headings = screen
+            .getAllByRole("heading", { level: 3 })
+            .map((h) => h.textContent);
+        expect(headings).toEqual(["Claude Code", "Claude Code mod", "Subagent", "Layout"]);
+    });
+
     it("still shows oauth-usage-capability fields, and shows the note, when the probe is unavailable", () => {
         render(
             <Palette
@@ -73,18 +98,5 @@ describe("Palette", () => {
         expect(
             screen.queryByText(/usage API isn't reachable on this device/i),
         ).toBeNull();
-    });
-
-    it("hides task-effort (subagent-effort capability) unconditionally", () => {
-        render(
-            <Palette
-                fields={[PLAIN_FIELD, SUBAGENT_EFFORT_FIELD]}
-                onAdd={vi.fn()}
-                oauthUsageAvailable={true}
-            />,
-        );
-
-        expect(screen.getByTestId("palette-field:model")).toBeTruthy();
-        expect(screen.queryByTestId("palette-field:task-effort")).toBeNull();
     });
 });

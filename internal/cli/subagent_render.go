@@ -14,6 +14,7 @@ import (
 	"github.com/yacchi/statusloom/internal/cache"
 	"github.com/yacchi/statusloom/internal/claudeaccount"
 	"github.com/yacchi/statusloom/internal/claudecfg"
+	"github.com/yacchi/statusloom/internal/dsl"
 	"github.com/yacchi/statusloom/internal/render"
 	"github.com/yacchi/statusloom/internal/schema"
 	"github.com/yacchi/statusloom/internal/sources"
@@ -113,10 +114,12 @@ const subagentPreviewPayload = `{
 // the region per RenderSubagentLine's container-selection rule against the
 // task's columns.
 //
-// With --draft (used by the monitor workspace's subagentStatusLine, mirroring
-// `statusloom monitor --draft`) it renders the claude-code document's draft
-// working node instead, falling back to the saved document when the draft is
-// absent or invalid.
+// With --draft it renders the claude-code document's draft working node
+// (mirroring `statusloom monitor --draft`), falling back to the saved document
+// when the draft is absent or invalid. claude-subagent renders a
+// subagentStatusLine written by hand; the monitor workspace no longer
+// configures one (its agent rows come from the statusloom mod via
+// `statusloom claude-agent-row` with STATUSLOOM_AGENT_ROW_DRAFT=1).
 //
 // With --preview, stdin is not read at all (even if piped) - the built-in
 // subagentPreviewPayload is decoded instead, so the agent-panel row can be
@@ -152,26 +155,13 @@ func runSubagentRender(args []string, stdin io.Reader, stdout, stderr io.Writer)
 
 	tool := string(schema.ToolClaudeCode)
 	doc := resolveRenderDocument(tool, *draft, stderr)
-	now := time.Now()
-	ri, _ := cache.ClaudeRefreshInterval(claudecfg.SettingsPath(os.Getenv))
-	opts := render.Options{
-		Width:   columns,
-		Now:     now,
-		Env:     os.Getenv,
-		Profile: claudeaccount.Provider(os.Getenv),
-		Sources: sources.NewProvider(now, ri).Lookup,
-	}
+	opts := subagentRenderOptions(columns)
 
 	w := bufio.NewWriter(stdout)
 	defer w.Flush()
 
 	for _, task := range tasks {
-		snap := schema.StatusSnapshot{
-			Tool:     schema.ToolSnapshot{ID: schema.ToolClaudeCode},
-			System:   schema.SystemSnapshot{Cwd: task.Cwd},
-			Subagent: &task,
-		}
-		content := joinVisibleLines(render.RenderSubagentLine(snap, doc, opts))
+		content := renderSubagentTask(task, doc, opts)
 		if content == "" {
 			continue
 		}
@@ -184,6 +174,34 @@ func runSubagentRender(args []string, stdin io.Reader, stdout, stderr io.Writer)
 		fmt.Fprintln(w, string(encoded))
 	}
 	return 0
+}
+
+// subagentRenderOptions returns the render options both `claude-subagent` and
+// `claude-agent-row` draw a task with. width is the terminal width the row is
+// laid out in (0 when unknown). It is read-only and network-free: the account
+// and source lookups only read caches and files.
+func subagentRenderOptions(width int) render.Options {
+	now := time.Now()
+	ri, _ := cache.ClaudeRefreshInterval(claudecfg.SettingsPath(os.Getenv))
+	return render.Options{
+		Width:   width,
+		Now:     now,
+		Env:     os.Getenv,
+		Profile: claudeaccount.Provider(os.Getenv),
+		Sources: sources.NewProvider(now, ri).Lookup,
+	}
+}
+
+// renderSubagentTask renders one task against the claude-code document's
+// <subagent> region and returns the joined visible text, or "" when nothing
+// is visible for it.
+func renderSubagentTask(task schema.SubagentSnapshot, doc *dsl.Document, opts render.Options) string {
+	snap := schema.StatusSnapshot{
+		Tool:     schema.ToolSnapshot{ID: schema.ToolClaudeCode},
+		System:   schema.SystemSnapshot{Cwd: task.Cwd},
+		Subagent: &task,
+	}
+	return joinVisibleLines(render.RenderSubagentLine(snap, doc, opts))
 }
 
 // joinVisibleLines concatenates a rendered document's non-omitted lines'

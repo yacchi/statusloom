@@ -151,7 +151,7 @@ gitは描画中には実行しない。収集はバックグラウンドの`stat
 * `wait-on="due"`: 期限の来た項目を毎回待つ（失敗によるbackoff中の項目は除く）。gitの既定間隔3秒ではほぼ毎描画がサブプロセス起動＋git分遅くなるので、コストを理解して使うこと
 * 完了＝その項目の試行が1回終わったこと（成功は保証しない。失敗なら手持ちのキャッシュ、無ければ空で描画する）。上限に達したらその時点のキャッシュで描画し、起動済みのworkerは走り続けて次の描画が結果を拾う
 * 他のプロセスのworkerが実行中ならそれを待ち（2重に起動しない）、そのworkerが対象を処理せずに終わったら1回だけ自分で起動し直す（1描画あたり起動は最大2回）
-* プレビュー（`--draft`・`--set`・設定UIのプレビュー）と`claude-subagent`は待たない。`statusloom monitor`は実セッションの描画なので待つ
+* プレビュー（`--draft`・`--set`・設定UIのプレビュー）と`claude-subagent`・`claude-agent-row`は待たない。`statusloom monitor`は実セッションの描画なので待つ
 * 環境変数`STATUSLOOM_NO_WAIT`を設定すると`<refresh>`を無視して待たない
 
 `refresh`要素が複数ある場合、未知のトークン、`source:`の後ろが不正なソースid、`timeout-ms`が整数でない・1未満・3000超（clampしない）、`wait-on`が`cold`/`due`以外はvalidation error。重複トークンは1つにまとめる。`wait`が空・省略は「待たない」で診断も出さない。
@@ -262,7 +262,12 @@ compactとの関係: `compact-threshold`によるcompact変換は`responsive`と
 
 ### `subagent`
 
-Claude Codeの`subagentStatusLine`（実行中subagentタスクのパネル。**1タスク=1行**で描画され、実ステータスラインの下に表示される）を編集するための領域。`claude-code-subagent`のような独立tool/独立ドキュメントは持たない。同一の`claude-code`ドキュメント内に、幅選択コンテナの子として`<subagent>`要素を置く。
+Claude Codeのサブエージェントパネル（実行中のsubagentタスク。**1タスク=1行**で、実ステータスラインの下に表示される）の行を描画する領域。行は次の2つの描画経路が描き、どちらも同じ`<subagent>`とコンテナ選択を使う。
+
+* `statusloom claude-agent-row`: statuslineのClaude Code mod（`plugins/statusloom`のAgentRowフック）が呼ぶ（mod の詳細は「fieldカタログ」の「mod field」を参照）
+* `statusloom claude-subagent`: 手書きの`subagentStatusLine`から呼ばれる
+
+手書きの`subagentStatusLine`が設定されていれば、そちらが優先される（Claude Codeがその出力をフックに行の本体として渡し、`claude-agent-row`は行を変えない）。`claude-code-subagent`のような独立tool/独立ドキュメントは持たない。同一の`claude-code`ドキュメント内に、幅選択コンテナの子として`<subagent>`要素を置く。
 
 ```xml
 <subagent>
@@ -282,18 +287,19 @@ Claude Codeの`subagentStatusLine`（実行中subagentタスクのパネル。**
 
 フィールドのスコープ規則:
 
-* `<subagent><line>`の中に置けるのは`Category:"subagent"`のfield（`task-description`、`task-model`、`task-model-id`、`task-status`、`task-tokens`、`task-context-size`、`task-context-percent`、`task-duration`、`task-effort`）と、tool非依存の`width`メトリクス（`when`/`color-rule`用）のみ
+* `<subagent><line>`の中に置けるのは`Category:"subagent"`のfield（`task-description`、`task-model`、`task-model-id`、`task-status`、`task-tokens`、`task-context-size`、`task-context-percent`、`task-duration`、`task-effort`、`task-agent-type`、`task-name`、`task-cost`、`task-depth`、`task-input-tokens`、`task-output-tokens`、`task-cache-read-tokens`、`task-cache-creation-tokens`）と、tool非依存の`width`メトリクス（`when`/`color-rule`用）のみ
+* AgentRow mod由来のフィールド（`task-effort`、`task-agent-type`、`task-name`、`task-cost`、`task-depth`、`task-input-tokens`、`task-output-tokens`、`task-cache-read-tokens`、`task-cache-creation-tokens`）は`claude-agent-row`（mod のAgentRowフック経由の描画）でだけ値が入り、`claude-subagent`では空になる（値を捏造しない）。`task-depth`は`claude-agent-row`では常に値が入る（0が最上位のagent）。`task-status`は`status`があればそれを、無ければ`taskStatus`を使う。トークン系4種は行が`usage`を持つときだけ値が入る（0も含む）。`task-cost`は`$0.42`、トークン系は`format="compact-number"`で`18.2k`のように出せる。`when`/`color-rule`用のメトリクスは`task-cost-usd`・`task-depth`・トークン系4種（数値。値が無ければ未解決）と`task-agent-type`・`task-name`（文字列。空なら未解決）
 * メインの`<line>`（`layout`直下 / `variant`内）には`Category:"subagent"`**以外**のfieldのみ置ける
 * 違反はvalidation error（task-*をメインlineに置く、非task-*を`<subagent>`内に置く、いずれも不可）
 
 描画セマンティクス（2パス。同一ドキュメントを両パスが共有する）:
 
 * **メインパス**（`claude`サブコマンド）: active layoutのlines（`responsive`使用時は幅で選ばれたvariantのlines）を描画し、`<subagent>`は**無視**する。現行の`claude`出力に影響しない
-* **subagentパス**（`claude-subagent`サブコマンド）: active layoutを取り、幅で描画コンテナを選択し、その`<subagent>`の`<line>`を**タスクごとに1行**描画する（1タスク=1行、空行はskip）。コンテナ選択（subagent解決規則）は次の順:
-  1. active layoutが`<responsive>`を持つ → 幅（subagent stdinの`columns`）で選ばれた`<variant>`の`<subagent>`
+* **subagentパス**（`claude-agent-row`・`claude-subagent`サブコマンド）: active layoutを取り、幅で描画コンテナを選択し、その`<subagent>`の`<line>`を**タスクごとに1行**描画する（1タスク=1行、空行はskip）。`claude-agent-row`はmod（AgentRowフック）から、`claude-subagent`は手書きの`subagentStatusLine`から呼ばれる。コンテナ選択の幅は、`claude-agent-row`では行の`columns − 2·depth`（最小1。ネストしたagentほど狭い）、`claude-subagent`ではpayloadの`columns`。コンテナ選択（subagent解決規則）は次の順:
+  1. active layoutが`<responsive>`を持つ → 上記の幅で選ばれた`<variant>`の`<subagent>`
   2. `<responsive>`を持たない、または選ばれた`<variant>`に`<subagent>`が無い → `<layout>`直下の`<subagent>`へフォールバック
   3. いずれも`<subagent>`が無ければ、そのタスクは出力なし
-* メインパスとsubagentパスは同じ端末幅（`COLUMNS`）を見るため同じ`<variant>`が選ばれる。したがってメインの表現とsubagent行の表現の幅一貫性は構造的に保証される
+* 同じ幅ならメインパスと同じ`<variant>`が選ばれるため、メインの表現とsubagent行の表現の幅一貫性は構造的に保証される。ネストしたagentの行はインデントの分だけ幅が狭くなるので、より狭い`<variant>`が選ばれることがある
 
 例（`responsive`あり: 各`variant`に`<subagent>`を内包）:
 
@@ -975,9 +981,9 @@ formatterの属性は、field definitionの型に応じてsemantic validationす
 
 field名・formatter対応・selfMetric・linkableは、宣言的なfield定義レジストリとしてGo側で一元管理する。現行はrenderの`switch`ハードコードと`webconfig/catalog.go`のハンドメンテが重複しているため、これを単一レジストリへ集約する。DSLのvalidation、Web UIのカタログ提供、rendererはこの単一の情報源を参照する。
 
-### コンテンツfield（現行71種）
+### コンテンツfield（現行93種）
 
-`model`、`model-id`、`output-style`、`session-id`、`thinking-enabled`、`git-branch`、`git-changes`、`tool-version`、`current-directory`、`project-directory`、`git-root`、`thinking-effort`、`context-length`、`context-window-size`、`context-remaining`、`context-output-tokens`、`current-input-tokens`、`current-output-tokens`、`cache-creation-tokens`、`cache-read-tokens`、`exceeds-200k`、`context-percentage`、`context-percentage-usable`、`session-cost`、`five-hour-usage`、`five-hour-reset`、`weekly-usage`、`weekly-reset`、`session-name`、`agent-name`、`vim-mode`、`pr-number`、`pr-review-state`、`repo-name`、`worktree`、`session-duration`、`api-duration`、`lines-changed`、`lines-added`、`lines-removed`、`cache-hit-rate`、`cache-warm`、`cache-ttl`、`cache-expires-at`、`cache-hit-ratio`、`cache-requests`、`cache-misses`、`cache-recache-tokens`、`cache-last-miss-cause`、`git-staged`、`git-unstaged`、`git-untracked`、`git-ahead`、`git-behind`、`git-clean`、`extra-usage-cost`、`extra-usage-limit`、`extra-usage-percent`、`weekly-usage-opus`、`weekly-usage-sonnet`、`weekly-reset-opus`、`weekly-reset-sonnet`、`account-email`、`account-name`、`account-org`、`account-role`、`account-type`、`account-plan`、`account-seat`、`env`、`source`
+`model`、`model-id`、`output-style`、`session-id`、`thinking-enabled`、`git-branch`、`git-changes`、`tool-version`、`current-directory`、`project-directory`、`git-root`、`thinking-effort`、`context-length`、`context-window-size`、`context-remaining`、`context-output-tokens`、`current-input-tokens`、`current-output-tokens`、`cache-creation-tokens`、`cache-read-tokens`、`exceeds-200k`、`context-percentage`、`context-percentage-usable`、`session-cost`、`five-hour-usage`、`five-hour-reset`、`weekly-usage`、`weekly-reset`、`session-name`、`agent-name`、`vim-mode`、`pr-number`、`pr-review-state`、`repo-name`、`worktree`、`session-duration`、`api-duration`、`lines-changed`、`lines-added`、`lines-removed`、`cache-hit-rate`、`cache-warm`、`cache-ttl`、`cache-expires-at`、`cache-hit-ratio`、`cache-requests`、`cache-misses`、`cache-recache-tokens`、`cache-last-miss-cause`、`git-staged`、`git-unstaged`、`git-untracked`、`git-ahead`、`git-behind`、`git-clean`、`extra-usage-cost`、`extra-usage-limit`、`extra-usage-percent`、`weekly-usage-opus`、`weekly-usage-sonnet`、`weekly-reset-opus`、`weekly-reset-sonnet`、`account-email`、`account-name`、`account-org`、`account-role`、`account-type`、`account-plan`、`account-seat`、`env`、`source`、`subagents-running`、`subagents-by-type`、`subagents-cost`、`subagents-tokens`、`teammates-running`、`teammates-idle`、`last-turn-duration`、`last-turn-reason`、`permission-mode`、`autocompact-remaining`、`context-breakdown`、`model-switches`、`model-fallback`、`background-tasks`、`session-crons`
 
 `separator`・`flex-separator`はノード（`role="separator"`の`text` / `<flex/>`）へ置き換わるため、fieldカタログには含めない。
 
@@ -1039,6 +1045,40 @@ extra-usage の利用枠（allocation）が割り当てられていないアカ�
 
 これらのfieldは`internal/dsl`レジストリ上でcapability `oauth-usage` を持ち（→「Capability」参照）、認証済みusage APIに到達できない環境では値を返さない。
 
+#### mod field
+
+statuslineのClaude Code mod（`plugins/statusloom`、plugin id `statusloom@statusloom`）が記録したセッションの状態を表示するfield。インストールは `/plugin install statusloom --marketplace yacchi/statusloom`（`statusloom setup claude-code` で有効化することもできる）。mod が無い環境、または当該セッションの記録が無い場合は全 mod field が空になり、対応する mod メトリクスは未解決になる。値は`statusloom mod-ingest`が書き出すセッションごとのキャッシュから読むだけで、描画は何も取得しない。
+
+* 値はメイン行（`layout`直下 / `variant`内）でだけ表示する。`<subagent>`の中には置けない（`Category:"mod"`）。
+* 値の取得元: モデルの切り替えとフォールバック（`model-switches`・`model-fallback`）はターン終了ごとに mod が観測するセッションのモデル（`$.session.model()`）とそのターンの使用モデルから取る。別のプラグイン（組織のセキュリティプラグインなど）が classic フックを横取りしていても動く。`permission-mode`（classic イベントの`permission_mode`と`agent.spawn`の`permissionMode`）・`background-tasks`・`session-crons`（`classic.Stop`）は classic フックイベントに頼るため、別のプラグインがそれを横取りすると届かず、イベントが届くまで（0ではなく）空のままになる。
+* 圧縮（compaction）は mod の field ではない。`compaction-count` / `compaction-auto` / `compaction-manual`（transcript 由来）が引き続き唯一の圧縮 field。
+* 承認待ち（permission prompt）を示す field・メトリクスは無い（承認待ちの間はステータスライン自体が隠れるため）。ツール統計と許可拒否は収集しない（ステータスラインに出す価値が薄いため）。
+
+| field | 表示する内容 | 既定の表示・format | selfメトリック |
+|---|---|---|---|
+| `subagents-running` | 実行中のローカルsubagentの数 | 整数; `number` | `subagents-running` |
+| `subagents-by-type` | 実行中のsubagentをタイプ別に表示 | `Explore×2 general-purpose`（件数が2以上なら`<type>×<n>`、0件なら空） | — |
+| `subagents-cost` | 実行中のsubagentのコスト | `$0.42`; `currency` | `subagents-cost-usd` |
+| `subagents-tokens` | 実行中のsubagentのトークン数 | 整数; `number`, `compact-number` | `subagents-tokens` |
+| `teammates-running` | 実行中のteammateの数 | 整数; `number` | `teammates-running` |
+| `teammates-idle` | アイドル中のteammateの数 | 整数; `number` | `teammates-idle` |
+| `last-turn-duration` | メインループの直近ターンの所要時間 | `1m 5s`; `duration` | `last-turn-seconds` |
+| `last-turn-reason` | 直近ターンの結果 | `answer`/`aborted`/`refusal`/`error`; `enum` | `last-turn-reason` |
+| `permission-mode` | 権限モード | `default`/`acceptEdits`/`plan`/`auto`/`dontAsk`/`bypassPermissions`; `enum` | `permission-mode` |
+| `autocompact-remaining` | 自動圧縮までの残りトークン数 | 整数; `number`, `compact-number` | `autocompact-remaining-tokens` |
+| `context-breakdown` | カテゴリ別のコンテキスト内訳 | `Messages 12.4k · System prompt 3.1k`（使用中のカテゴリを多い順） | — |
+| `model-switches` | ターンの間にセッションのモデルが変わった回数 | 整数; `number` | `model-switches` |
+| `model-fallback` | 直近のターンの使用モデルがセッションのモデルと違うとき | `Opus 4.1→Sonnet 4.5`（`<セッションのモデル>→<使用モデル>`。どちらかが未報告、または同じなら空） | `model-fallback` |
+| `background-tasks` | バックグラウンドタスク数 | 整数; `number` | `background-tasks` |
+| `session-crons` | セッションcron数 | 整数; `number` | `session-crons` |
+
+* `autocompact-remaining`は「自動圧縮の閾値 − 現在のコンテキストトークン数」（0未満は0）。自動圧縮が無効、または値がまだ報告されていなければ空。
+* `context-breakdown`と`autocompact-remaining`は mod の使用量クエリ（usage query）の結果が必要。数値系の集計は mod がセッションを記録し始めると0から数える。
+
+```xml
+<span prefix="agents: " optional="subagents-running"><field name="subagents-running"/><field name="subagents-cost" prefix=" " optional="subagents-cost"/></span>
+```
+
 #### アカウントfield / `env` field
 
 `account-*`（ログイン中アカウントの識別情報）、`env`（環境変数の表示）、`source`（外部JSONソースの値）は、他のfieldと違いスナップショット由来ではない。詳細は「`field`」節の「`env`（`var`/`unmask`属性）」「`source`（source/select/fallback属性）」「アカウントfield」を参照。
@@ -1049,7 +1089,7 @@ extra-usage の利用枠（allocation）が割り当てられていないアカ�
 
 kebab-caseの名前付きメトリクス:
 
-`api-duration-minutes`、`cache-creation-tokens`、`cache-expires-minutes`、`cache-hit-percent`、`cache-hit-ratio-percent`、`cache-misses`、`cache-read-tokens`、`cache-recache-tokens`、`cache-requests`、`cache-ttl`、`cache-warm`、`context-output-tokens`、`context-percent`、`context-remaining-percent`、`context-tokens`、`context-usable-percent`、`context-window-tokens`、`current-input-tokens`、`current-output-tokens`、`exceeds-200k`、`extra-usage-cost-usd`、`extra-usage-limit-usd`、`extra-usage-percent`、`five-hour-percent`、`five-hour-projected-percent`、`five-hour-reset-minutes`、`git-ahead`、`git-behind`、`git-clean`、`git-dirty`、`git-staged`、`git-unstaged`、`git-untracked`、`lines-added`、`lines-changed-total`、`lines-removed`、`session-cost-usd`、`session-duration-minutes`、`seven-day-opus-percent`、`seven-day-opus-projected-percent`、`seven-day-opus-reset-minutes`、`seven-day-percent`、`seven-day-projected-percent`、`seven-day-reset-minutes`、`seven-day-sonnet-percent`、`seven-day-sonnet-projected-percent`、`seven-day-sonnet-reset-minutes`、`source-stale:<id>`、`thinking-enabled`、`width`
+`api-duration-minutes`、`autocompact-remaining-tokens`、`background-tasks`、`cache-creation-tokens`、`cache-expires-minutes`、`cache-hit-percent`、`cache-hit-ratio-percent`、`cache-misses`、`cache-read-tokens`、`cache-recache-tokens`、`cache-requests`、`cache-ttl`、`cache-warm`、`context-output-tokens`、`context-percent`、`context-remaining-percent`、`context-tokens`、`context-usable-percent`、`context-window-tokens`、`current-input-tokens`、`current-output-tokens`、`exceeds-200k`、`extra-usage-cost-usd`、`extra-usage-limit-usd`、`extra-usage-percent`、`five-hour-percent`、`five-hour-projected-percent`、`five-hour-reset-minutes`、`git-ahead`、`git-behind`、`git-clean`、`git-dirty`、`git-staged`、`git-unstaged`、`git-untracked`、`last-turn-reason`、`last-turn-seconds`、`lines-added`、`lines-changed-total`、`lines-removed`、`model-fallback`、`model-switches`、`permission-mode`、`session-cost-usd`、`session-crons`、`session-duration-minutes`、`seven-day-opus-percent`、`seven-day-opus-projected-percent`、`seven-day-opus-reset-minutes`、`seven-day-percent`、`seven-day-projected-percent`、`seven-day-reset-minutes`、`seven-day-sonnet-percent`、`seven-day-sonnet-projected-percent`、`seven-day-sonnet-reset-minutes`、`source-stale:<id>`、`subagents-cost-usd`、`subagents-running`、`subagents-tokens`、`teammates-idle`、`teammates-running`、`thinking-enabled`、`width`
 
 補足:
 
@@ -1063,9 +1103,16 @@ kebab-caseの名前付きメトリクス:
 
 #### `width`（全ツール共通・端末幅ブレイクポイント）
 
+mod メトリクス（mod の記録が無い間は全て未解決）の補足:
+
+* 文字列: `last-turn-reason`・`permission-mode`（`eq` / `ne` のみ。`last-turn-reason`の値は`answer`/`aborted`/`refusal`/`error`、`permission-mode`の値は上の表のとおり）
+* 真偽値: `model-fallback`（直近のターンの使用モデルがセッションのモデルと違うか）
+* `last-turn-seconds`は秒
+* `subagents-*`・`teammates-*`・`last-turn-*`・`background-tasks`・`session-crons`は、それぞれのグループのデータが届くまでも未解決
+
 `width` は端末の幅（桁数）を返す全ツール共通のメトリクスで、`when` で幅に応じて`<field>`/`<span>`の表示/非表示を切り替えるために使う。`<subagent>`要素（→「subagent」参照）は単一`<line>`しか持てず`<responsive>`/`<variant>`の入れ子で表現を切り替えられないため、その1行内で幅に応じて表示するfieldを段階的に増減させたい場合に特に有用。
 
-* 値は`Options.Width`（`claude`は`COLUMNS`、`claude-subagent`はpayloadの`columns`から解決）。
+* 値は`Options.Width`（`claude`は`COLUMNS`、`claude-subagent`はpayloadの`columns`、`claude-agent-row`は行の`columns − 2·depth`（最小1）から解決）。
 * **幅不明時（`Options.Width <= 0`。例: Claude Code v2.1.153未満や`COLUMNS`未提供）は無制限扱い**（大きなsentinel値を返す）。よって`width ge N`は真となり、幅が判定できないときに内容を隠すことはない。
 * `self`メトリックではないため、`<field>`だけでなく`<span>`/`<text>`でも参照できる。`optional`と`when`は併用でき、両方満たすときのみ表示される（AND）。
 
@@ -1589,7 +1636,7 @@ DSL parser内でANSI文字列を直接生成しない。
 * 他プロセスがleaseを保持: 起動せずそのworkerを待つ。対象を処理せず終わったら（保持者のプロセスが死んだ場合を含む）1回だけ起動し直す（最大2回）
 * 旧workerが`git`キーを落としても完了と誤判定しない
 * 温かい項目では待たず、`<refresh>`無し文書と出力・spawn引数が一致
-* `wait-on="due"`（backoff中は待たない）、プレビュー・`claude-subagent`・`STATUSLOOM_NO_WAIT`・未使用項目は待たない
+* `wait-on="due"`（backoff中は待たない）、プレビュー・`claude-subagent`・`claude-agent-row`・`STATUSLOOM_NO_WAIT`・未使用項目は待たない
 * worker各stepはデータを書いてからscheduleを書く
 
 ### Rendering

@@ -1,0 +1,14 @@
+{
+    "name": "statusloom",
+    "description": "statusloom's Claude Code mod marketplace",
+    "owner": {
+        "name": "yacchi"
+    },
+    "plugins": [
+        {
+            "name": "statusloom",
+            "source": "./plugins/statusloom",
+            "description": "Draws subagent rows with statusloom's <subagent> region and records session activity for its mod fields; needs the statusloom binary on PATH"
+        }
+    ]
+}

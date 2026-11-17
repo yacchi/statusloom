@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -88,6 +89,7 @@ func TestSetupClaudeCode(t *testing.T) {
 				if json.Unmarshal(got, &doc) != nil || !strings.Contains(string(got), "statusloom claude") {
 					t.Fatalf("settings=%q", got)
 				}
+				assertModEntries(t, doc)
 				if tt.initial != "" {
 					if doc["theme"] != "dark" && tt.name == "replace yes" {
 						t.Error("sibling key lost")
@@ -101,8 +103,13 @@ func TestSetupClaudeCode(t *testing.T) {
 						t.Errorf("backup=%q", backup)
 					}
 				}
-			} else if tt.initial != "" && string(got) != tt.initial {
-				t.Errorf("file changed: %q", got)
+			} else {
+				if tt.initial != "" && string(got) != tt.initial {
+					t.Errorf("file changed: %q", got)
+				}
+				if matches, _ := filepath.Glob(path + ".bak.*"); len(matches) != 0 {
+					t.Errorf("unexpected backups=%v", matches)
+				}
 			}
 		})
 	}
@@ -232,8 +239,8 @@ func TestSetupClaudeCodeRefreshInterval(t *testing.T) {
 }
 
 // TestSetupClaudeCodeRefreshIntervalDefault confirms a fresh setup without
-// the flag writes refreshInterval 30 to both statusLine and
-// subagentStatusLine.
+// the flag writes refreshInterval 30 to statusLine and writes no
+// subagentStatusLine at all.
 func TestSetupClaudeCodeRefreshIntervalDefault(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	if _, _, code := runCLI(t, []string{"setup", "claude-code", "--settings", path}, nil, nil); code != 0 {
@@ -242,8 +249,8 @@ func TestSetupClaudeCodeRefreshIntervalDefault(t *testing.T) {
 	if n, ok := readStatusLine(t, path)["refreshInterval"].(float64); !ok || n != 30 {
 		t.Fatalf("statusLine.refreshInterval = %v", n)
 	}
-	if n, ok := readSettingsKey(t, path, "subagentStatusLine")["refreshInterval"].(float64); !ok || n != 30 {
-		t.Fatalf("subagentStatusLine.refreshInterval = %v", n)
+	if _, ok := readSettingsDoc(t, path)["subagentStatusLine"]; ok {
+		t.Error("setup must not write subagentStatusLine")
 	}
 }
 
@@ -252,7 +259,8 @@ func TestSetupClaudeCodeRefreshIntervalDefault(t *testing.T) {
 // already match, so the run reports "already configured" with no backup.
 func TestSetupClaudeCodeRefreshIntervalKeepsExisting(t *testing.T) {
 	initial := `{"statusLine":{"type":"command","command":"statusloom claude","refreshInterval":60},` +
-		`"subagentStatusLine":{"type":"command","command":"statusloom claude-subagent","refreshInterval":60}}`
+		`"extraKnownMarketplaces":{"statusloom":{"source":{"source":"github","repo":"yacchi/statusloom"}}},` +
+		`"enabledPlugins":{"statusloom@statusloom":true}}`
 	path := filepath.Join(t.TempDir(), "settings.json")
 	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
@@ -270,8 +278,7 @@ func TestSetupClaudeCodeRefreshIntervalKeepsExisting(t *testing.T) {
 // TestSetupClaudeCodeRefreshIntervalZeroUnsets confirms --refresh-interval 0
 // removes an existing refreshInterval from both objects.
 func TestSetupClaudeCodeRefreshIntervalZeroUnsets(t *testing.T) {
-	initial := `{"statusLine":{"type":"command","command":"statusloom claude","refreshInterval":60},` +
-		`"subagentStatusLine":{"type":"command","command":"statusloom claude-subagent","refreshInterval":60}}`
+	initial := `{"statusLine":{"type":"command","command":"statusloom claude","refreshInterval":60}}`
 	path := filepath.Join(t.TempDir(), "settings.json")
 	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
@@ -281,9 +288,6 @@ func TestSetupClaudeCodeRefreshIntervalZeroUnsets(t *testing.T) {
 	}
 	if _, ok := readStatusLine(t, path)["refreshInterval"]; ok {
 		t.Error("statusLine.refreshInterval should be removed")
-	}
-	if _, ok := readSettingsKey(t, path, "subagentStatusLine")["refreshInterval"]; ok {
-		t.Error("subagentStatusLine.refreshInterval should be removed")
 	}
 }
 
@@ -310,9 +314,9 @@ func readStatusLine(t *testing.T, path string) map[string]any {
 	return readSettingsKey(t, path, "statusLine")
 }
 
-// readSettingsKey reads path as Claude Code settings JSON and returns the
-// named top-level object, failing the test if either step is impossible.
-func readSettingsKey(t *testing.T, path, key string) map[string]any {
+// readSettingsDoc reads path as Claude Code settings JSON and returns the
+// whole top-level object, failing the test if either step is impossible.
+func readSettingsDoc(t *testing.T, path string) map[string]any {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -322,38 +326,126 @@ func readSettingsKey(t *testing.T, path, key string) map[string]any {
 	if err := json.Unmarshal(b, &doc); err != nil {
 		t.Fatalf("invalid JSON %q: %v", b, err)
 	}
-	obj, ok := doc[key].(map[string]any)
+	return doc
+}
+
+// readSettingsKey reads path as Claude Code settings JSON and returns the
+// named top-level object, failing the test if either step is impossible.
+func readSettingsKey(t *testing.T, path, key string) map[string]any {
+	t.Helper()
+	obj, ok := readSettingsDoc(t, path)[key].(map[string]any)
 	if !ok {
-		t.Fatalf("no %s object: %q", key, b)
+		t.Fatalf("no %s object in %s", key, path)
 	}
 	return obj
 }
 
-// TestSetupClaudeCode_WritesSubagentStatusLine confirms a fresh `setup
-// claude-code` also configures subagentStatusLine (Claude Code's
-// subagentStatusLine feature) alongside statusLine, with the same
-// --refresh-interval propagation and idempotent re-run behavior.
-func TestSetupClaudeCode_WritesSubagentStatusLine(t *testing.T) {
+// assertModEntries fails the test unless doc carries the statusloom
+// marketplace entry and enables the statusloom mod.
+func assertModEntries(t *testing.T, doc map[string]any) {
+	t.Helper()
+	markets, _ := doc["extraKnownMarketplaces"].(map[string]any)
+	if !reflect.DeepEqual(markets["statusloom"], map[string]any{"source": map[string]any{"source": "github", "repo": "yacchi/statusloom"}}) {
+		t.Errorf("marketplace entry = %v", markets["statusloom"])
+	}
+	enabled, _ := doc["enabledPlugins"].(map[string]any)
+	if enabled["statusloom@statusloom"] != true {
+		t.Errorf("enabledPlugins = %v", enabled)
+	}
+}
+
+// TestSetupClaudeCodeKeepsOtherModEntries confirms the marketplace and plugin
+// merge keeps other extraKnownMarketplaces and enabledPlugins entries, and
+// asks nothing since no existing value is replaced. The install notice is
+// printed.
+func TestSetupClaudeCodeKeepsOtherModEntries(t *testing.T) {
+	initial := `{"enabledPlugins":{"a@b":true,"c@d":false},"extraKnownMarketplaces":{"o":{"source":{"source":"github","repo":"a/b"}}}}`
 	path := filepath.Join(t.TempDir(), "settings.json")
-	args := []string{"setup", "claude-code", "--settings", path, "--refresh-interval", "45"}
-	if _, _, code := runCLI(t, args, nil, nil); code != 0 {
-		t.Fatal(code)
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := runCLI(t, []string{"setup", "claude-code", "--settings", path}, nil, nil)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q out=%q", code, stderr, out)
+	}
+	doc := readSettingsDoc(t, path)
+	enabled, _ := doc["enabledPlugins"].(map[string]any)
+	if enabled["a@b"] != true || enabled["c@d"] != false {
+		t.Errorf("enabledPlugins = %v", enabled)
+	}
+	markets, _ := doc["extraKnownMarketplaces"].(map[string]any)
+	if !reflect.DeepEqual(markets["o"], map[string]any{"source": map[string]any{"source": "github", "repo": "a/b"}}) {
+		t.Errorf("marketplace o = %v", markets["o"])
+	}
+	assertModEntries(t, doc)
+	if !strings.Contains(out, "claude plugin install") {
+		t.Errorf("install notice missing: %q", out)
+	}
+}
+
+// TestSetupClaudeCodeKeepsThirdPartySubagentLine confirms a subagentStatusLine
+// that statusloom did not write is left byte-for-byte equal in value, and the
+// run says so. A rerun prints the note and then "already configured".
+func TestSetupClaudeCodeKeepsThirdPartySubagentLine(t *testing.T) {
+	initial := `{"subagentStatusLine":{"command":"my-rows --x"}}`
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"setup", "claude-code", "--settings", path}
+	out, stderr, code := runCLI(t, args, nil, nil)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q out=%q", code, stderr, out)
+	}
+	if !strings.Contains(out, "Note: kept subagentStatusLine") {
+		t.Errorf("note missing: %q", out)
+	}
+	want := map[string]any{"command": "my-rows --x"}
+	if got := readSettingsDoc(t, path)["subagentStatusLine"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("subagentStatusLine = %v, want %v", got, want)
 	}
 
-	subagent := readSettingsKey(t, path, "subagentStatusLine")
-	if subagent["type"] != "command" || subagent["command"] != "statusloom claude-subagent" {
-		t.Fatalf("subagentStatusLine = %+v", subagent)
-	}
-	if n, ok := subagent["refreshInterval"].(float64); !ok || n != 45 {
-		t.Fatalf("subagentStatusLine.refreshInterval = %v", subagent["refreshInterval"])
-	}
-
-	// Second identical run: both keys already match -> "already configured",
-	// nothing rewritten, no backup.
 	before, _ := os.ReadFile(path)
-	out, _, code := runCLI(t, args, nil, nil)
+	out, _, code = runCLI(t, args, nil, nil)
 	after, _ := os.ReadFile(path)
-	if code != 0 || out != "already configured\n" || string(before) != string(after) {
+	if code != 0 || !strings.Contains(out, "Note: kept subagentStatusLine") || !strings.HasSuffix(out, "already configured\n") || string(before) != string(after) {
+		t.Fatalf("rerun code=%d out=%q", code, out)
+	}
+}
+
+// TestSetupClaudeCodeRemovesStatusloomSubagentLine confirms a subagentStatusLine
+// statusloom wrote is removed without a prompt, and the removal is shown as a
+// "- " line only.
+func TestSetupClaudeCodeRemovesStatusloomSubagentLine(t *testing.T) {
+	initial := `{"subagentStatusLine":{"type":"command","command":"statusloom claude-subagent","refreshInterval":30}}`
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := runCLI(t, []string{"setup", "claude-code", "--settings", path}, nil, nil)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q out=%q", code, stderr, out)
+	}
+	if !strings.Contains(out, "- subagentStatusLine: ") || strings.Contains(out, "+ subagentStatusLine") {
+		t.Errorf("out=%q", out)
+	}
+	if _, ok := readSettingsDoc(t, path)["subagentStatusLine"]; ok {
+		t.Error("statusloom subagentStatusLine should be removed")
+	}
+}
+
+// TestSetupClaudeCodeDryRunKeepsSubagentLine confirms --dry-run reports the
+// update of a statusloom subagentStatusLine without touching the file or
+// writing a backup.
+func TestSetupClaudeCodeDryRunKeepsSubagentLine(t *testing.T) {
+	initial := `{"subagentStatusLine":{"type":"command","command":"statusloom claude-subagent"}}`
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, code := runCLI(t, []string{"setup", "claude-code", "--settings", path, "--dry-run"}, nil, nil)
+	got, _ := os.ReadFile(path)
+	if code != 0 || !strings.Contains(out, "Would update "+path+".") || string(got) != initial {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 	if matches, _ := filepath.Glob(path + ".bak.*"); len(matches) != 0 {
@@ -361,40 +453,94 @@ func TestSetupClaudeCode_WritesSubagentStatusLine(t *testing.T) {
 	}
 }
 
-// TestSetupClaudeCode_SubagentStatusLineReplaceConfirm confirms an existing,
-// differing subagentStatusLine goes through the same diff/confirm/backup
-// flow as statusLine: an unconfirmed abort leaves the settings file
-// untouched, and --yes applies the update.
-func TestSetupClaudeCode_SubagentStatusLineReplaceConfirm(t *testing.T) {
-	initial := `{"statusLine":{"type":"command","command":"statusloom claude"},"subagentStatusLine":{"type":"command","command":"old-subagent"}}`
+// TestSetupClaudeCodeFlipsDisabledModOnlyWithConfirm confirms an explicit
+// enabledPlugins false is replaced only after confirmation: an abort leaves the
+// file untouched, and --yes flips it.
+func TestSetupClaudeCodeFlipsDisabledModOnlyWithConfirm(t *testing.T) {
+	initial := `{"enabledPlugins":{"statusloom@statusloom":false}}`
 	path := filepath.Join(t.TempDir(), "settings.json")
 	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	// Abort: statusLine already matches desired, only subagentStatusLine
-	// differs, but confirmation is still required and "n" must leave the
-	// file untouched.
-	out, _, code := runCLI(t, []string{"setup", "claude-code", "--settings", path}, []byte("n\n"), nil)
-	if code != 1 {
-		t.Fatalf("code=%d out=%q", code, out)
-	}
+	out, stderr, code := runCLI(t, []string{"setup", "claude-code", "--settings", path}, []byte("n\n"), nil)
 	got, _ := os.ReadFile(path)
-	if string(got) != initial {
-		t.Errorf("file changed on abort: %q", got)
+	if code != 1 || !strings.Contains(stderr, "aborted") || string(got) != initial {
+		t.Fatalf("abort code=%d stderr=%q out=%q", code, stderr, out)
 	}
 
-	// --yes applies the update.
-	out, _, code = runCLI(t, []string{"setup", "claude-code", "--settings", path, "--yes"}, nil, nil)
+	out, stderr, code = runCLI(t, []string{"setup", "claude-code", "--settings", path, "--yes"}, nil, nil)
 	if code != 0 {
+		t.Fatalf("code=%d stderr=%q out=%q", code, stderr, out)
+	}
+	if !strings.Contains(out, "- enabledPlugins.statusloom@statusloom: false") {
+		t.Errorf("out=%q", out)
+	}
+	assertModEntries(t, readSettingsDoc(t, path))
+}
+
+// TestSetupClaudeCodeReplacesOtherMarketplaceOnlyWithConfirm confirms an
+// existing statusloom marketplace entry that points elsewhere is replaced only
+// after confirmation, and an abort leaves the file untouched.
+func TestSetupClaudeCodeReplacesOtherMarketplaceOnlyWithConfirm(t *testing.T) {
+	initial := `{"extraKnownMarketplaces":{"statusloom":{"source":{"source":"directory","path":"/src"}}}}`
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, code := runCLI(t, []string{"setup", "claude-code", "--settings", path}, []byte("n\n"), nil)
+	got, _ := os.ReadFile(path)
+	if code != 1 || string(got) != initial {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
-	if !strings.Contains(out, "-") || !strings.Contains(out, "+") {
-		t.Errorf("expected a diff in output: %q", out)
+}
+
+// TestSetupClaudeCodeNonObjectModKeys confirms a non-object enabledPlugins or
+// extraKnownMarketplaces is replaced by an object holding only statusloom's
+// entry, without a panic.
+func TestSetupClaudeCodeNonObjectModKeys(t *testing.T) {
+	initial := `{"enabledPlugins":[],"extraKnownMarketplaces":"x"}`
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	subagent := readSettingsKey(t, path, "subagentStatusLine")
-	if subagent["command"] != "statusloom claude-subagent" {
-		t.Fatalf("subagentStatusLine = %+v", subagent)
+	out, stderr, code := runCLI(t, []string{"setup", "claude-code", "--settings", path, "--yes"}, nil, nil)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q out=%q", code, stderr, out)
+	}
+	doc := readSettingsDoc(t, path)
+	assertModEntries(t, doc)
+	if enabled, _ := doc["enabledPlugins"].(map[string]any); len(enabled) != 1 {
+		t.Errorf("enabledPlugins = %v", enabled)
+	}
+	if markets, _ := doc["extraKnownMarketplaces"].(map[string]any); len(markets) != 1 {
+		t.Errorf("extraKnownMarketplaces = %v", markets)
+	}
+}
+
+// TestIsStatusloomSubagentStatusLine covers which subagentStatusLine values
+// statusloom counts as its own. Anything else is third-party.
+func TestIsStatusloomSubagentStatusLine(t *testing.T) {
+	tests := []struct {
+		name string
+		v    any
+		want bool
+	}{
+		{"nil", nil, false},
+		{"string value", "statusloom claude-subagent", false},
+		{"missing command", map[string]any{"type": "command"}, false},
+		{"non-string command", map[string]any{"command": 1}, false},
+		{"bare", map[string]any{"command": "statusloom claude-subagent"}, true},
+		{"unix path", map[string]any{"command": "/a/statusloom claude-subagent"}, true},
+		{"windows path", map[string]any{"command": `C:\a\statusloom.exe claude-subagent`}, true},
+		{"other subcommand", map[string]any{"command": "statusloom claude"}, false},
+		{"other binary", map[string]any{"command": "statusloomx claude-subagent"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isStatusloomSubagentStatusLine(tt.v); got != tt.want {
+				t.Errorf("isStatusloomSubagentStatusLine(%v) = %v, want %v", tt.v, got, tt.want)
+			}
+		})
 	}
 }
 

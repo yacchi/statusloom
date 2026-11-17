@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "sessionId": "3f9a2b1c-4d5e-6f70-8a9b-0c1d2e3f4a5b",
+  "row": {
+    "id": "a7c3e9f1b2d40586", "description": "Audit DSL validation paths", "type": "Explore",
+    "status": "running", "parentId": "c9d8e7f6a5b40312", "name": "dsl-audit", "kind": "local_agent",
+    "taskStatus": "running", "label": "Reading internal/dsl/validate.go", "startTime": 1784104399052,
+    "cwd": "/Users/dev/myapp", "model": "claude-sonnet-5", "effort": 0.75, "contextWindowSize": 200000,
+    "tokenCount": 31250, "tokenSamples": [0, 18400, 27543, 31250],
+    "usage": [
+      {"model": "claude-sonnet-5", "input_tokens": 12000, "output_tokens": 3000, "cache_read_input_tokens": 40000, "cache_creation_input_tokens": 5000},
+      {"model": "claude-haiku-4-5-20251001", "input_tokens": 800, "output_tokens": 450, "cache_read_input_tokens": 2600, "cache_creation_input_tokens": 0}
+    ],
+    "cost": {"usd": 0.42}, "hasRow": true,
+    "rowIds": ["b1a2c3d4e5f60718", "c9d8e7f6a5b40312", "a7c3e9f1b2d40586"], "columns": 120, "isHidden": false
+  },
+  "agents": [
+    {"id": "b1a2c3d4e5f60718"},
+    {"id": "c9d8e7f6a5b40312", "parentId": "b1a2c3d4e5f60718"},
+    {"id": "a7c3e9f1b2d40586", "parentId": "c9d8e7f6a5b40312"}
+  ]
+}

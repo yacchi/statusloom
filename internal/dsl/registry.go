@@ -39,8 +39,9 @@ type FieldDef struct {
 	DisplayName string
 	// Descriptions is the localized one-line description shown in the UI.
 	Descriptions Descriptions
-	// Category groups fields in the UI: "common" (tool-agnostic) or
-	// "claude" (claude-code specific).
+	// Category groups fields in the UI: "common" (tool-agnostic), "claude"
+	// (claude-code specific), "mod" (needs the statusloom Claude Code mod; main
+	// lines only) or "subagent" (task-*, only inside <subagent>).
 	Category string
 	// RequiresVar marks a field parameterized by the `var` attribute (only
 	// "env" is, today): validation requires var on it and rejects var on
@@ -56,8 +57,7 @@ type FieldDef struct {
 	// API to be reachable). Capability gating is entirely client-side and
 	// per-capability: for "oauth-usage" the configurator keeps the field in
 	// the palette regardless of probe result (only showing a note when the
-	// probe fails), while "subagent-effort" — which has no probe at all —
-	// is hidden unconditionally. Empty means always available.
+	// probe fails). Empty means always available.
 	Capability string
 	// Transcript marks a field whose value is derived from the session transcript
 	// (schema.SessionAnalytics), which only the background refresh worker computes.
@@ -629,9 +629,138 @@ var widthMetric = MetricDef{
 	},
 }
 
+// claudeCodeModFields is the statusloom Claude Code mod field catalog. Every
+// field reads schema.StatusSnapshot.Mod, which only the statusloom Claude Code
+// mod reports; each renders empty when the snapshot is absent. They are
+// main-line fields (Category "mod"), so they are not valid inside <subagent>.
+var claudeCodeModFields = []FieldDef{
+	{
+		Name: "subagents-running", Category: "mod", DisplayName: "Running Subagents", SelfMetric: "subagents-running", Formats: []string{"number"},
+		Descriptions: Descriptions{EN: "Number of subagents running in this session. Needs the statusloom Claude Code mod.", JA: "このセッションで実行中のサブエージェント数です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "subagents-by-type", Category: "mod", DisplayName: "Subagents by Type",
+		Descriptions: Descriptions{EN: "Running subagents by agent type, e.g. Explore×2 general-purpose. Needs the statusloom Claude Code mod.", JA: "実行中のサブエージェントを種類別に表示します（例: Explore×2 general-purpose）。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "subagents-cost", Category: "mod", DisplayName: "Subagents Cost", SelfMetric: "subagents-cost-usd", Formats: []string{"currency"},
+		Descriptions: Descriptions{EN: "Estimated cost of the running subagents in US dollars. Needs the statusloom Claude Code mod.", JA: "実行中のサブエージェントの推定コスト（米ドル）です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "subagents-tokens", Category: "mod", DisplayName: "Subagents Tokens", SelfMetric: "subagents-tokens", Formats: []string{"number", "compact-number"},
+		Descriptions: Descriptions{EN: "Total tokens used by the running subagents. Needs the statusloom Claude Code mod.", JA: "実行中のサブエージェントが使用したトークンの合計です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "teammates-running", Category: "mod", DisplayName: "Running Teammates", SelfMetric: "teammates-running", Formats: []string{"number"},
+		Descriptions: Descriptions{EN: "Number of agent-team teammates running. Needs the statusloom Claude Code mod.", JA: "実行中のエージェントチームのメンバー数です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "teammates-idle", Category: "mod", DisplayName: "Idle Teammates", SelfMetric: "teammates-idle", Formats: []string{"number"},
+		Descriptions: Descriptions{EN: "Number of idle agent-team teammates. Needs the statusloom Claude Code mod.", JA: "待機中のエージェントチームのメンバー数です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "last-turn-duration", Category: "mod", DisplayName: "Last Turn Duration", SelfMetric: "last-turn-seconds", Formats: []string{"duration"},
+		Descriptions: Descriptions{EN: "How long the last main turn took. Needs the statusloom Claude Code mod.", JA: "直近のメインターンにかかった時間です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "last-turn-reason", Category: "mod", DisplayName: "Last Turn Result", SelfMetric: "last-turn-reason", Formats: []string{"enum"},
+		Descriptions: Descriptions{EN: "How the last main turn ended (answer/aborted/refusal/error). Needs the statusloom Claude Code mod.", JA: "直近のメインターンの終わり方です（answer/aborted/refusal/error）。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "permission-mode", Category: "mod", DisplayName: "Permission Mode", SelfMetric: "permission-mode", Formats: []string{"enum"},
+		Descriptions: Descriptions{EN: "The current permission mode (default/acceptEdits/plan/auto/dontAsk/bypassPermissions). Needs the statusloom Claude Code mod and Claude Code's classic hook events, so it can stay empty when another plugin intercepts them.", JA: "現在の権限モードです（default/acceptEdits/plan/auto/dontAsk/bypassPermissions）。statusloom の Claude Code mod と Claude Code の classic フックイベントが必要です。他のプラグインがイベントを横取りすると空のままになることがあります。"},
+	},
+	{
+		Name: "autocompact-remaining", Category: "mod", DisplayName: "Tokens Until Auto-compact", SelfMetric: "autocompact-remaining-tokens", Formats: []string{"number", "compact-number"},
+		Descriptions: Descriptions{EN: "Tokens left before auto-compact triggers. Needs the statusloom Claude Code mod.", JA: "自動compactが始まるまでの残りトークン数です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "context-breakdown", Category: "mod", DisplayName: "Context Breakdown",
+		Descriptions: Descriptions{EN: "Context usage by category, largest first, e.g. Messages 41k · System prompt 3k. Needs the statusloom Claude Code mod.", JA: "コンテキストの使用量をカテゴリ別に大きい順で表示します（例: Messages 41k · System prompt 3k）。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "model-switches", Category: "mod", DisplayName: "Model Switches", SelfMetric: "model-switches", Formats: []string{"number"},
+		Descriptions: Descriptions{EN: "Number of times the session model changed between turns. Needs the statusloom Claude Code mod.", JA: "ターンの間にセッションのモデルが変わった回数です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "model-fallback", Category: "mod", DisplayName: "Model Fallback", SelfMetric: "model-fallback",
+		Descriptions: Descriptions{EN: "Session model → the model that answered the latest turn, shown only when they differ, e.g. Opus 4.7→Sonnet 4.6. Needs the statusloom Claude Code mod.", JA: "直近のターンに応答したモデルがセッションのモデルと違うときだけ、「セッションのモデル→応答したモデル」を表示します（例: Opus 4.7→Sonnet 4.6）。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "background-tasks", Category: "mod", DisplayName: "Background Tasks", SelfMetric: "background-tasks", Formats: []string{"number"},
+		Descriptions: Descriptions{EN: "Number of background tasks at the end of the last turn. Needs the statusloom Claude Code mod and Claude Code's classic hook events, so it can stay empty when another plugin intercepts them.", JA: "直近のターン終了時のバックグラウンドタスク数です。statusloom の Claude Code mod と Claude Code の classic フックイベントが必要です。他のプラグインがイベントを横取りすると空のままになることがあります。"},
+	},
+	{
+		Name: "session-crons", Category: "mod", DisplayName: "Session Crons", SelfMetric: "session-crons", Formats: []string{"number"},
+		Descriptions: Descriptions{EN: "Number of scheduled session crons at the end of the last turn. Needs the statusloom Claude Code mod and Claude Code's classic hook events, so it can stay empty when another plugin intercepts them.", JA: "直近のターン終了時に登録されていたセッションcron数です。statusloom の Claude Code mod と Claude Code の classic フックイベントが必要です。他のプラグインがイベントを横取りすると空のままになることがあります。"},
+	},
+}
+
+// claudeCodeModMetrics is the statusloom Claude Code mod named-metric catalog,
+// backing the mod fields' self metrics for when/color-rule expressions. Like
+// claudeCodeModFields, every metric is unresolved when the mod snapshot is
+// absent (see each metric's rules in the field doc above).
+var claudeCodeModMetrics = []MetricDef{
+	{
+		Name: "subagents-running", DisplayName: "Running Subagents",
+		Descriptions: Descriptions{EN: "Number of subagents running in this session. Needs the statusloom Claude Code mod.", JA: "このセッションで実行中のサブエージェント数です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "subagents-cost-usd", DisplayName: "Subagents Cost (USD)",
+		Descriptions: Descriptions{EN: "Estimated cost of the running subagents in US dollars. Needs the statusloom Claude Code mod.", JA: "実行中のサブエージェントの推定コスト（米ドル）です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "subagents-tokens", DisplayName: "Subagents Tokens",
+		Descriptions: Descriptions{EN: "Total tokens used by the running subagents. Needs the statusloom Claude Code mod.", JA: "実行中のサブエージェントが使用したトークンの合計です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "teammates-running", DisplayName: "Running Teammates",
+		Descriptions: Descriptions{EN: "Number of agent-team teammates running. Needs the statusloom Claude Code mod.", JA: "実行中のエージェントチームのメンバー数です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "teammates-idle", DisplayName: "Idle Teammates",
+		Descriptions: Descriptions{EN: "Number of idle agent-team teammates. Needs the statusloom Claude Code mod.", JA: "待機中のエージェントチームのメンバー数です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "last-turn-seconds", DisplayName: "Last Turn Duration (sec)",
+		Descriptions: Descriptions{EN: "Seconds the last main turn took. Needs the statusloom Claude Code mod.", JA: "直近のメインターンにかかった秒数です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "last-turn-reason", DisplayName: "Last Turn Result", Text: true,
+		Values:       []string{"answer", "aborted", "refusal", "error"},
+		Descriptions: Descriptions{EN: "How the last main turn ended (answer/aborted/refusal/error). Needs the statusloom Claude Code mod.", JA: "直近のメインターンの終わり方です（answer/aborted/refusal/error）。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "model-switches", DisplayName: "Model Switches",
+		Descriptions: Descriptions{EN: "Number of times the session model changed between turns. Needs the statusloom Claude Code mod.", JA: "ターンの間にセッションのモデルが変わった回数です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "permission-mode", DisplayName: "Permission Mode", Text: true,
+		Values:       []string{"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"},
+		Descriptions: Descriptions{EN: "The current permission mode (default/acceptEdits/plan/auto/dontAsk/bypassPermissions). Needs the statusloom Claude Code mod and Claude Code's classic hook events, so it can stay empty when another plugin intercepts them.", JA: "現在の権限モードです（default/acceptEdits/plan/auto/dontAsk/bypassPermissions）。statusloom の Claude Code mod と Claude Code の classic フックイベントが必要です。他のプラグインがイベントを横取りすると空のままになることがあります。"},
+	},
+	{
+		Name: "model-fallback", DisplayName: "Model Fallback",
+		Descriptions: Descriptions{EN: "Whether the model that answered the latest turn differs from the session model. Needs the statusloom Claude Code mod.", JA: "直近のターンに応答したモデルがセッションのモデルと異なるかどうかです。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "autocompact-remaining-tokens", DisplayName: "Tokens Until Auto-compact",
+		Descriptions: Descriptions{EN: "Tokens left before auto-compact triggers. Needs the statusloom Claude Code mod.", JA: "自動compactが始まるまでの残りトークン数です。statusloom の Claude Code mod が必要です。"},
+	},
+	{
+		Name: "background-tasks", DisplayName: "Background Tasks",
+		Descriptions: Descriptions{EN: "Number of background tasks at the end of the last turn. Needs the statusloom Claude Code mod and Claude Code's classic hook events, so it can stay empty when another plugin intercepts them.", JA: "直近のターン終了時のバックグラウンドタスク数です。statusloom の Claude Code mod と Claude Code の classic フックイベントが必要です。他のプラグインがイベントを横取りすると空のままになることがあります。"},
+	},
+	{
+		Name: "session-crons", DisplayName: "Session Crons",
+		Descriptions: Descriptions{EN: "Number of scheduled session crons at the end of the last turn. Needs the statusloom Claude Code mod and Claude Code's classic hook events, so it can stay empty when another plugin intercepts them.", JA: "直近のターン終了時に登録されていたセッションcron数です。statusloom の Claude Code mod と Claude Code の classic フックイベントが必要です。他のプラグインがイベントを横取りすると空のままになることがあります。"},
+	},
+}
+
 // claudeCodeSubagentFields is the subagent (task-*) content field catalog:
-// one entry per subagentStatusLine task (an agent-panel row), per the
-// subagent-status-line implementation spec. It is merged into the unified
+// one entry per agent-panel row (drawn by `statusloom claude-agent-row` for the
+// statusloom mod, or a subagentStatusLine task), per the subagent-status-line
+// implementation spec. It is merged into the unified
 // "claude-code" catalog (see toolCatalogs) rather than registered under a
 // tool name of its own. All fields read schema.StatusSnapshot.Subagent,
 // which is nil outside a subagent render context (the renderer treats every
@@ -651,7 +780,7 @@ var claudeCodeSubagentFields = []FieldDef{
 	},
 	{
 		Name: "task-status", Category: "subagent", DisplayName: "Task Status", Formats: []string{"enum"},
-		Descriptions: Descriptions{EN: "The task's execution status (running/completed).", JA: "タスクの実行状態（running/completed）です。"},
+		Descriptions: Descriptions{EN: "The task's execution status (running/completed; the agent's own status such as waiting/idle/killed when the statusloom Claude Code mod draws the agent row).", JA: "タスクの実行状態です（running/completed。statusloom の Claude Code mod がエージェント行を描くときは waiting/idle/killed などエージェント自身の状態）。"},
 	},
 	{
 		Name: "task-tokens", Category: "subagent", SelfMetric: "task-token-count", Formats: []string{"number", "compact-number"},
@@ -683,9 +812,47 @@ var claudeCodeSubagentFields = []FieldDef{
 		Descriptions: Descriptions{EN: "Wall-clock time elapsed since the task started.", JA: "タスク開始からの経過時間です。"},
 	},
 	{
-		Name: "task-effort", Category: "subagent", Capability: "subagent-effort", Formats: []string{"enum"},
+		Name: "task-effort", Category: "subagent", Formats: []string{"enum"},
 		DisplayName:  "Task Effort",
-		Descriptions: Descriptions{EN: "The task's reasoning effort level (not yet available from Claude Code).", JA: "タスクの思考努力レベルです（現時点ではClaude Codeから提供されません）。"},
+		Descriptions: Descriptions{EN: "The task's reasoning effort level (low/medium/high/xhigh/max, or a number). Set only when the statusloom Claude Code mod draws the agent row; empty under subagentStatusLine.", JA: "タスクの思考努力レベル（low/medium/high/xhigh/max、または数値）です。statusloom の Claude Code mod がエージェント行を描くときだけ値が入り、subagentStatusLine では空になります。"},
+	},
+	{
+		Name: "task-agent-type", Category: "subagent", SelfMetric: "task-agent-type", DisplayName: "Task Agent Type",
+		Descriptions: Descriptions{EN: "The agent kind, e.g. Explore or general-purpose. Set only when the statusloom Claude Code mod draws the agent row; empty under subagentStatusLine.", JA: "エージェントの種類（例: Explore、general-purpose）です。statusloom の Claude Code mod がエージェント行を描くときだけ値が入り、subagentStatusLine では空になります。"},
+	},
+	{
+		Name: "task-name", Category: "subagent", SelfMetric: "task-name", DisplayName: "Task Name",
+		Descriptions: Descriptions{EN: "The name used by SendMessage. Set only when the statusloom Claude Code mod draws the agent row; empty under subagentStatusLine.", JA: "SendMessage で使われる名前です。statusloom の Claude Code mod がエージェント行を描くときだけ値が入り、subagentStatusLine では空になります。"},
+	},
+	{
+		Name: "task-cost", Category: "subagent", SelfMetric: "task-cost-usd", Formats: []string{"currency"},
+		DisplayName:  "Task Cost",
+		Descriptions: Descriptions{EN: "Estimated cost of the task in US dollars. Set only when the statusloom Claude Code mod draws the agent row; empty under subagentStatusLine.", JA: "タスクの推定コスト（米ドル）です。statusloom の Claude Code mod がエージェント行を描くときだけ値が入り、subagentStatusLine では空になります。"},
+	},
+	{
+		Name: "task-depth", Category: "subagent", SelfMetric: "task-depth", Formats: []string{"number"},
+		DisplayName:  "Task Depth",
+		Descriptions: Descriptions{EN: "Nesting depth of the task (the main child is 0). Set only when the statusloom Claude Code mod draws the agent row; empty under subagentStatusLine.", JA: "タスクのネストの深さです（メインの子は0）。statusloom の Claude Code mod がエージェント行を描くときだけ値が入り、subagentStatusLine では空になります。"},
+	},
+	{
+		Name: "task-input-tokens", Category: "subagent", SelfMetric: "task-input-tokens", Formats: []string{"number", "compact-number"},
+		DisplayName:  "Task Input Tokens",
+		Descriptions: Descriptions{EN: "Cumulative input tokens of the task. Set only when the statusloom Claude Code mod draws the agent row; empty under subagentStatusLine.", JA: "タスクの累積入力トークン数です。statusloom の Claude Code mod がエージェント行を描くときだけ値が入り、subagentStatusLine では空になります。"},
+	},
+	{
+		Name: "task-output-tokens", Category: "subagent", SelfMetric: "task-output-tokens", Formats: []string{"number", "compact-number"},
+		DisplayName:  "Task Output Tokens",
+		Descriptions: Descriptions{EN: "Cumulative output tokens of the task. Set only when the statusloom Claude Code mod draws the agent row; empty under subagentStatusLine.", JA: "タスクの累積出力トークン数です。statusloom の Claude Code mod がエージェント行を描くときだけ値が入り、subagentStatusLine では空になります。"},
+	},
+	{
+		Name: "task-cache-read-tokens", Category: "subagent", SelfMetric: "task-cache-read-tokens", Formats: []string{"number", "compact-number"},
+		DisplayName:  "Task Cache Read Tokens",
+		Descriptions: Descriptions{EN: "Cumulative cache-read tokens of the task. Set only when the statusloom Claude Code mod draws the agent row; empty under subagentStatusLine.", JA: "タスクの累積キャッシュ読み取りトークン数です。statusloom の Claude Code mod がエージェント行を描くときだけ値が入り、subagentStatusLine では空になります。"},
+	},
+	{
+		Name: "task-cache-creation-tokens", Category: "subagent", SelfMetric: "task-cache-creation-tokens", Formats: []string{"number", "compact-number"},
+		DisplayName:  "Task Cache Creation Tokens",
+		Descriptions: Descriptions{EN: "Cumulative cache-creation tokens of the task. Set only when the statusloom Claude Code mod draws the agent row; empty under subagentStatusLine.", JA: "タスクの累積キャッシュ作成トークン数です。statusloom の Claude Code mod がエージェント行を描くときだけ値が入り、subagentStatusLine では空になります。"},
 	},
 }
 
@@ -709,6 +876,38 @@ var claudeCodeSubagentMetrics = []MetricDef{
 	{
 		Name: "task-duration-seconds", DisplayName: "Task Duration (sec)",
 		Descriptions: Descriptions{EN: "Seconds elapsed since the task started.", JA: "タスク開始からの経過秒数です。"},
+	},
+	{
+		Name: "task-cost-usd", DisplayName: "Task Cost (USD)",
+		Descriptions: Descriptions{EN: "The task's estimated cost in US dollars (statusloom mod agent rows only).", JA: "タスクの推定コスト（米ドル。statusloom mod のエージェント行のみ）です。"},
+	},
+	{
+		Name: "task-depth", DisplayName: "Task Depth",
+		Descriptions: Descriptions{EN: "The task's nesting depth; the main child is 0 (statusloom mod agent rows only).", JA: "タスクのネストの深さです（メインの子は0。statusloom mod のエージェント行のみ）。"},
+	},
+	{
+		Name: "task-input-tokens", DisplayName: "Task Input Tokens",
+		Descriptions: Descriptions{EN: "The task's cumulative input tokens (statusloom mod agent rows only).", JA: "タスクの累積入力トークン数です（statusloom mod のエージェント行のみ）。"},
+	},
+	{
+		Name: "task-output-tokens", DisplayName: "Task Output Tokens",
+		Descriptions: Descriptions{EN: "The task's cumulative output tokens (statusloom mod agent rows only).", JA: "タスクの累積出力トークン数です（statusloom mod のエージェント行のみ）。"},
+	},
+	{
+		Name: "task-cache-read-tokens", DisplayName: "Task Cache Read Tokens",
+		Descriptions: Descriptions{EN: "The task's cumulative cache-read tokens (statusloom mod agent rows only).", JA: "タスクの累積キャッシュ読み取りトークン数です（statusloom mod のエージェント行のみ）。"},
+	},
+	{
+		Name: "task-cache-creation-tokens", DisplayName: "Task Cache Creation Tokens",
+		Descriptions: Descriptions{EN: "The task's cumulative cache-creation tokens (statusloom mod agent rows only).", JA: "タスクの累積キャッシュ作成トークン数です（statusloom mod のエージェント行のみ）。"},
+	},
+	{
+		Name: "task-agent-type", DisplayName: "Task Agent Type", Text: true,
+		Descriptions: Descriptions{EN: "The task's agent kind, e.g. Explore (statusloom mod agent rows only); usable in when=.", JA: "タスクのエージェント種類（例: Explore。statusloom mod のエージェント行のみ）。when= で使えます。"},
+	},
+	{
+		Name: "task-name", DisplayName: "Task Name", Text: true,
+		Descriptions: Descriptions{EN: "The task's SendMessage name (statusloom mod agent rows only); usable in when=.", JA: "タスクのSendMessage名（statusloom mod のエージェント行のみ）。when= で使えます。"},
 	},
 	widthMetric,
 }
@@ -758,14 +957,15 @@ func concatMetrics(groups ...[]MetricDef) []MetricDef {
 }
 
 // toolCatalogs is keyed by the `tool` root attribute value. "claude-code" is
-// the sole Claude Code catalog: it merges the subagent task-* fields/metrics
+// the sole Claude Code catalog: it merges the statusloom mod fields/metrics
+// (claudeCodeModFields/claudeCodeModMetrics) and the subagent task-* fields/metrics
 // (claudeCodeSubagentFields/claudeCodeSubagentMetrics) so a single document
-// can carry both its main lines and a <subagent> region. Unknown tools yield
-// zero values / false from every lookup function below.
+// can carry its main lines, mod-fed values and a <subagent> region. Unknown
+// tools yield zero values / false from every lookup function below.
 var toolCatalogs = map[string]toolCatalog{
 	"claude-code": {
-		fields:  concatFields(claudeCodeFields, claudeCodeSubagentFields),
-		metrics: concatMetrics(claudeCodeMetrics, claudeCodeSubagentMetrics),
+		fields:  concatFields(claudeCodeFields, claudeCodeModFields, claudeCodeSubagentFields),
+		metrics: concatMetrics(claudeCodeMetrics, claudeCodeModMetrics, claudeCodeSubagentMetrics),
 	},
 }
 

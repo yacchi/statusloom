@@ -42,6 +42,7 @@ func runDoctor(args []string, stdout, stderr io.Writer, version string) int {
 		report("WARN", "claude-code", "cannot locate settings; run statusloom setup claude-code")
 	} else {
 		doctorClaudeCode(report, settings)
+		doctorMod(report, settings)
 		doctorRefreshInterval(report, settings)
 	}
 	if failed {
@@ -259,6 +260,38 @@ func doctorClaudeCode(report func(string, string, string), path string) {
 		}
 	}
 	report("WARN", "claude-code", "not configured; run statusloom setup claude-code")
+}
+
+// doctorMod reports the statusloom Claude Code mod (check name "mod"). The
+// mod is what draws agent rows and fills the mod fields, so a disabled mod is
+// a WARN. A subagentStatusLine that statusloom itself wrote is a WARN even when
+// the mod is enabled, because setup claude-code is meant to remove it. Never
+// reports FAIL. An unreadable or invalid settings file reports nothing; the
+// claude-code check already covers it.
+func doctorMod(report func(string, string, string), path string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var doc map[string]any
+	if json.Unmarshal(b, &doc) != nil {
+		return
+	}
+	subagent, hasSubagent := doc["subagentStatusLine"]
+	if hasSubagent && isStatusloomSubagentStatusLine(subagent) {
+		report("WARN", "mod", "statusloom's subagentStatusLine is still set; run statusloom setup claude-code to migrate")
+		return
+	}
+	plugins, _ := doc["enabledPlugins"].(map[string]any)
+	if enabled, ok := plugins[modPluginID].(bool); ok && enabled {
+		detail := modPluginID + " enabled"
+		if hasSubagent {
+			detail += "; a subagentStatusLine from another tool draws the agent rows"
+		}
+		report("PASS", "mod", detail)
+		return
+	}
+	report("WARN", "mod", "agent rows and mod fields stay empty until the mod is enabled; run statusloom setup claude-code")
 }
 
 // doctorRefreshInterval warns when the active claude-code layout has a

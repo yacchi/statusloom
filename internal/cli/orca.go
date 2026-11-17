@@ -210,9 +210,9 @@ func isExecutableFile(path string) bool {
 const orcaStatusLineHookMarker = ".orca/agent-hooks/claude-statusline"
 
 // detectKnownStatusLineHook reports which known third-party tool (if any)
-// the existing statusLine/subagentStatusLine value - as decoded from
-// Claude Code settings JSON (map[string]any) - has a "command" string that
-// references. It is (zero value, false) for anything else (a differently
+// the existing statusLine value - as decoded from Claude Code settings JSON
+// (map[string]any) - has a "command" string that references. It sees
+// statusLine only; subagentStatusLine is never passed here. It is (zero value, false) for anything else (a differently
 // shaped value, a missing or non-string command, or a command that
 // doesn't mention any known hook's marker).
 func detectKnownStatusLineHook(value any) (knownStatusLineHook, bool) {

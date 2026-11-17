@@ -34,11 +34,11 @@ func TestFieldByName_UnknownTool(t *testing.T) {
 }
 
 func TestFields_Count(t *testing.T) {
-	// 84 base claude-code fields (67 + 7 account-* + env + 8 cache-* + source) + 9 merged
-	// subagent task-* fields.
+	// 84 base claude-code fields (67 + 7 account-* + env + 8 cache-* + source) + 15 statusloom
+	// mod fields + 17 merged subagent task-* fields (9 original + 8 AgentRow-rendered fields).
 	fields := Fields("claude-code")
-	if len(fields) != 93 {
-		t.Errorf("Fields count = %d, want 93", len(fields))
+	if len(fields) != 116 {
+		t.Errorf("Fields count = %d, want 116", len(fields))
 	}
 }
 
@@ -111,11 +111,34 @@ func TestFields_SelfMetrics(t *testing.T) {
 		"cache-misses":         "cache-misses",
 		"cache-recache-tokens": "cache-recache-tokens",
 		"source":               SourceSelfMetric,
+		// statusloom mod fields with self metrics (subagents-by-type
+		// and context-breakdown have none).
+		"subagents-running":     "subagents-running",
+		"subagents-cost":        "subagents-cost-usd",
+		"subagents-tokens":      "subagents-tokens",
+		"teammates-running":     "teammates-running",
+		"teammates-idle":        "teammates-idle",
+		"last-turn-duration":    "last-turn-seconds",
+		"last-turn-reason":      "last-turn-reason",
+		"permission-mode":       "permission-mode",
+		"autocompact-remaining": "autocompact-remaining-tokens",
+		"model-switches":        "model-switches",
+		"model-fallback":        "model-fallback",
+		"background-tasks":      "background-tasks",
+		"session-crons":         "session-crons",
 		// Merged subagent task-* fields with self metrics.
-		"task-tokens":          "task-token-count",
-		"task-context-size":    "task-context-window-tokens",
-		"task-context-percent": "task-context-percent",
-		"task-duration":        "task-duration-seconds",
+		"task-tokens":                "task-token-count",
+		"task-context-size":          "task-context-window-tokens",
+		"task-context-percent":       "task-context-percent",
+		"task-duration":              "task-duration-seconds",
+		"task-agent-type":            "task-agent-type",
+		"task-name":                  "task-name",
+		"task-cost":                  "task-cost-usd",
+		"task-depth":                 "task-depth",
+		"task-input-tokens":          "task-input-tokens",
+		"task-output-tokens":         "task-output-tokens",
+		"task-cache-read-tokens":     "task-cache-read-tokens",
+		"task-cache-creation-tokens": "task-cache-creation-tokens",
 	}
 	fields := Fields("claude-code")
 	if len(fields) == 0 {
@@ -160,8 +183,8 @@ func TestFields_DisplayMetadataPopulated(t *testing.T) {
 		if f.Descriptions.EN == "" || f.Descriptions.JA == "" {
 			t.Errorf("field %q missing localized descriptions: %+v", f.Name, f.Descriptions)
 		}
-		if f.Category != "common" && f.Category != "claude" && f.Category != "subagent" {
-			t.Errorf("field %q Category = %q, want common|claude|subagent", f.Name, f.Category)
+		if f.Category != "common" && f.Category != "claude" && f.Category != "mod" && f.Category != "subagent" {
+			t.Errorf("field %q Category = %q, want common|claude|mod|subagent", f.Name, f.Category)
 		}
 	}
 }
@@ -174,6 +197,54 @@ func TestMetrics_DisplayMetadataPopulated(t *testing.T) {
 		if m.Descriptions.EN == "" || m.Descriptions.JA == "" {
 			t.Errorf("metric %q missing localized descriptions: %+v", m.Name, m.Descriptions)
 		}
+	}
+}
+
+func TestFields_ClaudeCodeModCatalog(t *testing.T) {
+	modFields := 0
+	for _, f := range Fields("claude-code") {
+		if f.Category != "mod" {
+			continue
+		}
+		modFields++
+		got, ok := FieldByName("claude-code", f.Name)
+		if !ok || got.Category != "mod" {
+			t.Errorf("FieldByName(%q) = %+v, %v; want a mod field", f.Name, got, ok)
+		}
+		if f.SelfMetric != "" {
+			if _, ok := MetricByName("claude-code", f.SelfMetric); !ok {
+				t.Errorf("field %q SelfMetric %q is not a registered metric", f.Name, f.SelfMetric)
+			}
+		}
+		if f.Descriptions.EN == "" || f.Descriptions.JA == "" {
+			t.Errorf("mod field %q missing localized descriptions", f.Name)
+		}
+	}
+	if modFields != 15 {
+		t.Errorf("mod field count = %d, want 15", modFields)
+	}
+
+	modMetricNames := make(map[string]bool, len(claudeCodeModMetrics))
+	for _, m := range claudeCodeModMetrics {
+		modMetricNames[m.Name] = true
+		if m.Descriptions.EN == "" || m.Descriptions.JA == "" {
+			t.Errorf("mod metric %q missing localized descriptions", m.Name)
+		}
+	}
+	if len(modMetricNames) != 13 {
+		t.Errorf("mod metric count = %d, want 13", len(modMetricNames))
+	}
+
+	for _, name := range []string{"last-turn-reason", "permission-mode"} {
+		m, ok := MetricByName("claude-code", name)
+		if !ok || !m.Text {
+			t.Errorf("metric %q = %+v, %v; want a text metric", name, m, ok)
+		}
+	}
+	pm, _ := MetricByName("claude-code", "permission-mode")
+	wantModes := []string{"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
+	if !slices.Equal(pm.Values, wantModes) {
+		t.Errorf("permission-mode Values = %v, want %v", pm.Values, wantModes)
 	}
 }
 
@@ -197,11 +268,12 @@ func TestMetricByName_Unknown(t *testing.T) {
 
 func TestMetrics_Count(t *testing.T) {
 	// 69 base claude-code metrics (51 original + 4 *-projected-percent + 6
-	// account-* identity metrics + 7 cache-* + source-stale) + 4 merged subagent task-* metrics (the
-	// shared widthMetric is deduplicated across the two catalogs).
+	// account-* identity metrics + 7 cache-* + source-stale) + 13 statusloom mod metrics
+	// + 12 merged subagent task-* metrics (4 original + 8 AgentRow-rendered metrics; the
+	// shared widthMetric is deduplicated across the catalogs).
 	m := Metrics("claude-code")
-	if len(m) != 73 {
-		t.Errorf("Metrics count = %d, want 73", len(m))
+	if len(m) != 94 {
+		t.Errorf("Metrics count = %d, want 94", len(m))
 	}
 }
 
@@ -267,9 +339,8 @@ func TestFields_OAuthUsageFields(t *testing.T) {
 // keep an unset Capability, since only the new oauth-usage fields opt in.
 func TestFields_CapabilityDefaultsEmpty(t *testing.T) {
 	for _, f := range Fields("claude-code") {
-		// oauth-usage (extra-usage/weekly-*) and subagent-effort (merged
-		// task-effort) are the only non-empty capabilities.
-		if f.Capability != "" && f.Capability != "oauth-usage" && f.Capability != "subagent-effort" {
+		// oauth-usage (extra-usage/weekly-*) is the only non-empty capability.
+		if f.Capability != "" && f.Capability != "oauth-usage" {
 			t.Errorf("field %q has unexpected Capability = %q", f.Name, f.Capability)
 		}
 	}
@@ -304,7 +375,7 @@ func TestMetrics_OAuthUsageMetrics(t *testing.T) {
 
 // TestFields_ClaudeCodeSubagentCatalog verifies the subagentStatusLine
 // task-* fields merged into the unified tool="claude-code" catalog resolve
-// with the expected self metrics, formats, and capability gate, and that
+// with the expected self metrics and formats, and that
 // every field carries full display metadata.
 func TestFields_ClaudeCodeSubagentCatalog(t *testing.T) {
 	want := []struct {
@@ -321,7 +392,15 @@ func TestFields_ClaudeCodeSubagentCatalog(t *testing.T) {
 		{"task-context-size", "task-context-window-tokens", []string{"number", "compact-number"}, ""},
 		{"task-context-percent", "task-context-percent", []string{"percent"}, ""},
 		{"task-duration", "task-duration-seconds", []string{"duration"}, ""},
-		{"task-effort", "", []string{"enum"}, "subagent-effort"},
+		{"task-effort", "", []string{"enum"}, ""},
+		{"task-agent-type", "task-agent-type", nil, ""},
+		{"task-name", "task-name", nil, ""},
+		{"task-cost", "task-cost-usd", []string{"currency"}, ""},
+		{"task-depth", "task-depth", []string{"number"}, ""},
+		{"task-input-tokens", "task-input-tokens", []string{"number", "compact-number"}, ""},
+		{"task-output-tokens", "task-output-tokens", []string{"number", "compact-number"}, ""},
+		{"task-cache-read-tokens", "task-cache-read-tokens", []string{"number", "compact-number"}, ""},
+		{"task-cache-creation-tokens", "task-cache-creation-tokens", []string{"number", "compact-number"}, ""},
 	}
 	for _, w := range want {
 		f, ok := FieldByName("claude-code", w.name)

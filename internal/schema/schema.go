@@ -25,7 +25,8 @@ type StatusSnapshot struct {
 	PullRequest *PullRequestInfo    // nil = no open PR for the current branch
 	Account     AccountSnapshot
 	System      SystemSnapshot
-	Subagent    *SubagentSnapshot // nil = not a subagentStatusLine invocation
+	Subagent    *SubagentSnapshot // nil = not a subagent row render (claude-subagent or claude-agent-row)
+	Mod         *ModSnapshot      // nil = no statusloom-mod record for this session
 }
 
 // SubagentSnapshot is the normalized data for a single task reported by
@@ -33,7 +34,7 @@ type StatusSnapshot struct {
 type SubagentSnapshot struct {
 	ID                string
 	Type              string // "local_agent"
-	Status            string // "running"|"completed"
+	Status            string // an AgentRow's status (else taskStatus), or the legacy subagentStatusLine status ("running"|"completed"|...)
 	Description       string
 	Label             string
 	StartedAt         time.Time // decoded from startTime (epoch ms); zero = unset
@@ -41,8 +42,80 @@ type SubagentSnapshot struct {
 	ModelDisplay      string    // e.g. "Opus 4.8" (see claude.PrettyModelName)
 	ContextWindowSize int
 	TokenCount        int
-	Effort            *string // nil today; reserved for future transcript-derived effort
 	Cwd               string
+
+	// The fields below come only from claude-agent-row (adapters/claude
+	// DecodeAgentRow); the legacy subagentStatusLine never sends them, so they
+	// stay empty/nil under claude-subagent. A nil pointer means "absent"
+	// (never fabricated); a non-nil zero is a real reported value.
+	Effort              *string  // reasoning effort: a string or a number, kept as its literal text
+	AgentType           string   // AgentInfo.type, e.g. "Explore", "general-purpose"
+	Name                string   // AgentInfo.name, used by SendMessage
+	CostUSD             *float64 // estimated cost in US dollars
+	Depth               *int     // nesting depth (main child = 0)
+	InputTokens         *int     // cumulative input tokens
+	OutputTokens        *int     // cumulative output tokens
+	CacheReadTokens     *int     // cumulative cache-read tokens
+	CacheCreationTokens *int     // cumulative cache-creation tokens
+}
+
+// ModSnapshot is what the statusloom Claude Code mod recorded for one session
+// (nil on StatusSnapshot.Mod when none). "Main loop" means an event without
+// agentId / agent_id; "running" means status pending|running|waiting.
+type ModSnapshot struct {
+	UpdatedAt      time.Time      `json:"updatedAt"`                // last successful mod-ingest
+	Agents         *ModAgents     `json:"agents,omitempty"`         // nil until the first agents query
+	LastTurn       *ModTurn       `json:"lastTurn,omitempty"`       // nil until a main-loop turn.complete
+	PermissionMode string         `json:"permissionMode,omitempty"` // latest main-loop permission mode (classic events, agent.spawn)
+	Context        *ModContext    `json:"context,omitempty"`        // nil until a usage query carried a breakdown
+	ModelSwitches  int            `json:"modelSwitches"`            // changes of the session model seen between main-loop turns
+	SessionModel   string         `json:"sessionModel,omitempty"`   // claude.PrettyModelName of the session model at the latest turn
+	TurnModel      string         `json:"turnModel,omitempty"`      // claude.PrettyModelName of the model that answered the latest turn; empty when unreported
+	Background     *ModBackground `json:"background,omitempty"`     // nil until a main-loop classic.Stop carried both arrays
+}
+
+// ModAgents is the agent summary from the mod's agents query.
+type ModAgents struct {
+	At               time.Time      `json:"at"`                // the query's "at"
+	Running          int            `json:"running"`           // kind local_agent and running
+	ByType           []ModTypeCount `json:"byType,omitempty"`  // running local agents by AgentInfo.type: count desc, then type asc
+	CostUSD          *float64       `json:"costUsd,omitempty"` // sum of cost.usd of running local agents; nil when none reports one
+	Tokens           int            `json:"tokens"`            // running local agents' usage[]: input+output+cache_read+cache_creation
+	TeammatesRunning int            `json:"teammatesRunning"`  // kind in_process_teammate and running
+	TeammatesIdle    int            `json:"teammatesIdle"`     // kind in_process_teammate and status idle
+}
+
+// ModTypeCount is a running-agent count for one AgentInfo.type.
+type ModTypeCount struct {
+	Type  string `json:"type"`
+	Count int    `json:"count"`
+}
+
+// ModTurn is the latest main-loop turn outcome.
+type ModTurn struct {
+	Duration time.Duration `json:"duration"` // durationMs
+	Reason   string        `json:"reason"`   // answer|aborted|refusal|error
+}
+
+// ModContext is the latest context-window breakdown from a usage query.
+type ModContext struct {
+	At                   time.Time            `json:"at"`                             // the query's "at"
+	AutoCompactThreshold *int                 `json:"autoCompactThreshold,omitempty"` // nil when auto-compact is off or unreported
+	TotalTokens          int                  `json:"totalTokens"`                    // breakdown.totalTokens (an estimate)
+	Categories           []ModContextCategory `json:"categories,omitempty"`           // breakdown order
+}
+
+// ModContextCategory is one category of a ModContext breakdown.
+type ModContextCategory struct {
+	Name   string `json:"name"`
+	Tokens int    `json:"tokens"`
+	Kind   string `json:"kind"` // used|free|buffer|deferred
+}
+
+// ModBackground counts the background work reported at the latest main-loop Stop.
+type ModBackground struct {
+	Tasks int `json:"tasks"` // len(Stop.background_tasks)
+	Crons int `json:"crons"` // len(Stop.session_crons)
 }
 
 // ToolSnapshot describes the tool that produced the snapshot.

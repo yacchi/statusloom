@@ -146,6 +146,7 @@ statusloom/
 │   ├── config/
 │   ├── detect/
 │   ├── gitstatus/
+│   ├── modrec/
 │   ├── render/
 │   ├── schema/
 │   └── webconfig/
@@ -168,6 +169,11 @@ statusloom/
 │   ├── claude/
 │   ├── codex/
 │   └── copilot/
+│
+├── .claude-plugin/
+│   └── marketplace.json
+├── plugins/
+│   └── statusloom/
 │
 ├── docs/
 ├── scripts/
@@ -208,6 +214,10 @@ Gitブランチ、変更状況、ahead/behind、numstat取得。
 
 共有JSONキャッシュ、atomic write、lease管理。
 
+#### `internal/modrec`
+
+statusloom modが送るイベント・クエリ（`statusloom mod-ingest`）をセッションごとのrecordへ畳み込む。描画経路はrecordを読むだけ。
+
 #### `apps/configurator`
 
 ローカル設定用Reactアプリ。
@@ -215,6 +225,10 @@ Gitブランチ、変更状況、ahead/behind、numstat取得。
 #### `apps/room`
 
 将来の共有サイト。
+
+#### `plugins/statusloom`
+
+Claude Code mod（hooks module）。AgentRowを`statusloom claude-agent-row`へ中継し、イベントを`statusloom mod-ingest`へ送る。解釈は持たない。リポジトリ直下の`.claude-plugin/marketplace.json`がmarketplace。
 
 #### `packages/editor`
 
@@ -492,7 +506,6 @@ flexターゲット幅はツール設定ではなく各flex-separator Widgetの`
 ### 将来候補（未実装）
 
 - output-style（stdinに既に存在するデータ）
-- subagentStatusLine対応（サブエージェントパネル行の差し替え。通常のstatusLineとは別プロトコルで、stdinの構造も異なる。`tasks`配列を受け`{"id","content"}`のJSON行を出力する。per-taskの`model`/`contextWindowSize`はv2.1.205+）
 
 ```go
 type WidgetDefinition struct {
@@ -648,7 +661,7 @@ WidgetSpecは`showWhen`・`colorRules`・`hyperlink`も受け付ける（詳細�
 補足:
 
 - 色はANSI16色名（`cyan`、`brightBlack`など）、256色番号（`"ansi256:242"`）、hex（`"#8be9fd"`）をサポートする。`colorLevel`（`none` / `ansi16` / `ansi256` / `truecolor`）に応じてダウングレードする
-- `refreshInterval`はClaude Code側`settings.json`の設定項目であり、このファイルには持たせない（setupコマンドの責務）。`statusloom setup claude-code`は既定で30秒を書き込む（`statusLine`と`subagentStatusLine`の両方）。`--refresh-interval <seconds>`（最小1秒、Claude Code公式仕様）で変更し、`0`で未設定にする
+- `refreshInterval`はClaude Code側`settings.json`の設定項目であり、このファイルには持たせない（setupコマンドの責務）。`statusloom setup claude-code`は既定で30秒を書き込む（`statusLine`のみ。`subagentStatusLine`は書かず、statusloomが書いたものは取り除く）。`--refresh-interval <seconds>`（最小1秒、Claude Code公式仕様）で変更し、`0`で未設定にする
 
 ---
 

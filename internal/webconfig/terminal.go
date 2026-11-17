@@ -180,7 +180,8 @@ var spawnTerminalCmd = func(dir string) *exec.Cmd {
 	cmd.Dir = dir
 	// Prepend the running config-server binary's own directory to PATH so that
 	// `statusloom` invoked inside the embedded terminal — the statusLine
-	// (`statusloom monitor --draft`), the subagentStatusLine, and any
+	// (`statusloom monitor --draft`), the statusloom mod's agent rows
+	// (`statusloom claude-agent-row`), and any
 	// `statusloom draft push` / `statusloom claude` the session runs — resolves
 	// to the SAME build that is driving this UI, not a different (possibly
 	// stale) statusloom found earlier on PATH. This keeps the embedded session's

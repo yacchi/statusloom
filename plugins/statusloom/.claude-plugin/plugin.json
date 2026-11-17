@@ -1,0 +1,9 @@
+{
+    "name": "statusloom",
+    "version": "1.0.0",
+    "description": "Draws subagent rows with statusloom's <subagent> region and records session activity for its mod fields; needs the statusloom binary on PATH",
+    "author": {
+        "name": "yacchi"
+    },
+    "license": "Apache-2.0"
+}

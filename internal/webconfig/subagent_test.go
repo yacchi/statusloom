@@ -43,7 +43,7 @@ func TestKnownTool_RejectsUnknownTool(t *testing.T) {
 // TestDSLFields_ClaudeCode_IncludesMergedTaskFields verifies GET
 // /api/dsl/fields?tool=claude-code carries the task-* fields the merged
 // catalog folds in (internal/dsl/registry.go's concatFields), matching the
-// registry exactly, with task-effort still tagged capability=subagent-effort.
+// registry exactly, with no capability gate on any task-* field.
 func TestDSLFields_ClaudeCode_IncludesMergedTaskFields(t *testing.T) {
 	isolateConfigAndCache(t)
 	ts := startTestServer(t, time.Hour)
@@ -70,9 +70,9 @@ func TestDSLFields_ClaudeCode_IncludesMergedTaskFields(t *testing.T) {
 		}
 		if f.Name == "task-effort" {
 			sawEffort = true
-			if f.Capability != "subagent-effort" {
-				t.Errorf("task-effort capability = %q, want subagent-effort", f.Capability)
-			}
+		}
+		if strings.HasPrefix(f.Name, "task-") && f.Capability != "" {
+			t.Errorf("%s capability = %q, want none", f.Name, f.Capability)
 		}
 	}
 	if !sawTask {
@@ -289,6 +289,87 @@ func TestDSLPreview_SubagentSection_ExplicitCompletedSample(t *testing.T) {
 	// met, so the token stat is present.
 	if !strings.Contains(rendered.String(), "28.7k") {
 		t.Errorf("rendered = %q, want it to contain the completed sample's token count (28.7k)", rendered.String())
+	}
+}
+
+// TestDSLPreview_SubagentSection_AgentRowFields verifies the AgentRow mod
+// fields render with their sample values in the subagent-section preview:
+// string/enum fields, currency, compact-number tokens, and a when= on a
+// text metric (task-agent-type) selecting the matching row.
+func TestDSLPreview_SubagentSection_AgentRowFields(t *testing.T) {
+	isolateConfigAndCache(t)
+	ts := startTestServer(t, time.Hour)
+
+	const source = `<statusloom version="1" tool="claude-code">
+  <layout name="Default" active="true">
+    <subagent>
+      <line>
+        <field name="task-name"/>
+        <text>/</text>
+        <field name="task-agent-type"/>
+        <text>/</text>
+        <field name="task-effort"/>
+        <text>/</text>
+        <field name="task-cost"/>
+        <text>/</text>
+        <field name="task-depth"/>
+        <text>/</text>
+        <field name="task-input-tokens" format="compact-number"/>
+        <text>/</text>
+        <field name="task-output-tokens" format="compact-number"/>
+        <text>/</text>
+        <field name="task-cache-read-tokens" format="compact-number"/>
+        <text>/</text>
+        <field name="task-cache-creation-tokens" format="compact-number"/>
+        <span when="task-agent-type eq &quot;Explore&quot;" prefix="[explore]"/>
+      </line>
+    </subagent>
+  </layout>
+</statusloom>
+`
+	pv := putPOST(t, ts, "/api/dsl/preview", map[string]any{
+		"tool": "claude-code", "source": source, "width": 120, "section": "subagent",
+	})
+	defer pv.Body.Close()
+	if pv.StatusCode != http.StatusOK {
+		body := map[string]any{}
+		_ = decodeJSON(pv.Body, &body)
+		t.Fatalf("preview status = %d, want 200, body = %+v", pv.StatusCode, body)
+	}
+	var body struct {
+		SubagentPreview map[string][]struct {
+			Segments []struct {
+				Text    string `json:"text"`
+				Visible bool   `json:"visible"`
+			} `json:"segments"`
+		} `json:"subagentPreview"`
+	}
+	if err := decodeJSON(pv.Body, &body); err != nil {
+		t.Fatalf("decode preview: %v", err)
+	}
+	rows := body.SubagentPreview["L0"]
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(rows))
+	}
+	rowText := func(row int) string {
+		var b strings.Builder
+		for _, seg := range rows[row].Segments {
+			if seg.Visible {
+				b.WriteString(seg.Text)
+			}
+		}
+		return b.String()
+	}
+	wantFirst := "render-review/general-purpose/high/$0.42/0/18.2k/4.1k/11.8k/6.2k"
+	if got := rowText(0); got != wantFirst {
+		t.Errorf("row 0 = %q, want %q", got, wantFirst)
+	}
+	// Row 1 is an Explore task: the when= span appears; row 0 must not show it.
+	if got := rowText(1); !strings.Contains(got, "[explore]") {
+		t.Errorf("row 1 = %q, want the when=-guarded [explore] prefix", got)
+	}
+	if got := rowText(0); strings.Contains(got, "[explore]") {
+		t.Errorf("row 0 = %q, must not show the Explore-only span", got)
 	}
 }
 

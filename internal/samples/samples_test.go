@@ -77,6 +77,35 @@ func TestSnapshot_FullSampleHasSubagent(t *testing.T) {
 	}
 }
 
+// TestSnapshot_FullSampleHasMod verifies fullSample embeds a statusloom mod
+// record with every sub-struct the mod-* palette previews read, so those
+// previews render real values instead of being empty.
+func TestSnapshot_FullSampleHasMod(t *testing.T) {
+	snap, ok := Snapshot(Full, time.Now())
+	if !ok {
+		t.Fatal("Snapshot(Full) ok = false")
+	}
+	mod := snap.Mod
+	if mod == nil {
+		t.Fatal("Snapshot(Full).Mod is nil, want a sample mod record")
+	}
+	if mod.Agents == nil {
+		t.Error("Snapshot(Full).Mod.Agents is nil")
+	}
+	if mod.LastTurn == nil {
+		t.Error("Snapshot(Full).Mod.LastTurn is nil")
+	}
+	if mod.Context == nil {
+		t.Error("Snapshot(Full).Mod.Context is nil")
+	}
+	if mod.SessionModel == "" || mod.TurnModel == "" || mod.SessionModel == mod.TurnModel {
+		t.Errorf("Snapshot(Full).Mod models = %q, %q, want two different models (a fallback)", mod.SessionModel, mod.TurnModel)
+	}
+	if mod.Background == nil {
+		t.Error("Snapshot(Full).Mod.Background is nil")
+	}
+}
+
 // TestSubagentTasks_KnownNames verifies both subagent sample names resolve
 // to a 3-task list whose statuses match "running"/"completed" respectively.
 func TestSubagentTasks_KnownNames(t *testing.T) {
@@ -110,6 +139,41 @@ func TestSubagentTasks_NonSubagentName(t *testing.T) {
 	for _, name := range []string{Full, EarlySession, "does-not-exist"} {
 		if _, ok := SubagentTasks(name, time.Now()); ok {
 			t.Errorf("SubagentTasks(%q) ok = true, want false", name)
+		}
+	}
+}
+
+// TestSubagentTasks_AgentRowFieldsPopulated verifies every sample subagent
+// task carries a value for each AgentRow mod field, so the palette preview
+// and the subagent-section preview show real content for them (the values
+// are sample data, not the legacy-absent state).
+func TestSubagentTasks_AgentRowFieldsPopulated(t *testing.T) {
+	now := time.Date(2026, 7, 11, 10, 0, 0, 0, time.UTC)
+	for _, name := range []string{SubagentRunning, SubagentCompleted} {
+		tasks, ok := SubagentTasks(name, now)
+		if !ok {
+			t.Fatalf("SubagentTasks(%q) not ok", name)
+		}
+		for i, task := range tasks {
+			if task.Effort == nil || *task.Effort == "" {
+				t.Errorf("%s task %d: Effort unset", name, i)
+			}
+			if task.AgentType == "" {
+				t.Errorf("%s task %d: AgentType unset", name, i)
+			}
+			if task.Name == "" {
+				t.Errorf("%s task %d: Name unset", name, i)
+			}
+			if task.CostUSD == nil {
+				t.Errorf("%s task %d: CostUSD unset", name, i)
+			}
+			if task.Depth == nil {
+				t.Errorf("%s task %d: Depth unset", name, i)
+			}
+			if task.InputTokens == nil || task.OutputTokens == nil ||
+				task.CacheReadTokens == nil || task.CacheCreationTokens == nil {
+				t.Errorf("%s task %d: a token field is unset", name, i)
+			}
 		}
 	}
 }

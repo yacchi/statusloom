@@ -86,7 +86,7 @@ statusloom setup claude-code
 ```
 
 これは `~/.claude/settings.json` に `statusLine.command` を書き込みます
-（同等の手書き JSON は下記[使い方](#使い方)を参照）。`CLAUDE_CONFIG_DIR` で
+（同等の手書き JSON は下記[使い方](#使い方)を参照）。あわせて statusloom のマーケットプレイスを登録し、statusloom mod を有効にします（詳細は[セットアップ](#セットアップ)）。`CLAUDE_CONFIG_DIR` で
 プロファイルを切り替えている場合はそれに追随し、
 `$CLAUDE_CONFIG_DIR/settings.json` に書き込みます。`--settings <path>` は
 常に両者を上書きします。
@@ -111,9 +111,25 @@ Claude Code はプロンプトごとにこのコマンドを起動し、セッ�
 
 ### サブエージェントのステータスライン
 
-Claude Code の `subagentStatusLine` 設定は、エージェントパネル内で実行中の
-サブエージェント 1 件につき 1 行を描画します。Statusloom は専用コマンドで
-これを実装しています:
+エージェントパネル内で実行中のサブエージェント 1 件につき 1 行は、**statusloom mod**（Claude Code 向けの mod）が描画します。mod の AgentRow フックが `statusloom claude-agent-row` を実行し、同じ `claude-code` ドキュメントの `<subagent>` 要素を描画します（別ドキュメントではありません。[設定](#設定)参照）。mod は次のどちらかでインストールします:
+
+```sh
+# Claude Code 内
+/plugin install statusloom --marketplace yacchi/statusloom
+
+# シェル
+claude plugin install statusloom --marketplace yacchi/statusloom
+```
+
+[セットアップ](#セットアップ)の `statusloom setup claude-code` も mod を有効にします。
+
+`<subagent>` で使えるフィールドは次のとおりです（[フィールド](#フィールド)参照）: `task-description`、`task-model`、`task-model-id`、`task-tokens`、`task-context-size`、`task-context-percent`、`task-status`、`task-duration`、および mod だけが値を入れる `task-effort`、`task-agent-type`、`task-name`、`task-cost`、`task-depth`、`task-input-tokens`、`task-output-tokens`、`task-cache-read-tokens`、`task-cache-creation-tokens`。mod を通すと、`task-status` には Claude Code が報告するそのエージェントの状態が表示されます。
+
+`statusloom claude-agent-row --draft`（または環境変数 `STATUSLOOM_AGENT_ROW_DRAFT=1`）は保存済みではなく共有 draft を描画します（`statusloom claude` の `--draft` と同じ扱い）。monitor ワークスペースはこの環境変数を設定して、未保存のサブエージェント行の編集をプレビューします。`--preview` を付けると stdin を読まずに組み込みの代表的なリクエストを描画するので、確認用の入力を手で書く必要はありません。`--draft` と併用できます。
+
+`subagentStatusLine` が設定されている場合は、Claude Code がその出力で行を描画し、mod は行をそのまま残します（設定された行が優先されます）。
+
+mod のない Claude Code で `subagentStatusLine` を手書きする場合は、`statusloom claude-subagent` で描画できます。Claude Code はサブエージェントのタスク配列を JSON で stdin に流し、`statusloom claude-subagent` はタスクごとに `{"id", "content"}` の JSON 行を stdout に書きます。読むのは公式の stdin キー（`tasks[]`）だけで、mod 専用のフィールドは空のまま省略されます（値は捏造しません）。
 
 ```json
 {
@@ -124,27 +140,7 @@ Claude Code の `subagentStatusLine` 設定は、エージェントパネル内�
 }
 ```
 
-Claude Code はサブエージェントのタスク配列を JSON で stdin に流し、
-`statusloom claude-subagent` はタスクごとに `{"id", "content"}` の JSON 行を
-stdout に書きます。サブエージェント行は**同じ `claude-code` ドキュメントの中の
-`<subagent>` 要素**として設定します（別ドキュメントではありません。
-[設定](#設定)参照）。使えるのは専用のフィールド群 — `task-description`、
-`task-model`、`task-model-id`、`task-tokens`、`task-context-size`、
-`task-context-percent`、`task-status`、`task-duration`（[フィールド](#フィールド)
-参照）。`--draft` を付けると保存済みではなく共有 draft を描画します
-（`statusloom claude` の `--draft` と同じ扱い）。monitor ワークスペースは
-これを使って未保存のサブエージェント行の編集をプレビューします。`--preview` を
-付けると stdin を読まずに組み込みの代表的ペイロード（サンプルタスク数件）を
-描画するので、`tasks[]` の JSON を手で書かずに行を確認できます。`--draft` と
-併用できます。
-
-**プロトコル上の制限:** `subagentStatusLine` の stdin ペイロードには
-サブエージェントごとの reasoning effort やエージェント種別名
-（`general-purpose` など）が含まれていないため、Claude Code 自身の既定行が
-先頭に出すエージェント種別ラベルは再現できません。利用できるのはモデル・
-トークン・コンテキスト・所要時間・状態のみです。前方互換のために
-`task-effort` フィールドはカタログに登録されていますが、現状では常に
-利用不能です。
+この手書きの行も `statusloom setup claude-code` を実行すると取り除かれます（statusloom が書いた行として扱うため）。
 
 ### 設定 UI
 
@@ -207,13 +203,32 @@ statusloom setup claude-code
 statusloom setup claude-code --refresh-interval 60
 ```
 
-Claude Code が `statusloom claude`（`statusLine`）と
-`statusloom claude-subagent`（`subagentStatusLine`）を実行するよう設定します。
+Claude Code が `statusloom claude`（`statusLine`）を実行するよう設定し、ユーザー設定に次の JSON をマージします（両オブジェクトの他のエントリは変更しません）:
+
+```json
+{
+  "extraKnownMarketplaces": {"statusloom": {"source": {"source": "github", "repo": "yacchi/statusloom"}}},
+  "enabledPlugins": {"statusloom@statusloom": true}
+}
+```
+
 既存の設定はバックアップされ、別のステータスラインコマンドを置き換える場合は
 確認を求めます。
 
+`subagentStatusLine` は書きません。statusloom が書いた `subagentStatusLine`
+（`statusloom claude-subagent`）は、実行のたびに確認なしで取り除きます。他のツールが
+設定した `subagentStatusLine` は残し、エージェント行は引き続きそのツールが描画する旨を
+表示します。
+
+マーケットプレイスと mod の反映: 上の 2 つのキーがあると、Claude Code は**次回の
+セッション開始後**にバックグラウンドでマーケットプレイスを clone し、mod をインストール
+します（ネットワークが必要です）。起動済みのセッションは `/reload-plugins` で読み込めます。
+すぐに入れる場合は `claude plugin install statusloom@statusloom` を実行してください。
+mod はユーザーと同じ権限で動きます。mod に対応した Claude Code のバージョンが必要です
+（2.1.326 で確認）。
+
 `--refresh-interval <秒>` は Claude Code 自身の `refreshInterval` 設定
-（最小 1 秒）を、`statusLine` と `subagentStatusLine` の両方に対して設定します。
+（最小 1 秒）を `statusLine` に対してだけ設定します。
 Claude Code はアイドル中は新しいステータスラインイベントを発行しないため、
 `five-hour-reset` や `weekly-reset` のようなカウントダウン系ウィジェットは
 次のイベントまで止まります。そうしたウィジェットを設定する場合はこのフラグを
@@ -260,6 +275,13 @@ stdout に書きます。`--check` は書き込まずに、整形でドキュメ
 Git・Claude Code のセットアップを検査します — カウントダウン系フィールド
 （`five-hour-reset`・`weekly-reset`）が設定されているのに `refreshInterval`
 が未設定かどうかも含みます。
+
+mod も検査します。`statusloom@statusloom` が有効なら PASS（他のツールの
+`subagentStatusLine` がエージェント行を描画している場合はその旨も表示します）。
+有効でなければ WARN（エージェント行と mod のフィールドは空のままです。
+`statusloom setup claude-code` を実行してください）。statusloom 自身の
+`subagentStatusLine` が残っていれば WARN（setup を実行すると移行されます）。
+mod の検査で doctor が失敗することはありません。
 
 ### エディタやエージェントから draft を編集する
 
@@ -358,9 +380,35 @@ Statusloom は Claude Code 向けに、モデル・コンテキスト使用量�
 参照）は、サブエージェント 1 タスクにスコープされた専用フィールドのみを
 受け付けます: `task-description`、`task-model`、`task-model-id`、
 `task-tokens`、`task-context-size`、`task-context-percent`、`task-status`、
-`task-duration`。`task-effort` も登録されていますが、Claude Code の
-`subagentStatusLine` プロトコルがサブエージェントごとの reasoning effort を
-公開していないため、現状は常に利用不能です。
+`task-duration` です。mod 専用の `task-effort`、`task-agent-type`、`task-name`、`task-cost`、`task-depth`、`task-input-tokens`、`task-output-tokens`、`task-cache-read-tokens`、`task-cache-creation-tokens` は mod（`claude-agent-row`）からのみ値が入ります。手書きの `subagentStatusLine` と `claude-subagent` では空のままです。
+
+### mod が記録するセッションの状況
+
+statusloom mod はセッションのイベントを記録し、`statusloom mod-ingest` がそれをセッションごとのキャッシュに書きます。描画はそのキャッシュを読むだけなので、描画中にネットワークやプロセス起動は発生しません。以下のフィールドはメイン行でのみ働き（`<subagent>` の中では使えません）、mod がなければ空のまま自身を隠します。
+
+別のプラグイン（組織のセキュリティプラグインなど）が入っている環境では、値の取得元が影響します。モデルの切り替えとフォールバックはターン終了ごとに mod が観測するセッションのモデルから取るため、そうした環境でも動きます。一方 `permission-mode`・`background-tasks`・`session-crons` は Claude Code の classic フックイベントに頼っており、別のプラグインが mod より先にそのイベントを横取りすることがあります。その場合、これらのフィールドはイベントが届くまで（0 ではなく）空のままです。
+
+| フィールド | 内容 |
+|---|---|
+| `subagents-running` | 実行中のサブエージェント数 |
+| `subagents-by-type` | 種別ごとの内訳（`Explore×2 Plan` の形式） |
+| `subagents-cost` | サブエージェントのコスト合計（`$0.42`） |
+| `subagents-tokens` | サブエージェントのトークン合計 |
+| `teammates-running` | 実行中のチームメイト数 |
+| `teammates-idle` | 待機中のチームメイト数 |
+| `last-turn-duration` | 直近ターンの所要時間 |
+| `last-turn-reason` | 直近ターンの結果（`answer`・`aborted`・`refusal`・`error`） |
+| `permission-mode` | 権限モード（`default`・`acceptEdits`・`plan`・`auto`・`dontAsk`・`bypassPermissions`） |
+| `autocompact-remaining` | 自動 compact までの残りトークン数 |
+| `context-breakdown` | コンテキストの内訳（多い順、` · ` 区切り） |
+| `model-switches` | ターンの間にセッションのモデルが変わった回数 |
+| `model-fallback` | 直近のターンに応答したモデルがセッションのモデルと違うときの `<セッションのモデル>→<応答したモデル>` |
+| `background-tasks` | バックグラウンドタスク数 |
+| `session-crons` | セッションの定期実行（cron）数 |
+
+`when` と `<color-rule>` で使えるメトリクスは次の 13 個です: `subagents-running`、`subagents-cost-usd`、`subagents-tokens`、`teammates-running`、`teammates-idle`、`last-turn-seconds`、`last-turn-reason`、`model-switches`、`permission-mode`、`model-fallback`、`autocompact-remaining-tokens`、`background-tasks`、`session-crons`。`last-turn-reason`、`permission-mode` は文字列のメトリクスで `eq`/`ne` で比較し、`model-fallback` は真偽値です。
+
+圧縮（compaction）の回数は従来どおりトランスクリプトから得る `compaction-count`・`compaction-auto`・`compaction-manual` で、mod のフィールドではありません。保留中の権限確認を示すフィールドはありません（Claude Code は権限確認の表示中ステータスラインを隠します）。
 
 ### `<span>` によるグループ化
 
@@ -622,8 +670,7 @@ statusloom は、どの Claude Code プロセスがどのセッションを表�
 - 書き出しはライブ描画のときだけ行われます。`statusloom claude` と
   `statusloom render`（`--draft` / `--set` なし）、および `statusloom monitor`
   （`--draft` の有無は問いません。実行中の Claude Code セッションだからです）。
-- プレビュー（`--draft` / `--set`）、`statusloom claude-subagent`（stdin の
-  ペイロードが別物のため）、stdin が通常ファイルのときは何も書きません。
+- プレビュー（`--draft` / `--set`）、`statusloom claude-subagent` と `statusloom claude-agent-row`（どちらも stdin のペイロードが別物のため）、stdin が通常ファイルのときは何も書きません。
 - Claude Code プロセスは、Claude Code が実行するコマンドに設定する
   `CLAUDE_PID` から特定します。その pid は、ステータスラインコマンドの親で
   ある場合か、親からシェルだけを（最大 4 段）辿って到達できる場合にのみ

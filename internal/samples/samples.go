@@ -86,6 +86,12 @@ func fptr(v float64) *float64 {
 	return &v
 }
 
+// strPtr returns a pointer to v, for populating the optional string fields of
+// schema.SubagentSnapshot in sample snapshots.
+func strPtr(v string) *string {
+	return &v
+}
+
 // iptr returns a pointer to v, for populating the optional int fields of
 // schema.PromptCache in sample snapshots.
 func iptr(v int) *int {
@@ -201,6 +207,45 @@ func fullSample(now time.Time) schema.StatusSnapshot {
 		// preview in GET /api/dsl/fields, instead of falling back to
 		// previewFallback the way they would against a nil Subagent.
 		Subagent: &runningSubagentTasks(now)[0],
+		// Mod carries the statusloom mod record so the mod-* palette previews
+		// render real values (modSample documents the fields).
+		Mod: modSample(now),
+	}
+}
+
+// modSample is the statusloom mod record for fullSample: running agents, the
+// last turn, the permission mode, a context breakdown, an auto
+// model switch, and background work. All times derive from now.
+func modSample(now time.Time) *schema.ModSnapshot {
+	return &schema.ModSnapshot{
+		UpdatedAt: now.Add(-3 * time.Second),
+		Agents: &schema.ModAgents{
+			At:               now.Add(-3 * time.Second),
+			Running:          3,
+			ByType:           []schema.ModTypeCount{{Type: "Explore", Count: 2}, {Type: "general-purpose", Count: 1}},
+			CostUSD:          fptr(0.84),
+			Tokens:           186000,
+			TeammatesRunning: 1,
+			TeammatesIdle:    1,
+		},
+		LastTurn:       &schema.ModTurn{Duration: 72 * time.Second, Reason: "answer"},
+		PermissionMode: "plan",
+		Context: &schema.ModContext{
+			At:                   now.Add(-3 * time.Second),
+			AutoCompactThreshold: iptr(167000),
+			TotalTokens:          72000,
+			Categories: []schema.ModContextCategory{
+				{Name: "System prompt", Tokens: 3200, Kind: "used"},
+				{Name: "Tools", Tokens: 9800, Kind: "used"},
+				{Name: "Messages", Tokens: 54000, Kind: "used"},
+				{Name: "Free space", Tokens: 100000, Kind: "free"},
+				{Name: "Autocompact buffer", Tokens: 33000, Kind: "buffer"},
+			},
+		},
+		ModelSwitches: 1,
+		SessionModel:  "Opus 4.8",
+		TurnModel:     "Sonnet 4.6",
+		Background:    &schema.ModBackground{Tasks: 1, Crons: 1},
 	}
 }
 
@@ -249,43 +294,70 @@ const subagentSampleModelID = "claude-opus-4-8"
 func runningSubagentTasks(now time.Time) []schema.SubagentSnapshot {
 	return []schema.SubagentSnapshot{
 		{
-			ID:                "b1a2c3d4e5f60718",
-			Type:              "local_agent",
-			Status:            "running",
-			Description:       "Review render pipeline changes",
-			Label:             "Review render pipeline changes",
-			StartedAt:         subagentSampleStarted,
-			ModelID:           subagentSampleModelID,
-			ModelDisplay:      claude.PrettyModelName(subagentSampleModelID),
-			ContextWindowSize: 200000,
-			TokenCount:        28454,
-			Cwd:               "/Users/dev/myapp",
+			ID:                  "b1a2c3d4e5f60718",
+			Type:                "local_agent",
+			Status:              "running",
+			Description:         "Review render pipeline changes",
+			Label:               "Review render pipeline changes",
+			StartedAt:           subagentSampleStarted,
+			ModelID:             subagentSampleModelID,
+			ModelDisplay:        claude.PrettyModelName(subagentSampleModelID),
+			ContextWindowSize:   200000,
+			TokenCount:          28454,
+			Cwd:                 "/Users/dev/myapp",
+			Effort:              strPtr("high"),
+			AgentType:           "general-purpose",
+			Name:                "render-review",
+			CostUSD:             fptr(0.42),
+			Depth:               iptr(0),
+			InputTokens:         iptr(18200),
+			OutputTokens:        iptr(4100),
+			CacheReadTokens:     iptr(11800),
+			CacheCreationTokens: iptr(6200),
 		},
 		{
-			ID:                "c2b3d4e5f6071829",
-			Type:              "local_agent",
-			Status:            "running",
-			Description:       "Fix flaky test in useDragEditing",
-			Label:             "Fix flaky test in useDragEditing",
-			StartedAt:         subagentSampleStarted.Add(2 * time.Minute),
-			ModelID:           "claude-sonnet-4-6",
-			ModelDisplay:      claude.PrettyModelName("claude-sonnet-4-6"),
-			ContextWindowSize: 200000,
-			TokenCount:        9120,
-			Cwd:               "/Users/dev/myapp",
+			ID:                  "c2b3d4e5f6071829",
+			Type:                "local_agent",
+			Status:              "running",
+			Description:         "Fix flaky test in useDragEditing",
+			Label:               "Fix flaky test in useDragEditing",
+			StartedAt:           subagentSampleStarted.Add(2 * time.Minute),
+			ModelID:             "claude-sonnet-4-6",
+			ModelDisplay:        claude.PrettyModelName("claude-sonnet-4-6"),
+			ContextWindowSize:   200000,
+			TokenCount:          9120,
+			Cwd:                 "/Users/dev/myapp",
+			Effort:              strPtr("medium"),
+			AgentType:           "Explore",
+			Name:                "fix-flaky",
+			CostUSD:             fptr(0.07),
+			Depth:               iptr(1),
+			InputTokens:         iptr(7200),
+			OutputTokens:        iptr(1100),
+			CacheReadTokens:     iptr(5400),
+			CacheCreationTokens: iptr(1300),
 		},
 		{
-			ID:                "d3c4e5f607182930",
-			Type:              "local_agent",
-			Status:            "running",
-			Description:       "Update DSL_API.md preview contract",
-			Label:             "Update DSL_API.md preview contract",
-			StartedAt:         subagentSampleStarted.Add(4 * time.Minute),
-			ModelID:           subagentSampleModelID,
-			ModelDisplay:      claude.PrettyModelName(subagentSampleModelID),
-			ContextWindowSize: 200000,
-			TokenCount:        640,
-			Cwd:               "/Users/dev/myapp",
+			ID:                  "d3c4e5f607182930",
+			Type:                "local_agent",
+			Status:              "running",
+			Description:         "Update DSL_API.md preview contract",
+			Label:               "Update DSL_API.md preview contract",
+			StartedAt:           subagentSampleStarted.Add(4 * time.Minute),
+			ModelID:             subagentSampleModelID,
+			ModelDisplay:        claude.PrettyModelName(subagentSampleModelID),
+			ContextWindowSize:   200000,
+			TokenCount:          640,
+			Cwd:                 "/Users/dev/myapp",
+			Effort:              strPtr("low"),
+			AgentType:           "Explore",
+			Name:                "docs-api",
+			CostUSD:             fptr(0.01),
+			Depth:               iptr(1),
+			InputTokens:         iptr(480),
+			OutputTokens:        iptr(160),
+			CacheReadTokens:     iptr(0),
+			CacheCreationTokens: iptr(640),
 		},
 	}
 }

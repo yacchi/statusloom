@@ -19,6 +19,39 @@ import (
 // already carry a usable refreshInterval for that object.
 const defaultRefreshInterval = 30
 
+// modMarketplaceName is the key setup merges into Claude Code's
+// extraKnownMarketplaces: the name the statusloom marketplace is known by.
+const modMarketplaceName = "statusloom"
+
+// modMarketplaceRepo is the GitHub repository that serves the statusloom
+// marketplace (its .claude-plugin/marketplace.json).
+const modMarketplaceRepo = "yacchi/statusloom"
+
+// modPluginID is the enabledPlugins key of the statusloom mod: plugin name
+// "statusloom" from the marketplace named modMarketplaceName.
+const modPluginID = "statusloom@statusloom"
+
+// modInstallNotice is printed after setup writes the settings. It states the
+// install truth: Claude Code installs the mod itself, after the next session
+// start, and a running session needs /reload-plugins to load it.
+const modInstallNotice = "The statusloom mod (%[1]s) is enabled. Claude Code clones the %[2]s marketplace and installs the mod in the background after the next session start (network needed).\n" +
+	"A session that is already running loads it with /reload-plugins. To install right away: claude plugin install %[1]s\n" +
+	"The mod runs with your permissions and needs a Claude Code version with mods (verified on 2.1.326).\n"
+
+// settingsChange is one settings value that setup adds, replaces or removes.
+// label names the value as printed in the diff: statusLine,
+// subagentStatusLine, extraKnownMarketplaces.statusloom or
+// enabledPlugins.statusloom@statusloom. had reports whether the value existed
+// before; before holds it when it did. remove marks a deletion, in which case
+// after is not printed.
+type settingsChange struct {
+	label  string
+	before any
+	had    bool
+	after  any
+	remove bool
+}
+
 // desiredStatusLine builds the statusLine object statusloom wants written
 // to Claude Code settings. refreshInterval < 1 means "unset": the key is
 // omitted entirely (what `--refresh-interval 0` asks for).
@@ -35,16 +68,59 @@ func desiredStatusLine(refreshInterval float64) map[string]any {
 	return m
 }
 
-// desiredSubagentStatusLine builds the subagentStatusLine object statusloom
-// wants written to Claude Code settings, mirroring desiredStatusLine's
-// shape and refreshInterval handling for the `statusloom claude-subagent`
-// command (Claude Code's subagentStatusLine feature).
-func desiredSubagentStatusLine(refreshInterval float64) map[string]any {
-	m := map[string]any{"type": "command", "command": "statusloom claude-subagent"}
-	if refreshInterval >= 1 {
-		m["refreshInterval"] = refreshInterval
+// desiredMarketplace builds the extraKnownMarketplaces entry that points at
+// the statusloom GitHub marketplace. Every value is a string, so the entry
+// compares equal, via reflect.DeepEqual, to one round-tripped through JSON.
+func desiredMarketplace() map[string]any {
+	return map[string]any{"source": map[string]any{"source": "github", "repo": modMarketplaceRepo}}
+}
+
+// isStatusloomSubagentStatusLine reports whether v, a decoded
+// subagentStatusLine value, is one statusloom wrote: its command splits on
+// whitespace into a first token whose base name (after the last "/" or "\")
+// is statusloom or statusloom.exe, followed by the claude-subagent
+// subcommand. Quoted paths and any other command count as third-party.
+func isStatusloomSubagentStatusLine(v any) bool {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return false
 	}
-	return m
+	command, ok := m["command"].(string)
+	if !ok {
+		return false
+	}
+	tok := strings.Fields(command)
+	if len(tok) < 2 {
+		return false
+	}
+	base := tok[0][strings.LastIndexAny(tok[0], "/\\")+1:]
+	return (base == "statusloom" || base == "statusloom.exe") && tok[1] == "claude-subagent"
+}
+
+// mergeObjectEntry sets doc[key][entry] to want, keeping every other entry of
+// the object. A missing or null key gets a new object. A key holding a
+// non-object value is replaced by an object holding only this entry; that is
+// reported as a replacement (replaces is true). ok is false when the entry
+// already equals want, in which case nothing changes.
+func mergeObjectEntry(doc map[string]any, key, entry string, want any) (c settingsChange, replaces, ok bool) {
+	raw, present := doc[key]
+	if present && raw != nil {
+		if _, isObject := raw.(map[string]any); !isObject {
+			doc[key] = map[string]any{entry: want}
+			return settingsChange{label: key, before: raw, had: true, after: doc[key]}, true, true
+		}
+	}
+	m, _ := raw.(map[string]any)
+	if m == nil {
+		m = map[string]any{}
+		doc[key] = m
+	}
+	old, had := m[entry]
+	if had && reflect.DeepEqual(old, want) {
+		return settingsChange{}, false, false
+	}
+	m[entry] = want
+	return settingsChange{label: key + "." + entry, before: old, had: had, after: want}, had, true
 }
 
 // resolveRefreshInterval decides the refreshInterval for one settings object
@@ -67,6 +143,10 @@ func resolveRefreshInterval(flagSet bool, flagValue int, existing any) float64 {
 	return defaultRefreshInterval
 }
 
+// runSetup implements `statusloom setup claude-code`. It merges the statusLine
+// and the statusloom mod entries into the Claude Code settings file, keeping
+// every other key. It removes a subagentStatusLine that statusloom wrote and
+// leaves any other subagentStatusLine untouched.
 func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
 	if len(args) == 0 || args[0] != "claude-code" {
 		fmt.Fprintln(stderr, "statusloom: usage: statusloom setup claude-code [--settings PATH] [--yes] [--dry-run] [--refresh-interval N]")
@@ -75,7 +155,7 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 	fs := flag.NewFlagSet("setup claude-code", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	settingsFlag := fs.String("settings", "", "Claude Code settings file")
-	yes := fs.Bool("yes", false, "replace an existing statusLine without prompting")
+	yes := fs.Bool("yes", false, "replace existing settings without prompting")
 	dryRun := fs.Bool("dry-run", false, "show changes without writing")
 	refreshInterval := fs.Int("refresh-interval", 0, "seconds between forced statusline re-renders while idle (default 30; 0 leaves it unset)")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
@@ -109,19 +189,54 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 			return 1
 		}
 	}
+
+	// Every change is applied to doc in memory; only writeJSONAtomic touches
+	// the file, after the user has confirmed.
+	var changes []settingsChange
+	needConfirm := false
+
 	before, hadStatusLine := doc["statusLine"]
 	desired := desiredStatusLine(resolveRefreshInterval(refreshIntervalSet, *refreshInterval, before))
 	statusLineChanged := !hadStatusLine || !reflect.DeepEqual(before, desired)
-	beforeSubagent, hadSubagentStatusLine := doc["subagentStatusLine"]
-	desiredSubagent := desiredSubagentStatusLine(resolveRefreshInterval(refreshIntervalSet, *refreshInterval, beforeSubagent))
-	subagentChanged := !hadSubagentStatusLine || !reflect.DeepEqual(beforeSubagent, desiredSubagent)
+	if statusLineChanged {
+		changes = append(changes, settingsChange{label: "statusLine", before: before, had: hadStatusLine, after: desired})
+		needConfirm = needConfirm || hadStatusLine
+		doc["statusLine"] = desired
+	}
 
-	if !statusLineChanged && !subagentChanged {
+	// subagentStatusLine: a line statusloom wrote is removed without asking.
+	// Any other line is kept, and the note below says so.
+	thirdPartySub := false
+	if sub, hadSub := doc["subagentStatusLine"]; hadSub {
+		if isStatusloomSubagentStatusLine(sub) {
+			delete(doc, "subagentStatusLine")
+			changes = append(changes, settingsChange{label: "subagentStatusLine", before: sub, had: true, remove: true})
+		} else {
+			thirdPartySub = true
+		}
+	}
+
+	if c, replaces, ok := mergeObjectEntry(doc, "extraKnownMarketplaces", modMarketplaceName, desiredMarketplace()); ok {
+		changes = append(changes, c)
+		needConfirm = needConfirm || replaces
+	}
+	if c, replaces, ok := mergeObjectEntry(doc, "enabledPlugins", modPluginID, true); ok {
+		changes = append(changes, c)
+		needConfirm = needConfirm || replaces
+	}
+
+	if thirdPartySub {
+		sub, _ := json.Marshal(doc["subagentStatusLine"])
+		fmt.Fprintf(stdout, "Note: kept subagentStatusLine %s: it is not statusloom's, so it keeps drawing the agent rows instead of the statusloom mod.\n", sub)
+	}
+	if len(changes) == 0 {
 		fmt.Fprintln(stdout, "already configured")
 		return 0
 	}
+	for _, c := range changes {
+		printSettingsChange(stdout, c)
+	}
 	if hadStatusLine && statusLineChanged {
-		printStatusLineDiff(stdout, before, desired)
 		if hook, ok := detectKnownStatusLineHook(before); ok {
 			hookDesc := "own hook"
 			if path := hook.path(getenv); path != "" {
@@ -130,20 +245,16 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 			fmt.Fprintf(stdout, "Note: existing statusLine looks like %s's %s. `statusloom claude` forwards rendered payloads to it automatically, so %s's integration will keep working after this change.\n", hook.name, hookDesc, hook.name)
 		}
 	}
-	if hadSubagentStatusLine && subagentChanged {
-		printStatusLineDiff(stdout, beforeSubagent, desiredSubagent)
-	}
 	if *dryRun {
-		if !hadStatusLine && !hadSubagentStatusLine {
-			fmt.Fprintf(stdout, "Would configure %s with statusloom claude.\n", settings)
-		} else {
+		if exists {
 			fmt.Fprintf(stdout, "Would update %s.\n", settings)
+		} else {
+			fmt.Fprintf(stdout, "Would configure %s with statusloom claude.\n", settings)
 		}
 		return 0
 	}
-	needConfirm := (hadStatusLine && statusLineChanged) || (hadSubagentStatusLine && subagentChanged)
 	if needConfirm && !*yes {
-		fmt.Fprint(stdout, "Replace existing statusLine? [y/N] ")
+		fmt.Fprint(stdout, "Replace existing settings? [y/N] ")
 		line, _ := bufio.NewReader(stdin).ReadString('\n')
 		answer := strings.ToLower(strings.TrimSpace(line))
 		if answer != "y" && answer != "yes" {
@@ -159,13 +270,12 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 		}
 		fmt.Fprintf(stdout, "Backup: %s\nRollback: mv %s %s\n", backup, backup, settings)
 	}
-	doc["statusLine"] = desired
-	doc["subagentStatusLine"] = desiredSubagent
 	if err := writeJSONAtomic(settings, doc); err != nil {
 		fmt.Fprintf(stderr, "statusloom: write settings: %v\n", err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "Configured %s.\n", settings)
+	fmt.Fprintf(stdout, modInstallNotice, modPluginID, modMarketplaceRepo)
 	return 0
 }
 
@@ -180,8 +290,15 @@ func claudeSettingsPath(override string) (string, error) {
 	return p, nil
 }
 
-func printStatusLineDiff(w io.Writer, before, desired any) {
-	oldJSON, _ := json.Marshal(before)
-	newJSON, _ := json.Marshal(desired)
-	fmt.Fprintf(w, "- %s\n+ %s\n", oldJSON, newJSON)
+// printSettingsChange prints one change as a "- label: before" line when the
+// value existed, then a "+ label: after" line unless the value is removed.
+func printSettingsChange(w io.Writer, c settingsChange) {
+	if c.had {
+		oldJSON, _ := json.Marshal(c.before)
+		fmt.Fprintf(w, "- %s: %s\n", c.label, oldJSON)
+	}
+	if !c.remove {
+		newJSON, _ := json.Marshal(c.after)
+		fmt.Fprintf(w, "+ %s: %s\n", c.label, newJSON)
+	}
 }

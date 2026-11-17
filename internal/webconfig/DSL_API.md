@@ -19,9 +19,11 @@ committed revision in the internal store (`<configDir>/statusloom.json`; see
 the root `CLAUDE.md`'s "設定ファイル配置"), with its own draft working node
 (`refs.claude-code.draft`).
 
-Claude Code's `subagentStatusLine` (one row per agent-panel task) is a
-`<subagent>` region (markup.md "subagent") nested inside the `claude-code`
-document itself — directly under `<layout>` when the layout has no
+The agent-panel rows (one row per agent task) are a `<subagent>` region
+(markup.md "subagent") rendered by `statusloom claude-agent-row` (the statusloom
+Claude Code mod's AgentRow hook) and by `statusloom claude-subagent` (a
+handwritten `subagentStatusLine`), both with the same container resolution. The
+region is nested inside the `claude-code` document itself — directly under `<layout>` when the layout has no
 `<responsive>`, or inside each `<variant>` when it does — so the same
 document, the same width breakpoints, and the same visual editor canvas cover
 both the main status line and its subagent row (see
@@ -112,7 +114,7 @@ per responsive in the response's `selectedVariants` map — see
 - Color-rules are **not** in `children`; they live in a separate `colorRules`
   array so `children` indices stay aligned with the renderer's leaf nodes.
 - `subagent` is a `layout`'s or `variant`'s **optional**, at-most-one region
-  (markup.md "subagent"): the row(s) `statusloom claude-subagent` renders
+  (markup.md "subagent"): the row(s) the agent-row render paths (`claude-agent-row` / `claude-subagent`) render
   below the main status line, one row per running/completed task. It carries
   no attributes of its own and holds a single `line` (never `responsive` /
   `variant` / a second `line` — the parser/validator reject those). A layout
@@ -294,7 +296,7 @@ are returned for the editor but never block the write.
     own falls back to the layout's (same underlying node, so its rows'
     segment `nodeId`s are the layout-level `"L{i}.s.*"`, not that variant's
     own `"L{i}.{p}.v{v}.s.*"`) — mirroring exactly how the real
-    `claude-subagent` render path resolves which region to use, so the
+    agent-row render paths (`claude-agent-row` / `claude-subagent`) resolve which region to use, so the
     preview never disagrees with the real output. A container with no
     `<subagent>` anywhere is omitted from `subagentPreview`. `sample` for
     this section is one of `"subagent-running"` / `"subagent-completed"`:
@@ -349,34 +351,43 @@ The field catalog for the palette, sourced entirely from the Go DSL registry
 `task-*` set merged in from the subagent task field catalog (one entry per
 subagentStatusLine task attribute: `task-description`,
 `task-model`, `task-model-id`, `task-status`, `task-tokens`,
-`task-context-size`, `task-context-percent`, `task-duration`, `task-effort`;
-all `category: "subagent"`, valid only inside a `<subagent>` region). `preview`
+`task-context-size`, `task-context-percent`, `task-duration`, `task-effort`,
+`task-agent-type`, `task-name`, `task-cost`, `task-depth`,
+`task-input-tokens`, `task-output-tokens`, `task-cache-read-tokens`,
+`task-cache-creation-tokens` (the last nine come only from `statusloom claude-agent-row`, the mod's AgentRow
+path, and are empty under `claude-subagent`); all `category: "subagent"`, valid only inside a `<subagent>` region). `preview`
 is a single-field rendering against the `"full"` sample snapshot, which also
 carries a sample task so `task-*` fields render real content rather than
 falling back. `capability` (optional; absent = always available) names a
 runtime capability the field depends on: `"oauth-usage"` (the authenticated
-OAuth usage API) for the extra-usage / weekly-usage / weekly-reset fields, or
-`"subagent-effort"` for `task-effort` (Claude Code does not yet report
-per-task reasoning effort, so this capability is unavailable in every
-environment today). Capability gating is entirely client-side: the server
+OAuth usage API) for the extra-usage / weekly-usage / weekly-reset fields.
+The `task-*` fields carry no capability. Capability gating is entirely client-side: the server
 only tags the field, it never filters the response by availability. The
 configurator probes `"oauth-usage"` via `GET /api/usage/probe`, but a failed
 probe never hides those fields from the palette — whether a field can be
 *configured* is independent of whether this particular probe happened to
 succeed (the actual render path runs on its own schedule/cache); a failed
 probe only surfaces a note that live preview data isn't available right now.
-There is no analogous probe for `"subagent-effort"` yet, so a
-`capability`-tagged field with no matching probe at all should still be
-hidden unconditionally until one exists — that is a different situation from
-`"oauth-usage"`, which has a probe that can simply fail transiently.
+
+The catalog also includes the mod fields: `category: "mod"` (main lines only,
+never inside `<subagent>`). They need the statusloom Claude Code mod, render
+empty without a mod record for the session, and carry no capability.
 
 ### `GET /api/dsl/metrics?tool=claude-code`
 → `200 { "metrics": [ { "name", "displayName", "descriptions": {"en","ja"}, "percent", "text", "values", "param"? } ] }`
 
 The named-metric catalog for `when` / `color-rule` editing, from the DSL
 registry: the session/account metrics plus the `task-*` self-metrics backing
-`task-tokens`/`task-context-size`/`task-context-percent`/`task-duration`, and
-the tool-agnostic `width` metric (terminal width in columns), which backs
+`task-tokens`/`task-context-size`/`task-context-percent`/`task-duration`, the
+AgentRow mod metrics (numeric `task-cost-usd`, `task-depth`,
+`task-input-tokens`, `task-output-tokens`, `task-cache-read-tokens`,
+`task-cache-creation-tokens`, unresolved when the mod did not report them; text
+`task-agent-type` and `task-name`, unresolved when empty), the statusloom mod metrics (unresolved without a mod record for the session;
+text `last-turn-reason` and `permission-mode`; bool
+`model-fallback`; the rest numeric; `permission-mode`, `background-tasks` and
+`session-crons` rely on Claude Code's classic hook events and stay unresolved
+when another plugin intercepts them, while model
+switching comes from the observed session model), and the tool-agnostic `width` metric (terminal width in columns), which backs
 width breakpoints such as `when="width ge 80"`; an unknown width counts as
 unbounded so a width condition never hides content. `percent` (boolean,
 optional, omitted when `false`) marks a 0..100-scale percentage metric (e.g.

@@ -398,6 +398,32 @@ func renderContent(spec config.WidgetSpec, snap schema.StatusSnapshot, cfg confi
 		}
 		return snap.Subagent.Status
 
+	case "task-agent-type", "task-name":
+		return subagentTextMetric(spec.Type, snap)
+
+	case "task-cost":
+		if snap.Subagent == nil || snap.Subagent.CostUSD == nil {
+			return ""
+		}
+		v := strconv.FormatFloat(*snap.Subagent.CostUSD, 'f', 2, 64)
+		if spec.RawValue {
+			return v
+		}
+		return "$" + v
+
+	case "task-depth":
+		if snap.Subagent == nil || snap.Subagent.Depth == nil {
+			return ""
+		}
+		return strconv.Itoa(*snap.Subagent.Depth)
+
+	case "task-input-tokens", "task-output-tokens", "task-cache-read-tokens", "task-cache-creation-tokens":
+		v, ok := metricValue(spec.Type, snap, cfg, opts)
+		if !ok {
+			return ""
+		}
+		return renderInteger(int(v), spec.RawValue, compact)
+
 	case "task-tokens":
 		if snap.Subagent == nil {
 			return ""
@@ -434,8 +460,24 @@ func renderContent(spec config.WidgetSpec, snap schema.StatusSnapshot, cfg confi
 		return *snap.Subagent.Effort
 
 	default:
+		return modFieldText(spec, snap, compact)
+	}
+}
+
+// subagentTextMetric returns the string value of a text task field or metric
+// ("task-agent-type" / "task-name"). An absent subagent task or an empty value
+// yields "", which doubles as the unresolved state for when= expressions.
+func subagentTextMetric(name string, snap schema.StatusSnapshot) string {
+	if snap.Subagent == nil {
 		return ""
 	}
+	switch name {
+	case "task-agent-type":
+		return snap.Subagent.AgentType
+	case "task-name":
+		return snap.Subagent.Name
+	}
+	return ""
 }
 
 func renderInteger(n int, raw, compact bool) string {

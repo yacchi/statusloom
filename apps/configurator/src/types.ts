@@ -373,7 +373,7 @@ export interface FieldCatalogEntry {
     name: string;
     displayName: string;
     descriptions: Record<string, string>; // {"en","ja"}
-    category: string; // "common" | "claude"
+    category: string; // "common" | "claude" | "mod" | "subagent"
     // True when this field supports the `hyperlink` attribute.
     linkable?: boolean;
     // True when this field is parameterized by a `var` attribute (name="env"):

@@ -21,10 +21,11 @@ interface Props {
     oauthUsageAvailable: boolean;
 }
 
-const CATEGORY_ORDER = ["common", "claude", "subagent"];
+const CATEGORY_ORDER = ["common", "claude", "mod", "subagent"];
 const CATEGORY_LABEL: Record<string, string> = {
     common: "Common",
     claude: "Claude Code",
+    mod: "Claude Code mod",
     subagent: "Subagent",
 };
 
@@ -86,16 +87,12 @@ export function Palette({ fields, onAdd, oauthUsageAvailable }: Props) {
     // configurator's probe just failed). When the probe is unavailable we
     // only show a note below (see showOAuthUsageUnavailableNote) that live
     // preview data isn't available right now — we never hide the fields
-    // themselves. task-effort (capability "subagent-effort") has no probe at
-    // all — no environment currently supports it (see markup.md /
-    // DSL_API.md) — so it is hidden unconditionally, the same way any future
-    // permanently-unavailable capability should be handled here.
-    const visibleFields = fields.filter((f) => f.capability !== "subagent-effort");
+    // themselves.
     const showOAuthUsageUnavailableNote =
         !oauthUsageAvailable && fields.some((f) => f.capability === "oauth-usage");
     const categories = [
         ...CATEGORY_ORDER,
-        ...[...new Set(visibleFields.map((f) => f.category))].filter(
+        ...[...new Set(fields.map((f) => f.category))].filter(
             (c) => !CATEGORY_ORDER.includes(c),
         ),
     ];
@@ -109,7 +106,7 @@ export function Palette({ fields, onAdd, oauthUsageAvailable }: Props) {
                 </p>
             ) : null}
             {categories.map((cat) => {
-                const entries = visibleFields.filter((f) => f.category === cat);
+                const entries = fields.filter((f) => f.category === cat);
                 if (entries.length === 0) {
                     return null;
                 }

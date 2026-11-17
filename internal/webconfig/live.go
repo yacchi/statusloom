@@ -224,9 +224,9 @@ type liveSessionResponse struct {
 //   - .claude/settings.local.json whose statusLine runs `statusloom monitor
 //     --draft`, so a session here renders the web configurator's unsaved
 //     draft and emits to /api/live (live preview flows with no extra wiring);
-//     its subagentStatusLine runs `statusloom claude-subagent --draft` so the
-//     agent-task panel rows likewise reflect that same claude-code document's
-//     draft <subagent> region;
+//     it also sets env STATUSLOOM_AGENT_ROW_DRAFT=1 so the statusloom mod's
+//     agent rows (`statusloom claude-agent-row`) reflect the draft <subagent>
+//     region of the same claude-code document;
 //   - CLAUDE.md explaining the draft edit loop and the config schema;
 //   - sample.json, a representative payload for `statusloom claude < sample.json`;
 //   - a git repo with one initial commit (best-effort, only on first run), so
@@ -274,19 +274,18 @@ func (s *server) provisionMonitorDir() (string, error) {
 		"%s monitor --emit-url http://127.0.0.1:%d/api/live --token %s --draft",
 		exe, s.port, s.token,
 	)
-	// subagentStatusLine renders the same claude-code draft document the same
-	// way (--draft), so edits to its <subagent> region also show up live in
-	// this workspace's agent-task panel rows. Unlike statusLine it needs no
-	// --emit-url/--token: subagent rows have no live-preview forwarding.
-	subagentCommand := fmt.Sprintf("%s claude-subagent --draft", exe)
+	// The statusloom mod's AgentRow hook runs `statusloom claude-agent-row`,
+	// which renders the claude-code draft <subagent> region when this env is
+	// exactly "1", so the agent panel rows reflect the draft too. No
+	// No Claude Code subagent status-line entry is written: a configured one
+	// would arrive as row.body and win over the mod.
 	settings := map[string]any{
 		"statusLine": map[string]any{
 			"type":    "command",
 			"command": command,
 		},
-		"subagentStatusLine": map[string]any{
-			"type":    "command",
-			"command": subagentCommand,
+		"env": map[string]any{
+			"STATUSLOOM_AGENT_ROW_DRAFT": "1",
 		},
 	}
 	data, err := json.MarshalIndent(settings, "", "  ")

@@ -158,6 +158,14 @@ func (r docResolver) ResolveMetric(name string) (dsl.Value, bool) {
 		}
 		return dsl.Value{}, false
 	}
+	// AgentRow mod text metrics follow the same rule: empty or absent is
+	// unresolved, so a when-expression on it fails.
+	if name == "task-agent-type" || name == "task-name" {
+		if s := subagentTextMetric(name, r.snap); s != "" {
+			return dsl.Value{Kind: dsl.ValueString, Str: s}, true
+		}
+		return dsl.Value{}, false
+	}
 	if name == "git-dirty" || name == "git-clean" || name == "thinking-enabled" || name == "exceeds-200k" {
 		if name == "thinking-enabled" {
 			if r.snap.Session.ThinkingEnabled == nil {
@@ -194,6 +202,12 @@ func (r docResolver) ResolveMetric(name string) (dsl.Value, bool) {
 			return dsl.Value{}, false
 		}
 		return dsl.Value{Kind: dsl.ValueString, Str: pc.TTL}, true
+	}
+	// Typed mod metrics (bool and text) resolve here; numeric ones reach
+	// metricValue below. After the self mapping, so a color-rule on a mod
+	// field's own metric resolves the same way.
+	if v, ok, handled := modTypedMetric(name, r.snap); handled {
+		return v, ok
 	}
 	v, ok := metricValue(name, r.snap, r.cfg, r.opts)
 	if !ok {

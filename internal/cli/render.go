@@ -227,7 +227,8 @@ func renderDocFromRaw(raw []byte, getenv func(string) string, explicitTool strin
 // applyRenderCaches folds the local caches into a freshly decoded snapshot:
 // the account windows (storeStdin also writes the stdin windows to the shared
 // account cache; a preview or a second pass only reads it), the OAuth usage
-// cache, transcript analytics and the repo cache. It returns whether a
+// cache, transcript analytics, the repo cache and the statusloom mod record.
+// It returns whether a
 // five-hour/seven-day window has rolled over (refreshRequest.ForceUsage).
 func applyRenderCaches(snap *schema.StatusSnapshot, accountCacheKey string, now time.Time, storeStdin bool) bool {
 	var rolledOver bool
@@ -239,6 +240,7 @@ func applyRenderCaches(snap *schema.StatusSnapshot, accountCacheKey string, now 
 	cache.ApplyExtraUsageCache(accountCacheKey, snap, now)
 	applyTranscriptCache(snap, now)
 	applyRepoCache(snap)
+	applyModRecord(snap)
 	return rolledOver
 }
 
@@ -248,6 +250,18 @@ func applyTranscriptCache(snap *schema.StatusSnapshot, now time.Time) {
 	}
 	if analytics, _ := cache.LoadTranscriptAnalytics(snap.Session.ID, now); analytics != nil {
 		snap.Session.Analytics = analytics
+	}
+}
+
+// applyModRecord shows what the statusloom Claude Code mod recorded for this
+// session. It only reads: the record is written by `statusloom mod-ingest`.
+func applyModRecord(snap *schema.StatusSnapshot) {
+	if snap.Session.ID == "" {
+		return
+	}
+	if rec, _ := cache.LoadModRecord(snap.Session.ID); rec != nil {
+		mod := rec.Snapshot
+		snap.Mod = &mod
 	}
 }
 

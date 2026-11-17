@@ -59,12 +59,12 @@ func TestProvision_StatusLineHasDraftFlag(t *testing.T) {
 	}
 }
 
-// TestProvision_SubagentStatusLineRegistered confirms provisionMonitorDir
-// also registers Claude Code's subagentStatusLine (agent-panel task rows),
-// not just statusLine: without it, embedded monitor sessions render the
-// default subagent line instead of the user's claude-code document's
-// <subagent> region.
-func TestProvision_SubagentStatusLineRegistered(t *testing.T) {
+// TestProvision_AgentRowDraftEnv confirms provisionMonitorDir sets
+// STATUSLOOM_AGENT_ROW_DRAFT=1 in the workspace settings so the statusloom
+// mod's agent rows render the draft <subagent> region. It must not write a
+// subagentStatusLine: a configured one would arrive as row.body and win over
+// the mod.
+func TestProvision_AgentRowDraftEnv(t *testing.T) {
 	t.Setenv("STATUSLOOM_CACHE_DIR", t.TempDir())
 	isolateClaudeConfig(t) // keep the ~/.claude.json janitor off the real config
 	ts := startTestServer(t, time.Hour)
@@ -74,25 +74,20 @@ func TestProvision_SubagentStatusLineRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read settings: %v", err)
 	}
-	var settings struct {
-		SubagentStatusLine struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
-		} `json:"subagentStatusLine"`
-	}
-	if err := json.Unmarshal(data, &settings); err != nil {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
 		t.Fatalf("unmarshal settings: %v", err)
 	}
-	if settings.SubagentStatusLine.Type != "command" {
-		t.Errorf("subagentStatusLine.type = %q, want command", settings.SubagentStatusLine.Type)
+	if _, ok := keys["subagentStatusLine"]; ok {
+		t.Errorf("settings.local.json still writes subagentStatusLine")
 	}
-	cmd := settings.SubagentStatusLine.Command
-	if !strings.Contains(cmd, "claude-subagent") || !strings.Contains(cmd, "--draft") {
-		t.Errorf("subagentStatusLine.command %q missing claude-subagent/--draft", cmd)
+	var env map[string]any
+	if err := json.Unmarshal(keys["env"], &env); err != nil {
+		t.Fatalf("unmarshal env: %v", err)
 	}
-	// Unlike statusLine, the subagent line needs no live-preview forwarding.
-	if strings.Contains(cmd, "--emit-url") || strings.Contains(cmd, "--token") {
-		t.Errorf("subagentStatusLine.command %q should not forward emit-url/token", cmd)
+	// String compare on purpose: a number or bool "1" must fail.
+	if got := env["STATUSLOOM_AGENT_ROW_DRAFT"]; got != "1" {
+		t.Errorf("env.STATUSLOOM_AGENT_ROW_DRAFT = %#v, want string \"1\"", got)
 	}
 }
 
@@ -109,11 +104,16 @@ func TestProvision_WritesWorkspaceDocs(t *testing.T) {
 	}
 	for _, want := range []string{
 		"statusloom draft pull", "statusloom draft push", "statusloom claude < sample.json", "<statusloom",
-		"<subagent>", "subagentStatusLine", "statusloom claude-subagent --draft",
+		"<subagent>", "statusloom claude-agent-row --preview", "STATUSLOOM_AGENT_ROW_DRAFT",
 		"statusloom claude --draft < sample.json",
 	} {
 		if !strings.Contains(string(claudeMD), want) {
 			t.Errorf("CLAUDE.md missing %q", want)
+		}
+	}
+	for _, banned := range []string{"subagentStatusLine", "claude-subagent"} {
+		if strings.Contains(string(claudeMD), banned) {
+			t.Errorf("CLAUDE.md must not mention %q", banned)
 		}
 	}
 

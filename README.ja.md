@@ -207,11 +207,15 @@ Claude Code が `statusloom claude`（`statusLine`）を実行するよう設定
 
 ```json
 {
-  "extraKnownMarketplaces": {"statusloom": {"source": {"source": "github", "repo": "yacchi/statusloom"}}},
+  "extraKnownMarketplaces": {"statusloom": {"source": {"source": "github", "repo": "yacchi/statusloom"}, "autoUpdate": true}},
   "enabledPlugins": {"statusloom@statusloom": true}
 }
 ```
 
+`autoUpdate: true` により Claude Code が mod を自動更新します（対話セッションで最初のメッセージの
+後、10 分以内を目安に確認。`/reload-plugins` で反映）。以前の setup が書いた同じ GitHub ソースの
+エントリ（`autoUpdate` 無し）は確認なしで更新し、追加したキーは保持し、明示した
+`autoUpdate: false` は尊重します。
 既存の設定はバックアップされ、別のステータスラインコマンドを置き換える場合は
 確認を求めます。
 
@@ -221,7 +225,7 @@ Claude Code が `statusloom claude`（`statusLine`）を実行するよう設定
 表示します。
 
 マーケットプレイスと mod の反映: settings を書いたあと（すでに設定済みの場合も）、setup は
-`claude plugin install statusloom --marketplace yacchi/statusloom` も自分で実行します（`--dry-run` では
+`claude plugin install statusloom --marketplace yacchi/statusloom` に続けて `claude plugin update statusloom@statusloom` も自分で実行します（`--dry-run` では
 実行しません。マーケットプレイスの clone にネットワークが必要です）。結果は 1 行で表示します。
 インストール先は setup が `settings.json` を書いたプロファイルです。既定のパスなら子プロセスは
 環境変数をそのまま引き継ぎ、`--settings PATH` で別の場所を指したときだけ

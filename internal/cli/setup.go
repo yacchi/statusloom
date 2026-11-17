@@ -47,7 +47,7 @@ const modInstallFallback = "The statusloom mod (%[1]s) is enabled. Claude Code c
 
 // modInstallSuccess is printed when setup ran `claude plugin install`
 // successfully.
-const modInstallSuccess = "Installed the statusloom mod (%[1]s) with `claude plugin install`. A session that is already running loads it with /reload-plugins.\n"
+const modInstallSuccess = "Installed or updated the statusloom mod (%[1]s) with `claude plugin install` and `claude plugin update`. A session that is already running loads it with /reload-plugins.\n"
 
 // modRequirementNotice is always printed after the install line.
 const modRequirementNotice = "The mod runs with your permissions and needs a Claude Code version with mods (verified on 2.1.326).\n"
@@ -61,17 +61,30 @@ const modInstallTimeout = 120 * time.Second
 // (for the one-line summary only). `--marketplace` adds the marketplace first:
 // the CLI does not fetch one that is only declared in extraKnownMarketplaces
 // (an interactive session clones it in the background at start). Re-running it
-// is harmless ("already added" / "already installed", exit 0). It is a var so
+// is harmless ("already added" / "already installed", exit 0). It then runs
+// `claude plugin update` so an installed mod moves to the latest version. It is a var so
 // tests do not spawn the real claude.
 var runModInstall = func(ctx context.Context, env []string) (string, error) {
 	claude, err := exec.LookPath("claude")
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, claude, "plugin", "install", modPluginName, "--marketplace", modMarketplaceRepo)
-	cmd.Env = env
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	var all strings.Builder
+	for _, args := range [][]string{
+		{"plugin", "install", modPluginName, "--marketplace", modMarketplaceRepo},
+		// An already installed mod stays at its version on install; update
+		// brings it to the marketplace's latest (a no-op when it already is).
+		{"plugin", "update", modPluginID},
+	} {
+		cmd := exec.CommandContext(ctx, claude, args...)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		all.Write(out)
+		if err != nil {
+			return all.String(), err
+		}
+	}
+	return all.String(), nil
 }
 
 // modInstallEnv returns the child environment for installing into the profile
@@ -91,16 +104,73 @@ func modInstallEnv(settings string, getenv func(string) string, base []string) [
 // installMod runs `claude plugin install` for the profile of settings and
 // prints one summary line. It never fails setup: any error prints the
 // fallback guidance.
-func installMod(stdout io.Writer, settings string, getenv func(string) string) {
+//
+// `claude plugin install --marketplace` rewrites the statusloom marketplace
+// entry and drops its autoUpdate key, so afterwards the autoUpdate value setup
+// settled on (wantAutoUpdate, nil to leave the entry alone) is put back.
+func installMod(stdout io.Writer, settings string, getenv func(string) string, wantAutoUpdate any) {
 	ctx, cancel := context.WithTimeout(context.Background(), modInstallTimeout)
 	defer cancel()
-	if _, err := runModInstall(ctx, modInstallEnv(settings, getenv, os.Environ())); err != nil {
+	_, err := runModInstall(ctx, modInstallEnv(settings, getenv, os.Environ()))
+	if rerr := restoreMarketplaceAutoUpdate(settings, wantAutoUpdate); rerr != nil {
+		fmt.Fprintf(stdout, "Could not restore extraKnownMarketplaces.%s.autoUpdate (%v).\n", modMarketplaceName, rerr)
+	}
+	if err != nil {
 		fmt.Fprintf(stdout, "Could not run `claude plugin install` (%s).\n", summarizeInstallError(ctx, err))
 		fmt.Fprintf(stdout, modInstallFallback, modPluginID, modMarketplaceRepo, modPluginName)
 	} else {
 		fmt.Fprintf(stdout, modInstallSuccess, modPluginID)
 	}
 	fmt.Fprint(stdout, modRequirementNotice)
+}
+
+// marketplaceAutoUpdate returns the autoUpdate value of statusloom's own
+// marketplace entry in doc (one whose source is github yacchi/statusloom), or
+// nil when there is no such entry or it has no autoUpdate key.
+func marketplaceAutoUpdate(doc map[string]any) any {
+	outer, ok := doc["extraKnownMarketplaces"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	entry, ok := outer[modMarketplaceName].(map[string]any)
+	if !ok || !reflect.DeepEqual(entry["source"], desiredMarketplace()["source"]) {
+		return nil
+	}
+	return entry["autoUpdate"]
+}
+
+// restoreMarketplaceAutoUpdate re-reads settings and sets autoUpdate on
+// statusloom's own marketplace entry back to want when something else (the
+// claude CLI) changed or dropped it. A nil want, a missing file or entry, or
+// an already matching value writes nothing.
+func restoreMarketplaceAutoUpdate(settings string, want any) error {
+	if want == nil {
+		return nil
+	}
+	raw, err := os.ReadFile(settings)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return err
+	}
+	outer, ok := doc["extraKnownMarketplaces"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	entry, ok := outer[modMarketplaceName].(map[string]any)
+	if !ok || !reflect.DeepEqual(entry["source"], desiredMarketplace()["source"]) {
+		return nil
+	}
+	if reflect.DeepEqual(entry["autoUpdate"], want) {
+		return nil
+	}
+	entry["autoUpdate"] = want
+	return writeJSONAtomic(settings, doc)
 }
 
 func summarizeInstallError(ctx context.Context, err error) string {
@@ -151,7 +221,12 @@ func desiredStatusLine(refreshInterval float64) map[string]any {
 // the statusloom GitHub marketplace. Every value is a string, so the entry
 // compares equal, via reflect.DeepEqual, to one round-tripped through JSON.
 func desiredMarketplace() map[string]any {
-	return map[string]any{"source": map[string]any{"source": "github", "repo": modMarketplaceRepo}}
+	// autoUpdate: Claude Code leaves third-party marketplaces off auto-update by
+	// default, so without it an installed mod would stay at its old version.
+	return map[string]any{
+		"source":     map[string]any{"source": "github", "repo": modMarketplaceRepo},
+		"autoUpdate": true,
+	}
 }
 
 // isStatusloomSubagentStatusLine reports whether v, a decoded
@@ -200,6 +275,33 @@ func mergeObjectEntry(doc map[string]any, key, entry string, want any) (c settin
 	}
 	m[entry] = want
 	return settingsChange{label: key + "." + entry, before: old, had: had, after: want}, had, true
+}
+
+// mergeMarketplaceEntry sets extraKnownMarketplaces.statusloom. An existing
+// entry whose source is exactly statusloom's own GitHub repo is statusloom's
+// own (an older setup wrote it without autoUpdate), so it is updated in place
+// without asking: the user's extra keys are kept and autoUpdate is set to true
+// only when absent (an explicit false is respected). Any other existing value
+// goes through mergeObjectEntry, which asks before replacing it.
+func mergeMarketplaceEntry(doc map[string]any) (settingsChange, bool, bool) {
+	want := desiredMarketplace()
+	if outer, ok := doc["extraKnownMarketplaces"].(map[string]any); ok {
+		if old, ok := outer[modMarketplaceName].(map[string]any); ok && reflect.DeepEqual(old["source"], want["source"]) {
+			merged := make(map[string]any, len(old)+1)
+			for k, v := range old {
+				merged[k] = v
+			}
+			if _, has := merged["autoUpdate"]; !has {
+				merged["autoUpdate"] = true
+			}
+			if reflect.DeepEqual(old, merged) {
+				return settingsChange{}, false, false
+			}
+			outer[modMarketplaceName] = merged
+			return settingsChange{label: "extraKnownMarketplaces." + modMarketplaceName, before: old, had: true, after: merged}, false, true
+		}
+	}
+	return mergeObjectEntry(doc, "extraKnownMarketplaces", modMarketplaceName, want)
 }
 
 // resolveRefreshInterval decides the refreshInterval for one settings object
@@ -295,7 +397,7 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 		}
 	}
 
-	if c, replaces, ok := mergeObjectEntry(doc, "extraKnownMarketplaces", modMarketplaceName, desiredMarketplace()); ok {
+	if c, replaces, ok := mergeMarketplaceEntry(doc); ok {
 		changes = append(changes, c)
 		needConfirm = needConfirm || replaces
 	}
@@ -312,7 +414,7 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 		fmt.Fprintln(stdout, "already configured")
 		if !*dryRun {
 			// Idempotent: `claude plugin install` on an installed plugin exits 0.
-			installMod(stdout, settings, getenv)
+			installMod(stdout, settings, getenv, marketplaceAutoUpdate(doc))
 		}
 		return 0
 	}
@@ -358,7 +460,7 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 		return 1
 	}
 	fmt.Fprintf(stdout, "Configured %s.\n", settings)
-	installMod(stdout, settings, getenv)
+	installMod(stdout, settings, getenv, marketplaceAutoUpdate(doc))
 	return 0
 }
 

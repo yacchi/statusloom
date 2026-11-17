@@ -255,7 +255,7 @@ objects are left untouched. The merged entries look like this:
 ```json
 {
   "extraKnownMarketplaces": {
-    "statusloom": {"source": {"source": "github", "repo": "yacchi/statusloom"}}
+    "statusloom": {"source": {"source": "github", "repo": "yacchi/statusloom"}, "autoUpdate": true}
   },
   "enabledPlugins": {"statusloom@statusloom": true}
 }
@@ -268,12 +268,16 @@ earlier versions) without asking, and leaves another tool's
 keeps drawing the agent rows instead of the mod.
 
 Existing settings are backed up, and the change is shown as a diff.
-Confirmation is asked only when an existing value would be replaced: a
+`autoUpdate: true` lets Claude Code update the mod itself: in an interactive session it
+checks after the first message, roughly within 10 minutes, and `/reload-plugins` applies the
+update. An entry that statusloom wrote earlier (same GitHub source, no `autoUpdate`) is
+updated without asking, any extra keys you added are kept, and an explicit `autoUpdate: false`
+is respected. Confirmation is asked only when an existing value would be replaced: a
 different status-line command, a different `statusloom` marketplace entry,
 or `statusloom@statusloom` set to `false`.
 
 After writing the settings (or finding them already configured), setup also runs
-`claude plugin install statusloom --marketplace yacchi/statusloom` itself (not with `--dry-run`),
+`claude plugin install statusloom --marketplace yacchi/statusloom` and then `claude plugin update statusloom@statusloom` itself (not with `--dry-run`),
 which clones the marketplace over the network, and prints one summary line.
 It installs into the profile whose `settings.json` setup just wrote: for the
 default path the child inherits your environment unchanged, and for

@@ -259,7 +259,7 @@ func TestSetupClaudeCodeRefreshIntervalDefault(t *testing.T) {
 // already match, so the run reports "already configured" with no backup.
 func TestSetupClaudeCodeRefreshIntervalKeepsExisting(t *testing.T) {
 	initial := `{"statusLine":{"type":"command","command":"statusloom claude","refreshInterval":60},` +
-		`"extraKnownMarketplaces":{"statusloom":{"source":{"source":"github","repo":"yacchi/statusloom"}}},` +
+		`"extraKnownMarketplaces":{"statusloom":{"source":{"source":"github","repo":"yacchi/statusloom"},"autoUpdate":true}},` +
 		`"enabledPlugins":{"statusloom@statusloom":true}}`
 	path := filepath.Join(t.TempDir(), "settings.json")
 	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
@@ -345,7 +345,7 @@ func readSettingsKey(t *testing.T, path, key string) map[string]any {
 func assertModEntries(t *testing.T, doc map[string]any) {
 	t.Helper()
 	markets, _ := doc["extraKnownMarketplaces"].(map[string]any)
-	if !reflect.DeepEqual(markets["statusloom"], map[string]any{"source": map[string]any{"source": "github", "repo": "yacchi/statusloom"}}) {
+	if !reflect.DeepEqual(markets["statusloom"], map[string]any{"source": map[string]any{"source": "github", "repo": "yacchi/statusloom"}, "autoUpdate": true}) {
 		t.Errorf("marketplace entry = %v", markets["statusloom"])
 	}
 	enabled, _ := doc["enabledPlugins"].(map[string]any)
@@ -658,4 +658,46 @@ func TestDoctorRefreshIntervalSkipsWhenUnreadable(t *testing.T) {
 			t.Errorf("did not expect a refresh warning: %q", out)
 		}
 	})
+}
+
+// TestSetupClaudeCodeUpdatesOwnMarketplaceSilently confirms the entry written
+// by older setups (no autoUpdate) is statusloom's own: it gets autoUpdate:true
+// without any prompt, without --yes and without input.
+func TestSetupClaudeCodeUpdatesOwnMarketplaceSilently(t *testing.T) {
+	initial := `{"statusLine":{"type":"command","command":"statusloom claude","refreshInterval":30},` +
+		`"extraKnownMarketplaces":{"statusloom":{"source":{"source":"github","repo":"yacchi/statusloom"},"note":"mine"}},` +
+		`"enabledPlugins":{"statusloom@statusloom":true}}`
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, code := runCLI(t, []string{"setup", "claude-code", "--settings", path}, nil, nil)
+	if code != 0 || strings.Contains(out, "Replace existing settings?") {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+	if !strings.Contains(out, "+ extraKnownMarketplaces.statusloom:") {
+		t.Errorf("change line missing: %q", out)
+	}
+	markets, _ := readSettingsDoc(t, path)["extraKnownMarketplaces"].(map[string]any)
+	entry, _ := markets["statusloom"].(map[string]any)
+	if entry["autoUpdate"] != true || entry["note"] != "mine" {
+		t.Errorf("entry = %v", entry)
+	}
+}
+
+// TestSetupClaudeCodeKeepsExplicitAutoUpdateFalse confirms a user's own
+// autoUpdate:false on statusloom's entry is respected: no prompt, no change.
+func TestSetupClaudeCodeKeepsExplicitAutoUpdateFalse(t *testing.T) {
+	initial := `{"statusLine":{"type":"command","command":"statusloom claude","refreshInterval":30},` +
+		`"extraKnownMarketplaces":{"statusloom":{"source":{"source":"github","repo":"yacchi/statusloom"},"autoUpdate":false}},` +
+		`"enabledPlugins":{"statusloom@statusloom":true}}`
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, code := runCLI(t, []string{"setup", "claude-code", "--settings", path}, nil, nil)
+	got, _ := os.ReadFile(path)
+	if code != 0 || strings.Contains(out, "Replace existing settings?") || strings.Contains(out, "extraKnownMarketplaces") || string(got) != initial {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
 }

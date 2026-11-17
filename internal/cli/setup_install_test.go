@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -55,7 +56,7 @@ func TestSetupInstallsModInDefaultProfile(t *testing.T) {
 	if got, _ := hasConfigDirEnv((*calls)[0]); got != "" {
 		t.Errorf("CLAUDE_CONFIG_DIR=%q must not be added for the default path", got)
 	}
-	if !strings.Contains(out, "Installed the statusloom mod") || !strings.Contains(out, "/reload-plugins") {
+	if !strings.Contains(out, "Installed or updated the statusloom mod") || !strings.Contains(out, "/reload-plugins") {
 		t.Errorf("out=%q", out)
 	}
 }
@@ -133,5 +134,71 @@ func TestSetupNoopStillInstallsMod(t *testing.T) {
 	runCLI(t, []string{"setup", "claude-code", "--dry-run", "--settings", settings}, nil, env)
 	if len(*calls) != 1 {
 		t.Errorf("dry-run installed: calls=%d", len(*calls))
+	}
+}
+
+// stubModInstallDroppingAutoUpdate mimics `claude plugin install
+// --marketplace`, which rewrites the statusloom marketplace entry without its
+// autoUpdate key.
+func stubModInstallDroppingAutoUpdate(t *testing.T, settings string) {
+	t.Helper()
+	orig := runModInstall
+	runModInstall = func(ctx context.Context, env []string) (string, error) {
+		raw, err := os.ReadFile(settings)
+		if err != nil {
+			return "", err
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			return "", err
+		}
+		doc["extraKnownMarketplaces"].(map[string]any)["statusloom"] = map[string]any{
+			"source": map[string]any{"source": "github", "repo": "yacchi/statusloom"},
+		}
+		return "", writeJSONAtomic(settings, doc)
+	}
+	t.Cleanup(func() { runModInstall = orig })
+}
+
+func marketplaceEntryOf(t *testing.T, settings string) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc["extraKnownMarketplaces"].(map[string]any)["statusloom"].(map[string]any)
+}
+
+// TestSetupRestoresAutoUpdateAfterClaudeRewrite: the claude CLI drops
+// autoUpdate when it rewrites the marketplace entry; setup puts back the value
+// it settled on, including a user's explicit false.
+func TestSetupRestoresAutoUpdateAfterClaudeRewrite(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		initial string
+		want    any
+	}{
+		{"fresh", `{}`, true},
+		{"explicit false", `{"extraKnownMarketplaces":{"statusloom":{"source":{"source":"github","repo":"yacchi/statusloom"},"autoUpdate":false}},"enabledPlugins":{"statusloom@statusloom":true},"statusLine":{"type":"command","command":"statusloom claude","refreshInterval":30}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupEnv(t)
+			settings := filepath.Join(t.TempDir(), "settings.json")
+			if err := os.WriteFile(settings, []byte(tc.initial), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			stubModInstallDroppingAutoUpdate(t, settings)
+			out, _, code := runCLI(t, []string{"setup", "claude-code", "--settings", settings, "--yes"}, nil, map[string]string{"HOME": t.TempDir()})
+			if code != 0 {
+				t.Fatalf("code=%d out=%q", code, out)
+			}
+			if got := marketplaceEntryOf(t, settings)["autoUpdate"]; got != tc.want {
+				t.Errorf("autoUpdate = %v, want %v (out=%q)", got, tc.want, out)
+			}
+		})
 	}
 }

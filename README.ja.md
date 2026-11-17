@@ -121,7 +121,7 @@ Claude Code はプロンプトごとにこのコマンドを起動し、セッ�
 claude plugin install statusloom --marketplace yacchi/statusloom
 ```
 
-[セットアップ](#セットアップ)の `statusloom setup claude-code` も mod を有効にします。
+[セットアップ](#セットアップ)の `statusloom setup claude-code` も mod を有効にし、インストールまで行います。
 
 `<subagent>` で使えるフィールドは次のとおりです（[フィールド](#フィールド)参照）: `task-description`、`task-model`、`task-model-id`、`task-tokens`、`task-context-size`、`task-context-percent`、`task-status`、`task-duration`、および mod だけが値を入れる `task-effort`、`task-agent-type`、`task-name`、`task-cost`、`task-depth`、`task-input-tokens`、`task-output-tokens`、`task-cache-read-tokens`、`task-cache-creation-tokens`。mod を通すと、`task-status` には Claude Code が報告するそのエージェントの状態が表示されます。
 
@@ -220,10 +220,15 @@ Claude Code が `statusloom claude`（`statusLine`）を実行するよう設定
 設定した `subagentStatusLine` は残し、エージェント行は引き続きそのツールが描画する旨を
 表示します。
 
-マーケットプレイスと mod の反映: 上の 2 つのキーがあると、Claude Code は**次回の
-セッション開始後**にバックグラウンドでマーケットプレイスを clone し、mod をインストール
-します（ネットワークが必要です）。起動済みのセッションは `/reload-plugins` で読み込めます。
-すぐに入れる場合は `claude plugin install statusloom@statusloom` を実行してください。
+マーケットプレイスと mod の反映: settings を書いたあと（すでに設定済みの場合も）、setup は
+`claude plugin install statusloom@statusloom` も自分で実行します（`--dry-run` では
+実行しません。マーケットプレイスの clone にネットワークが必要です）。結果は 1 行で表示します。
+インストール先は setup が `settings.json` を書いたプロファイルです。既定のパスなら子プロセスは
+環境変数をそのまま引き継ぎ、`--settings PATH` で別の場所を指したときだけ
+`CLAUDE_CONFIG_DIR` をそのファイルのディレクトリにして実行します。起動済みのセッションは
+`/reload-plugins` で読み込めます。`claude` が無い・120 秒でタイムアウト・失敗した場合も setup は
+成功のままで、従来どおり「Claude Code が**次回のセッション開始後**にバックグラウンドでインストール
+する」か、`claude plugin install statusloom@statusloom` を自分で実行する案内を表示します。
 mod はユーザーと同じ権限で動きます。mod に対応した Claude Code のバージョンが必要です
 （2.1.326 で確認）。
 

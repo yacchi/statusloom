@@ -37,7 +37,7 @@ func runDoctor(args []string, stdout, stderr io.Writer, version string) int {
 	doctorRefreshWait(report, os.Getenv)
 	doctorCache(report)
 	doctorGit(report)
-	settings, err := claudeSettingsPath(*settingsFlag)
+	settings, err := claudeSettingsPath(*settingsFlag, os.Getenv)
 	if err != nil {
 		report("WARN", "claude-code", "cannot locate settings; run statusloom setup claude-code")
 	} else {

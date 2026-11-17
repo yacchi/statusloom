@@ -124,7 +124,7 @@ func TestSetupClaudeCodeIdempotent(t *testing.T) {
 	before, _ := os.ReadFile(path)
 	out, _, code := runCLI(t, args, nil, nil)
 	after, _ := os.ReadFile(path)
-	if code != 0 || out != "already configured\n" || string(before) != string(after) {
+	if code != 0 || !strings.HasPrefix(out, "already configured\n") || string(before) != string(after) {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 	matches, _ := filepath.Glob(path + ".bak.*")
@@ -216,7 +216,7 @@ func TestSetupClaudeCodeRefreshInterval(t *testing.T) {
 	before, _ := os.ReadFile(path)
 	out, _, code = runCLI(t, args, nil, nil)
 	after, _ := os.ReadFile(path)
-	if code != 0 || out != "already configured\n" || string(before) != string(after) {
+	if code != 0 || !strings.HasPrefix(out, "already configured\n") || string(before) != string(after) {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 	if matches, _ := filepath.Glob(path + ".bak.*"); len(matches) != 0 {
@@ -267,7 +267,7 @@ func TestSetupClaudeCodeRefreshIntervalKeepsExisting(t *testing.T) {
 	}
 	out, _, code := runCLI(t, []string{"setup", "claude-code", "--settings", path}, nil, nil)
 	got, _ := os.ReadFile(path)
-	if code != 0 || out != "already configured\n" || string(got) != initial {
+	if code != 0 || !strings.HasPrefix(out, "already configured\n") || string(got) != initial {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 	if matches, _ := filepath.Glob(path + ".bak.*"); len(matches) != 0 {
@@ -408,7 +408,7 @@ func TestSetupClaudeCodeKeepsThirdPartySubagentLine(t *testing.T) {
 	before, _ := os.ReadFile(path)
 	out, _, code = runCLI(t, args, nil, nil)
 	after, _ := os.ReadFile(path)
-	if code != 0 || !strings.Contains(out, "Note: kept subagentStatusLine") || !strings.HasSuffix(out, "already configured\n") || string(before) != string(after) {
+	if code != 0 || !strings.Contains(out, "Note: kept subagentStatusLine") || !strings.Contains(out, "already configured\n") || string(before) != string(after) {
 		t.Fatalf("rerun code=%d out=%q", code, out)
 	}
 }

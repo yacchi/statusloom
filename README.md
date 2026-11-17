@@ -125,8 +125,8 @@ claude-agent-row`, which renders the `<subagent>` element of the SAME
 `statusloom` from your `PATH`, and it needs a Claude Code version with
 mods (verified on 2.1.326).
 
-`statusloom setup claude-code` enables the mod (see [Setup](#setup)). To
-install it by hand, run this in Claude Code:
+`statusloom setup claude-code` enables and installs the mod (see
+[Setup](#setup)). To install it by hand, run this in Claude Code:
 
 ```
 /plugin install statusloom --marketplace yacchi/statusloom
@@ -272,12 +272,18 @@ Confirmation is asked only when an existing value would be replaced: a
 different status-line command, a different `statusloom` marketplace entry,
 or `statusloom@statusloom` set to `false`.
 
-The mod takes effect in two steps. Claude Code clones the marketplace in
-the background after the next session start and installs the plugin, which
-needs network access. A session that is already running loads it with
-`/reload-plugins`. To install right away, run
-`claude plugin install statusloom@statusloom`. The mod runs with your user
-permissions.
+After writing the settings (or finding them already configured), setup also runs
+`claude plugin install statusloom@statusloom` itself (not with `--dry-run`),
+which clones the marketplace over the network, and prints one summary line.
+It installs into the profile whose `settings.json` setup just wrote: for the
+default path the child inherits your environment unchanged, and for
+`--settings PATH` elsewhere it runs with `CLAUDE_CONFIG_DIR` set to that
+file's directory. A session that is already running loads the mod with
+`/reload-plugins`. If `claude` is missing, the install times out (120 s) or
+fails, setup still succeeds and prints the fallback: Claude Code installs the
+mod in the background after the next session start, or you run
+`claude plugin install statusloom@statusloom` yourself. The mod runs with your
+user permissions.
 
 Setup also writes Claude Code's `refreshInterval` to `statusLine`, so the
 status line re-renders every 30 seconds while the session is idle. One render costs roughly 5–10 ms, so this is cheap.

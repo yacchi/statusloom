@@ -2,14 +2,18 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/yacchi/statusloom/internal/claudecfg"
 )
@@ -31,12 +35,80 @@ const modMarketplaceRepo = "yacchi/statusloom"
 // "statusloom" from the marketplace named modMarketplaceName.
 const modPluginID = "statusloom@statusloom"
 
-// modInstallNotice is printed after setup writes the settings. It states the
+// modInstallFallback is printed when setup could not run `claude plugin
+// install` itself (claude missing, timeout, non-zero exit). It states the
 // install truth: Claude Code installs the mod itself, after the next session
 // start, and a running session needs /reload-plugins to load it.
-const modInstallNotice = "The statusloom mod (%[1]s) is enabled. Claude Code clones the %[2]s marketplace and installs the mod in the background after the next session start (network needed).\n" +
-	"A session that is already running loads it with /reload-plugins. To install right away: claude plugin install %[1]s\n" +
-	"The mod runs with your permissions and needs a Claude Code version with mods (verified on 2.1.326).\n"
+const modInstallFallback = "The statusloom mod (%[1]s) is enabled. Claude Code clones the %[2]s marketplace and installs the mod in the background after the next session start (network needed).\n" +
+	"To install right away: claude plugin install %[1]s; a session that is already running then loads it with /reload-plugins.\n"
+
+// modInstallSuccess is printed when setup ran `claude plugin install`
+// successfully.
+const modInstallSuccess = "Installed the statusloom mod (%[1]s) with `claude plugin install`. A session that is already running loads it with /reload-plugins.\n"
+
+// modRequirementNotice is always printed after the install line.
+const modRequirementNotice = "The mod runs with your permissions and needs a Claude Code version with mods (verified on 2.1.326).\n"
+
+// modInstallTimeout bounds `claude plugin install`, which clones the
+// marketplace over the network.
+const modInstallTimeout = 120 * time.Second
+
+// runModInstall runs `claude plugin install` in the given environment and
+// returns the combined output (for the one-line summary only). It is a var so
+// tests do not spawn the real claude.
+var runModInstall = func(ctx context.Context, env []string) (string, error) {
+	claude, err := exec.LookPath("claude")
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, claude, "plugin", "install", modPluginID)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// modInstallEnv returns the child environment for installing into the profile
+// whose settings file is settings. The default settings path
+// (claudecfg.SettingsPath) keeps the inherited environment untouched: setting
+// CLAUDE_CONFIG_DIR even to ~/.claude would change where Claude Code reads
+// .claude.json and its Keychain service name. Any other path adds
+// CLAUDE_CONFIG_DIR=<dir of settings>.
+func modInstallEnv(settings string, getenv func(string) string, base []string) []string {
+	env := append([]string(nil), base...)
+	if def := claudecfg.SettingsPath(getenv); def != "" && filepath.Clean(def) == filepath.Clean(settings) {
+		return env
+	}
+	return append(env, "CLAUDE_CONFIG_DIR="+filepath.Dir(settings))
+}
+
+// installMod runs `claude plugin install` for the profile of settings and
+// prints one summary line. It never fails setup: any error prints the
+// fallback guidance.
+func installMod(stdout io.Writer, settings string, getenv func(string) string) {
+	ctx, cancel := context.WithTimeout(context.Background(), modInstallTimeout)
+	defer cancel()
+	if _, err := runModInstall(ctx, modInstallEnv(settings, getenv, os.Environ())); err != nil {
+		fmt.Fprintf(stdout, "Could not run `claude plugin install` (%s).\n", summarizeInstallError(ctx, err))
+		fmt.Fprintf(stdout, modInstallFallback, modPluginID, modMarketplaceRepo)
+	} else {
+		fmt.Fprintf(stdout, modInstallSuccess, modPluginID)
+	}
+	fmt.Fprint(stdout, modRequirementNotice)
+}
+
+func summarizeInstallError(ctx context.Context, err error) string {
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return "timed out"
+	case errors.Is(err, exec.ErrNotFound):
+		return "claude not found in PATH"
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return fmt.Sprintf("exit status %d", ee.ExitCode())
+	}
+	return err.Error()
+}
 
 // settingsChange is one settings value that setup adds, replaces or removes.
 // label names the value as printed in the diff: statusLine,
@@ -171,7 +243,7 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 		fmt.Fprintln(stderr, "statusloom: --refresh-interval must be >= 0 (0 leaves it unset)")
 		return 2
 	}
-	settings, err := claudeSettingsPath(*settingsFlag)
+	settings, err := claudeSettingsPath(*settingsFlag, getenv)
 	if err != nil {
 		fmt.Fprintf(stderr, "statusloom: %v\n", err)
 		return 1
@@ -231,6 +303,10 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 	}
 	if len(changes) == 0 {
 		fmt.Fprintln(stdout, "already configured")
+		if !*dryRun {
+			// Idempotent: `claude plugin install` on an installed plugin exits 0.
+			installMod(stdout, settings, getenv)
+		}
 		return 0
 	}
 	for _, c := range changes {
@@ -275,15 +351,15 @@ func runSetup(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv f
 		return 1
 	}
 	fmt.Fprintf(stdout, "Configured %s.\n", settings)
-	fmt.Fprintf(stdout, modInstallNotice, modPluginID, modMarketplaceRepo)
+	installMod(stdout, settings, getenv)
 	return 0
 }
 
-func claudeSettingsPath(override string) (string, error) {
+func claudeSettingsPath(override string, getenv func(string) string) (string, error) {
 	if override != "" {
 		return override, nil
 	}
-	p := claudecfg.SettingsPath(os.Getenv)
+	p := claudecfg.SettingsPath(getenv)
 	if p == "" {
 		return "", errors.New("cannot determine Claude Code config dir: set $CLAUDE_CONFIG_DIR or $HOME")
 	}

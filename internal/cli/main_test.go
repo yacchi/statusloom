@@ -42,6 +42,9 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	runModInstall = func(ctx context.Context, env []string) (string, error) {
+		return "", errors.New("runModInstall stubbed in tests")
+	}
 	startRefreshProcess = func(args ...string) (int, error) { return 0, nil }
 	acquireUsageToken = func(getenv func(string) string) (string, error) {
 		return "", usage.ErrNoToken
